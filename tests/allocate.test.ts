@@ -23,6 +23,9 @@ describe('分配資料夾', () => {
     const branches = { PlatformWeb: 'ban/m8/ALL-1', 'PlatformWeb-2': 'ban/m5/ALL-2' };
     expect(pickFolder({ project: 'PlatformWeb', merchant: 9 }, settings.folders, new Set(), branches, web)?.name).toBe('PlatformWeb-2');
     expect(pickFolder({ project: 'PlatformWeb', merchant: 1 }, settings.folders, new Set(), branches, web)?.name).toBe('PlatformWeb');
+    // 分支已經在 PlatformWeb-2：一定用它；它被佔用就排隊
+    expect(pickFolder({ project: 'PlatformWeb', merchant: 1 }, settings.folders, new Set(), branches, web, 'PlatformWeb-2')?.name).toBe('PlatformWeb-2');
+    expect(pickFolder({ project: 'PlatformWeb', merchant: 1 }, settings.folders, new Set(['PlatformWeb-2']), branches, web, 'PlatformWeb-2')).toBeNull();
     // 商戶 10 還沒分群組：挑第一個空的
     expect(pickFolder({ project: 'PlatformWeb', merchant: 10 }, settings.folders, new Set(), branches, web)?.name).toBe('PlatformWeb');
   });

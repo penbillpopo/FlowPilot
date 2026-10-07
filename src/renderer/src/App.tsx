@@ -7,6 +7,26 @@ import { PlanView } from './PlanView';
 
 const api = window.flowpilot;
 
+const STATUS_STORAGE_KEY = 'flowpilot.statuses';
+
+/** 你上次選的狀態（存在這台電腦的瀏覽器儲存空間；讀不到就用設定檔的預設） */
+function rememberedStatuses(available: string[], fallback: string[]): string[] {
+  try {
+    const saved = JSON.parse(localStorage.getItem(STATUS_STORAGE_KEY) ?? 'null');
+    if (Array.isArray(saved)) {
+      const valid = saved.filter((s) => available.includes(s));
+      if (valid.length) return valid;
+    }
+  } catch {}
+  return fallback.filter((s) => available.includes(s));
+}
+
+function rememberStatuses(statuses: string[]) {
+  try {
+    localStorage.setItem(STATUS_STORAGE_KEY, JSON.stringify(statuses));
+  } catch {}
+}
+
 function formatTime(iso: string) {
   return new Date(iso).toLocaleString('zh-TW', { month: 'numeric', day: 'numeric', hour: '2-digit', minute: '2-digit', hour12: false });
 }
@@ -40,12 +60,15 @@ function TicketList({ onConfirmed }: { onConfirmed(): void }) {
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [planning, setPlanning] = useState<{ run: RunSummary; tickets: JiraTicket[] } | null>(null);
+  const [statusOptions, setStatusOptions] = useState<string[]>([]);
+  const [statuses, setStatuses] = useState<string[] | null>(null);
 
-  async function refresh() {
+  async function refresh(chosen = statuses) {
+    if (!chosen) return;
     setLoading(true);
     setError(null);
     try {
-      const list = await api.listTickets();
+      const list = await api.listTickets(chosen);
       setTickets(list);
       // 重新整理後，已經不在清單上的單取消勾選
       setSelected((prev) => new Set([...prev].filter((key) => list.some((t) => t.key === key))));
@@ -57,8 +80,22 @@ function TicketList({ onConfirmed }: { onConfirmed(): void }) {
   }
 
   useEffect(() => {
-    refresh();
+    api.statusOptions().then(({ statuses: available, defaultStatuses }) => {
+      setStatusOptions(available);
+      const initial = rememberedStatuses(available, defaultStatuses);
+      setStatuses(initial);
+      refresh(initial);
+    });
   }, []);
+
+  function toggleStatus(status: string) {
+    if (!statuses) return;
+    const next = statuses.includes(status) ? statuses.filter((s) => s !== status) : statusOptions.filter((s) => s === status || statuses.includes(s));
+    setStatuses(next);
+    rememberStatuses(next);
+    if (next.length) refresh(next);
+    else setTickets([]);
+  }
 
   function toggle(key: string) {
     setSelected((prev) => {
@@ -96,17 +133,27 @@ function TicketList({ onConfirmed }: { onConfirmed(): void }) {
       <header>
         <div>
           <h1>今日開發任務</h1>
-          <p className="muted">Jira 上指派給你、狀態為「進行中」的單。勾選這次要做的單。</p>
+          <p className="muted">Jira 上指派給你的單。選擇要列出的狀態，再勾選這次要做的單。</p>
         </div>
         <div className="actions">
           <button onClick={() => api.openSettingsFile()}>設定檔</button>
-          <button onClick={refresh} disabled={loading}>{loading ? '讀取中…' : '重新整理'}</button>
+          <button onClick={() => refresh()} disabled={loading}>{loading ? '讀取中…' : '重新整理'}</button>
         </div>
       </header>
 
+      <div className="status-filter">
+        <span className="muted">狀態</span>
+        {statusOptions.map((status) => (
+          <label key={status} className={`chip ${statuses?.includes(status) ? 'on' : ''}`}>
+            <input type="checkbox" checked={!!statuses?.includes(status)} onChange={() => toggleStatus(status)} />
+            {status}
+          </label>
+        ))}
+      </div>
+
       {error && <div className="error">{error}</div>}
 
-      {tickets && tickets.length === 0 && !error && <p className="empty">目前沒有進行中的單。</p>}
+      {tickets && tickets.length === 0 && !error && <p className="empty">{statuses?.length ? '選的狀態裡目前沒有單。' : '請至少選一個狀態。'}</p>}
 
       {tickets && tickets.length > 0 && (
         <table>
@@ -123,6 +170,7 @@ function TicketList({ onConfirmed }: { onConfirmed(): void }) {
               <th>單號</th>
               <th>標題</th>
               <th>主單</th>
+              <th className="state">狀態</th>
               <th>更新</th>
             </tr>
           </thead>
@@ -147,6 +195,7 @@ function TicketList({ onConfirmed }: { onConfirmed(): void }) {
                     <span className="muted">（本身是主單）</span>
                   )}
                 </td>
+                <td className="state"><span className="status">{t.status}</span></td>
                 <td className="time">{formatTime(t.updated)}</td>
               </tr>
             ))}

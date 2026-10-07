@@ -6,10 +6,11 @@ import type { JiraTicket, Judgement, PlanOptions, TicketPlan } from '../shared/t
 import { CodexRpc } from './codex/rpc';
 import { askStructured, listSkills } from './codex/structured';
 import { checkExisting } from './git';
-import { getIssueContext, loadCredentials, searchTickets } from './jira';
+import { buildJql, getIssueContext, loadCredentials, searchTickets, statusIdsByName } from './jira';
 import { buildJudgePrompt, JUDGE_INSTRUCTIONS, judgementSchema, sanitizeJudgement } from './planner/judge';
 import { deriveBranches, planProblem } from './planner/rules';
 import { Runner } from './runner/runner';
+import { Terminals } from './terminals';
 import { VSCode } from './vscode';
 import { loadSettings } from './settings';
 import { Store } from './store';
@@ -21,6 +22,7 @@ let window: BrowserWindow | null = null;
 let tray: Tray | null = null;
 let store: Store;
 let runner: Runner;
+const terminals = new Terminals((channel, ...args) => window?.webContents.send(channel, ...args), (m) => log(m));
 let quitting = false;
 /** AI 判斷用：自己啟動的 Codex，臨時對話 */
 const codex = new CodexRpc();
@@ -41,6 +43,19 @@ function boardChanged() {
     boardTimer = null;
     window?.webContents.send('board:changed', runner.board());
   }, 200);
+}
+
+// AI 正在寫的回覆：每 100 毫秒把各張單的最新內容送一次畫面
+const pendingStreams = new Map<number, string>();
+let streamTimer: NodeJS.Timeout | null = null;
+function streamChanged(itemId: number, text: string) {
+  pendingStreams.set(itemId, text);
+  if (streamTimer) return;
+  streamTimer = setTimeout(() => {
+    streamTimer = null;
+    for (const [id, value] of pendingStreams) window?.webContents.send('board:stream', id, value);
+    pendingStreams.clear();
+  }, 100);
 }
 
 function notify(title: string, body: string, itemId: number) {
@@ -131,10 +146,15 @@ function createTray() {
 }
 
 function registerIpc() {
-  ipcMain.handle('tickets:list', async () => {
+  ipcMain.handle('tickets:list', async (_event, statuses: string[]) => {
     // 每次都重讀設定，改完設定檔不用重開
     const settings = loadSettings(settingsFile);
-    return searchTickets(loadCredentials(settings.jira.envFile), settings.jira.jql);
+    const credentials = loadCredentials(settings.jira.envFile);
+    return searchTickets(credentials, buildJql(settings.jira.filter, statuses, await statusIdsByName(credentials)));
+  });
+  ipcMain.handle('tickets:statusOptions', () => {
+    const { statuses, defaultStatuses } = loadSettings(settingsFile).jira;
+    return { statuses, defaultStatuses };
   });
   ipcMain.handle('run:create', (_event, tickets: JiraTicket[]) => store.createRun(tickets));
   ipcMain.handle('run:latest', () => store.latestRun());
@@ -159,9 +179,16 @@ function registerIpc() {
   });
   ipcMain.handle('plan:confirm', async (_event, runId: number, plans: TicketPlan[], judgements: Record<string, Judgement>) => {
     const settings = validatePlans(plans);
-    // 確認前再檢查一次：中間可能有人建立了分支
-    const existing = (await checkExisting(plans.flatMap((p) => deriveBranches(p, settings)), settings.folders)).filter((b) => b.existsIn.length);
-    if (existing.length) throw new Error(`這些分支已經建立：${existing.map((b) => b.branch).join('、')}，請重新檢查`);
+    // 確認前再檢查一次：已存在的分支會切過去繼續開發，但存在於好幾個資料夾時一定要選好用哪一個
+    const branches = await checkExisting(plans.flatMap((p) => deriveBranches(p, settings)), settings.folders);
+    for (const plan of plans) {
+      for (const entry of plan.entries) {
+        const local = branches.find((b) => b.ticketKey === plan.ticket.key && b.project === entry.project && b.role !== 'target')?.existsIn.filter((w) => w !== '遠端') ?? [];
+        if (local.length > 1 && (!entry.folder || !local.includes(entry.folder))) {
+          throw new Error(`${plan.ticket.key}：分支在 ${local.join('、')} 都有，請選擇要用哪一個資料夾`);
+        }
+      }
+    }
     const run = store.confirmPlan(runId, plans, judgements);
     runner.startRun(runId); // 確認計畫後直接開始：建立分支、分配資料夾、啟動 AI
     return run;
@@ -170,9 +197,20 @@ function registerIpc() {
   ipcMain.handle('board:startRun', (_event, runId: number) => runner.startRun(runId));
   ipcMain.handle('item:reply', (_event, id: number, text: string) => runner.reply(id, text));
   ipcMain.handle('item:approve', (_event, id: number, accept: boolean) => runner.approve(id, accept));
+  ipcMain.handle('item:decide', (_event, id: number, optionId: string) => runner.decide(id, optionId));
   ipcMain.handle('item:stop', (_event, id: number) => runner.stop(id));
   ipcMain.handle('item:retry', (_event, id: number) => runner.retry(id));
   ipcMain.handle('item:openInVSCode', (_event, id: number) => runner.openInVSCode(id));
+  ipcMain.handle('term:open', (_event, id: number, cols: number, rows: number) => {
+    const item = store.getWorkItem(id);
+    if (!item?.threadId || !item.folder) throw new Error('這張單還沒有 AI 對話');
+    const folder = loadSettings(settingsFile).folders.find((f) => f.name === item.folder);
+    if (!folder) throw new Error(`設定檔裡沒有資料夾「${item.folder}」`);
+    return terminals.open(id, { threadId: item.threadId, cwd: folder.path, cols, rows });
+  });
+  ipcMain.on('term:input', (_event, id: number, data: string) => terminals.write(id, data));
+  ipcMain.on('term:resize', (_event, id: number, cols: number, rows: number) => terminals.resize(id, cols, rows));
+  ipcMain.handle('term:close', (_event, id: number) => terminals.close(id));
 }
 
 app.whenReady().then(() => {
@@ -185,6 +223,7 @@ app.whenReady().then(() => {
     vscode: new VSCode(join(app.getAppPath(), 'resources/vscode-companion'), dataDir, (url) => shell.openExternal(url)),
     notify,
     onChange: boardChanged,
+    onStream: streamChanged,
     log,
   });
   registerIpc();
@@ -196,6 +235,7 @@ app.whenReady().then(() => {
 
 app.on('before-quit', () => {
   quitting = true;
+  terminals.closeAll();
   codex.stop();
   daemon.stop(); // 只斷開連線；常駐服務繼續跑，進行中的 AI 不受影響
   store?.close();

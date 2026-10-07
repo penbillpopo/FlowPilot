@@ -3,14 +3,14 @@ import { tmpdir } from 'node:os';
 import { it } from 'vitest';
 import { CodexRpc } from '../../src/main/codex/rpc';
 import { askStructured, listSkills } from '../../src/main/codex/structured';
-import { getIssueContext, loadCredentials, searchTickets } from '../../src/main/jira';
+import { buildJql, getIssueContext, loadCredentials, searchTickets, statusIdsByName } from '../../src/main/jira';
 import { buildJudgePrompt, JUDGE_INSTRUCTIONS, judgementSchema, sanitizeJudgement } from '../../src/main/planner/judge';
 import { DEFAULT_SETTINGS_YAML, parseSettings } from '../../src/main/settings';
 
 it.runIf(process.env.LIVE)('真實判斷', { timeout: 600_000 }, async () => {
   const settings = parseSettings(DEFAULT_SETTINGS_YAML);
   const credentials = loadCredentials(settings.jira.envFile);
-  const tickets = (await searchTickets(credentials, settings.jira.jql)).filter((t) => ['ALL-14575', 'ALL-14058', 'ALL-14324', 'ALL-14734'].includes(t.key));
+  const tickets = (await searchTickets(credentials, buildJql(settings.jira.filter, ['進行中'], await statusIdsByName(credentials)))).filter((t) => ['ALL-14575', 'ALL-14058', 'ALL-14324', 'ALL-14734'].includes(t.key));
   const rpc = new CodexRpc();
   const skills = await listSkills(rpc, settings.folders[0].path);
   console.log('技能：', skills.map((s) => s.name).join('、'));

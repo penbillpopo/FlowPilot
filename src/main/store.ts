@@ -54,6 +54,8 @@ const MIGRATIONS: string[] = [
      created_at TEXT NOT NULL,
      updated_at TEXT NOT NULL
    );`,
+  // 已存在的分支繼續開發：分支在哪個資料夾，就要用哪個資料夾
+  `ALTER TABLE work_items ADD COLUMN preferred_folder TEXT;`,
 ];
 
 /** 還佔著資料夾的狀態 */
@@ -75,6 +77,7 @@ interface WorkItemRow {
   base_branch: string;
   skill: string;
   pr_title: string;
+  preferred_folder: string | null;
   folder: string | null;
   status: WorkStatus;
   activity: string;
@@ -100,6 +103,7 @@ function toWorkItem(row: WorkItemRow): WorkItem & { branchCreated: boolean } {
     baseBranch: row.base_branch,
     skill: row.skill,
     prTitle: row.pr_title,
+    preferredFolder: row.preferred_folder,
     folder: row.folder,
     status: row.status,
     activity: row.activity,
@@ -115,6 +119,7 @@ export type StoredWorkItem = ReturnType<typeof toWorkItem>;
 
 const PATCH_COLUMNS = {
   folder: 'folder',
+  preferredFolder: 'preferred_folder',
   status: 'status',
   activity: 'activity',
   threadId: 'thread_id',
@@ -211,8 +216,8 @@ export class Store {
   createWorkItems(items: NewWorkItem[], now = new Date()): StoredWorkItem[] {
     const insert = this.db.prepare(
       `INSERT INTO work_items (run_id, ticket_key, ticket_summary, main_key, main_url, project, merchant, target_merchants,
-         branch, base_branch, skill, pr_title, status, created_at, updated_at)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'queued', ?, ?)`,
+         branch, base_branch, skill, pr_title, preferred_folder, status, created_at, updated_at)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'queued', ?, ?)`,
     );
     const ids: number[] = [];
     this.db.exec('BEGIN');
@@ -220,7 +225,7 @@ export class Store {
       for (const i of items) {
         const t = now.toISOString();
         const r = insert.run(i.runId, i.ticketKey, i.ticketSummary, i.mainKey, i.mainUrl, i.project, i.merchant, JSON.stringify(i.targetMerchants),
-          i.branch, i.baseBranch, i.skill, i.prTitle, t, t);
+          i.branch, i.baseBranch, i.skill, i.prTitle, i.preferredFolder, t, t);
         ids.push(Number(r.lastInsertRowid));
       }
       if (items.length) this.db.prepare("UPDATE runs SET status = 'started' WHERE id = ?").run(items[0].runId);

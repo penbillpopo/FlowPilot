@@ -90,3 +90,29 @@ export async function switchBranch(cwd: string, branch: string): Promise<void> {
 export async function fileHash(cwd: string, path: string): Promise<string> {
   return (await runGit(cwd, ['rev-parse', `HEAD:${path}`])).stdout.trim();
 }
+
+/** 本機分支跟遠端分支比：本機多幾個提交、遠端多幾個提交 */
+export async function aheadBehind(cwd: string, branch: string): Promise<{ ahead: number; behind: number }> {
+  const result = await runGit(cwd, ['rev-list', '--left-right', '--count', `refs/heads/${branch}...refs/remotes/origin/${branch}`]);
+  if (result.code !== 0) throw new Error(`比對 ${branch} 與遠端失敗：${result.stderr.trim()}`);
+  const [ahead, behind] = result.stdout.trim().split(/\s+/).map(Number);
+  return { ahead, behind };
+}
+
+/** 目前分支比基底分支多了幾個提交 */
+export async function commitsSinceBase(cwd: string, baseBranch: string): Promise<number> {
+  const result = await runGit(cwd, ['rev-list', '--count', `origin/${baseBranch}..HEAD`]);
+  return result.code === 0 ? Number(result.stdout.trim()) : 0;
+}
+
+/** 只在遠端有的分支：建立追蹤遠端的本機分支並切換 */
+export async function switchToRemoteBranch(cwd: string, branch: string): Promise<void> {
+  const result = await runGit(cwd, ['switch', '-c', branch, '--track', `origin/${branch}`]);
+  if (result.code !== 0) throw new Error(`從遠端切換到 ${branch} 失敗：${result.stderr.trim()}`);
+}
+
+/** 本機落後遠端、沒有自己的新提交時，快轉到遠端最新 */
+export async function fastForward(cwd: string, branch: string): Promise<void> {
+  const result = await runGit(cwd, ['merge', '--ff-only', `origin/${branch}`]);
+  if (result.code !== 0) throw new Error(`快轉 ${branch} 到遠端最新失敗：${result.stderr.trim()}`);
+}

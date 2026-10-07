@@ -35,6 +35,8 @@ export interface PlanEntry {
   sourceMerchant: number | null;
   /** AI 的判斷理由 */
   reason: string;
+  /** 分支已經存在於好幾個資料夾時，你選要用哪一個 */
+  folder?: string | null;
 }
 
 /** 一張單的計畫（計畫表的一列） */
@@ -88,7 +90,9 @@ export type WorkStatus =
 /** AI 等你處理的事 */
 export type PendingRequest =
   | { kind: 'approval'; requestId: number | string; method: string; command: string; reason: string }
-  | { kind: 'userInput'; requestId: number | string; questions: { id: string; header: string; question: string; options: string[] }[] };
+  | { kind: 'userInput'; requestId: number | string; questions: { id: string; header: string; question: string; options: string[] }[] }
+  /** FlowPilot 自己要你決定的事（例如要不要接著未提交的修改繼續做） */
+  | { kind: 'decision'; requestId: string; question: string; options: { id: string; label: string }[] };
 
 /** 一個工作項目：一張單在一個專案（商戶）上的開發，對應一條分支、一個資料夾、一段 Codex 對話 */
 export interface WorkItem {
@@ -106,6 +110,8 @@ export interface WorkItem {
   baseBranch: string;
   skill: string;
   prTitle: string;
+  /** 分支已存在於某個資料夾時，一定要用那個資料夾 */
+  preferredFolder: string | null;
   folder: string | null;
   status: WorkStatus;
   /** 目前在做什麼（給人看的一句話） */
@@ -129,11 +135,15 @@ export interface BoardState {
   items: WorkItem[];
   /** 已確認計畫、但還沒開始執行的那次 */
   pendingRun: { id: number; ticketKeys: string[] } | null;
+  /** AI 正在寫、還沒寫完的回覆：工作項目編號 → 目前內容 */
+  streaming: Record<number, string>;
 }
 
 /** 畫面可以呼叫的主程序功能（由 preload 掛在 window.flowpilot） */
 export interface FlowPilotApi {
-  listTickets(): Promise<JiraTicket[]>;
+  listTickets(statuses: string[]): Promise<JiraTicket[]>;
+  /** 單列表可以選的狀態，以及預設選哪些 */
+  statusOptions(): Promise<{ statuses: string[]; defaultStatuses: string[] }>;
   createRun(tickets: JiraTicket[]): Promise<RunSummary>;
   latestRun(): Promise<RunSummary | null>;
   openExternal(url: string): Promise<void>;
@@ -148,6 +158,8 @@ export interface FlowPilotApi {
   /** 執行看板 */
   board(): Promise<BoardState>;
   onBoardChanged(listener: (board: BoardState) => void): () => void;
+  /** AI 正在寫的回覆即時更新 */
+  onStream(listener: (itemId: number, text: string) => void): () => void;
   /** 點系統通知時，跳到那張單 */
   onFocusItem(listener: (itemId: number) => void): () => void;
   startRun(runId: number): Promise<void>;
@@ -155,9 +167,21 @@ export interface FlowPilotApi {
   reply(itemId: number, text: string): Promise<void>;
   /** 同意或拒絕危險指令 */
   approve(itemId: number, accept: boolean): Promise<void>;
+  /** 回答 FlowPilot 要你決定的事 */
+  decide(itemId: number, optionId: string): Promise<void>;
   stop(itemId: number): Promise<void>;
   retry(itemId: number): Promise<void>;
   openInVSCode(itemId: number): Promise<void>;
+  /** FlowPilot 視窗裡的終端機（接上那張單的 AI 對話） */
+  terminal: {
+    /** 打開並回傳目前為止的輸出（已經開著就沿用） */
+    open(itemId: number, cols: number, rows: number): Promise<string>;
+    write(itemId: number, data: string): void;
+    resize(itemId: number, cols: number, rows: number): void;
+    close(itemId: number): Promise<void>;
+    onData(listener: (itemId: number, data: string) => void): () => void;
+    onExit(listener: (itemId: number, exitCode: number) => void): () => void;
+  };
 }
 
 export interface PlanOptions {

@@ -144,3 +144,27 @@ export async function getIssueContext(credentials: JiraCredentials, key: string,
     subtasks: (fields.subtasks ?? []).map((s) => ({ key: s.key, summary: s.fields.summary })),
   };
 }
+
+/** 狀態名稱（Jira 上顯示的，可能是翻譯過的）→ 狀態編號。同一個名稱可能對到好幾個編號 */
+export async function statusIdsByName(credentials: JiraCredentials, fetchImpl: typeof fetch = fetch): Promise<Map<string, string[]>> {
+  const auth = Buffer.from(`${credentials.email}:${credentials.token}`).toString('base64');
+  const response = await fetchImpl(`${credentials.baseUrl}/rest/api/3/status`, { headers: { Authorization: `Basic ${auth}`, Accept: 'application/json' } });
+  if (!response.ok) throw new Error(`讀取 Jira 狀態清單失敗：HTTP ${response.status}`);
+  const map = new Map<string, string[]>();
+  for (const status of (await response.json()) as { id: string; name: string; untranslatedName?: string }[]) {
+    for (const name of new Set([status.name, status.untranslatedName].filter(Boolean) as string[])) {
+      const key = name.toLowerCase();
+      map.set(key, [...(map.get(key) ?? []), status.id]);
+    }
+  }
+  return map;
+}
+
+/** 組查詢條件：基本條件 + 選的狀態（用編號，不受翻譯與大小寫影響） */
+export function buildJql(filter: string, statusNames: string[], ids: Map<string, string[]>): string {
+  const unknown = statusNames.filter((n) => !ids.has(n.toLowerCase()));
+  if (unknown.length) throw new Error(`Jira 上找不到這些狀態：${unknown.join('、')}`);
+  const statusIds = [...new Set(statusNames.flatMap((n) => ids.get(n.toLowerCase())!))];
+  if (statusIds.length === 0) throw new Error('至少要選一個狀態');
+  return `${filter} AND status in (${statusIds.join(', ')}) ORDER BY updated DESC`;
+}

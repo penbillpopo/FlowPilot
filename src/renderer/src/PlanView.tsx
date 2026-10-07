@@ -126,11 +126,22 @@ export function PlanView({ run, tickets, onBack, onConfirmed }: Props) {
   }
 
   const branchesOf = (key: string) => (branches ?? []).filter((b) => b.ticketKey === key);
-  const isBlocked = (key: string) => branchesOf(key).some((b) => b.existsIn.length > 0);
-  const toRun = tickets.filter((t) => plans[t.key] && !isBlocked(t.key));
-  const skipped = tickets.filter((t) => isBlocked(t.key));
+  /** 分支已經存在於好幾個資料夾、還沒選要用哪一個的專案 */
+  const folderChoices = (key: string) =>
+    branchesOf(key)
+      .filter((b) => b.role !== 'target')
+      .map((b) => ({ branch: b, local: b.existsIn.filter((w) => w !== '遠端') }))
+      .filter(({ local }) => local.length > 1);
+  const continuing = (key: string) => branchesOf(key).some((b) => b.role !== 'target' && b.existsIn.length > 0);
+  const toRun = tickets.filter((t) => plans[t.key]);
+  const unchosen = toRun.filter((t) =>
+    folderChoices(t.key).some(({ branch, local }) => {
+      const folder = plans[t.key].entries.find((e) => e.project === branch.project)?.folder;
+      return !folder || !local.includes(folder);
+    }),
+  );
   const problems = options ? toRun.map((t) => problemOf(plans[t.key], options)).filter(Boolean) : [];
-  const canConfirm = allJudged && !!branches && !checking && !checkError && problems.length === 0 && toRun.length > 0 && !confirming;
+  const canConfirm = allJudged && !!branches && !checking && !checkError && problems.length === 0 && unchosen.length === 0 && toRun.length > 0 && !confirming;
 
   async function confirm() {
     setConfirming(true);
@@ -164,10 +175,9 @@ export function PlanView({ run, tickets, onBack, onConfirmed }: Props) {
         {tickets.map((ticket) => {
           const plan = plans[ticket.key];
           const error = judgeErrors[ticket.key];
-          const blocked = isBlocked(ticket.key);
           const problem = plan && options ? problemOf(plan, options) : null;
           return (
-            <section key={ticket.key} className={`plan ${blocked ? 'blocked' : ''}`}>
+            <section key={ticket.key} className="plan">
               <div className="plan-head">
                 <a href={ticket.url} onClick={(e) => { e.preventDefault(); api.openExternal(ticket.url); }}>{ticket.key}</a>
                 <span className="plan-title">{ticket.summary}</span>
@@ -272,11 +282,13 @@ export function PlanView({ run, tickets, onBack, onConfirmed }: Props) {
                         <li key={b.branch}>
                           <code>{b.branch}</code>
                           <span className="muted"> ← {b.baseBranch}</span>
-                          <span className={`badge ${b.existsIn.length ? 'exists' : b.role === 'target' ? 'later' : 'new'}`}>
-                            {b.existsIn.length
-                              ? `已建立（${b.existsIn.join('、')}）`
-                              : b.role === 'target'
-                                ? '移植目標：之後由 platform-web-copy 建立'
+                          <span className={`badge ${b.existsIn.length ? 'continue' : b.role === 'target' ? 'later' : 'new'}`}>
+                            {b.role === 'target'
+                              ? b.existsIn.length
+                                ? `移植目標：已存在（${b.existsIn.join('、')}），移植時 platform-web-copy 會問你`
+                                : '移植目標：之後由 platform-web-copy 建立'
+                              : b.existsIn.length
+                                ? `${ROLE_LABEL[b.role]}：已存在（${b.existsIn.join('、')}），會切換過去繼續開發`
                                 : `${ROLE_LABEL[b.role]}：將建立`}
                           </span>
                         </li>
@@ -285,7 +297,24 @@ export function PlanView({ run, tickets, onBack, onConfirmed }: Props) {
                     </ul>
                   )}
 
-                  {blocked && <p className="warn">此分支已建立，這張單後續流程都不會執行。</p>}
+                  {folderChoices(ticket.key).map(({ branch, local }) => {
+                    const entryIndex = plan.entries.findIndex((e) => e.project === branch.project);
+                    return (
+                      <label key={branch.branch} className="folder-choice warn">
+                        {branch.branch} 在 {local.join('、')} 都有，要用哪一個資料夾繼續？
+                        <select
+                          value={plan.entries[entryIndex]?.folder ?? ''}
+                          onChange={(e) => updateEntry(ticket.key, entryIndex, { folder: e.target.value || null })}
+                        >
+                          <option value="">請選擇</option>
+                          {local.map((f) => <option key={f}>{f}</option>)}
+                        </select>
+                      </label>
+                    );
+                  })}
+                  {continuing(ticket.key) && (
+                    <p className="reason">分支已存在：會切換過去，請 AI 先看過現有的差異再接著開發。資料夾有未提交的修改、或本機與遠端分歧時，會先問你。</p>
+                  )}
                 </>
               )}
             </section>
@@ -297,7 +326,7 @@ export function PlanView({ run, tickets, onBack, onConfirmed }: Props) {
 
       <footer>
         <span className="muted">
-          {!allJudged ? 'AI 判斷中…' : checking ? '檢查分支中（會先抓遠端）…' : `${toRun.length} 張要執行${skipped.length ? `，${skipped.length} 張跳過` : ''}`}
+          {!allJudged ? 'AI 判斷中…' : checking ? '檢查分支中（會先抓遠端）…' : `${toRun.length} 張要執行${unchosen.length ? `，${unchosen.length} 張還沒選資料夾` : ''}`}
         </span>
         <button className="primary" disabled={!canConfirm} onClick={confirm}>
           {confirming ? '確認中…' : '確認計畫，開始開發'}

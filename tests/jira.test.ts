@@ -90,3 +90,19 @@ describe('Jira 內文轉文字', () => {
     expect(adfToText(doc)).toBe('需求\n第一行\n第二行\n- 項目\n@ban\n');
   });
 });
+
+describe('狀態篩選', () => {
+  it('名稱換成編號（同名的全部帶上），不分大小寫', async () => {
+    const { buildJql, statusIdsByName } = await import('../src/main/jira');
+    const fetchImpl = async () =>
+      jsonResponse([
+        { id: '10001', name: '進行中', untranslatedName: 'In Progress' },
+        { id: '10049', name: '進行中', untranslatedName: 'In progress' },
+        { id: '10042', name: 'UAT', untranslatedName: 'UAT' },
+      ]);
+    const ids = await statusIdsByName(credentials, fetchImpl as typeof fetch);
+    expect(buildJql('assignee = currentUser()', ['進行中', 'uat'], ids)).toBe('assignee = currentUser() AND status in (10001, 10049, 10042) ORDER BY updated DESC');
+    expect(() => buildJql('x', ['不存在'], ids)).toThrow('找不到這些狀態：不存在');
+    expect(() => buildJql('x', [], ids)).toThrow('至少要選一個狀態');
+  });
+});

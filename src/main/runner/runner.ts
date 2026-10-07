@@ -7,14 +7,18 @@ import type { BoardState, PendingRequest, SkillInfo, TicketPlan } from '../../sh
 import type { CodexRpc, RpcMessage } from '../codex/rpc';
 import { listSkills } from '../codex/structured';
 import {
+  aheadBehind,
+  commitsSinceBase,
   createBranch,
   currentBranch,
   dirtyFiles,
+  fastForward,
   fetchOrigin,
   fileHash,
   localBranchExists,
   remoteBranchExists,
   switchBranch,
+  switchToRemoteBranch,
 } from '../git';
 import { deriveBranches } from '../planner/rules';
 import type { Settings } from '../settings';
@@ -31,6 +35,8 @@ export interface RunnerDeps {
   vscode: VSCode;
   notify: (title: string, body: string, itemId: number) => void;
   onChange: () => void;
+  /** AI 正在寫的回覆有新內容（即時顯示用，很頻繁，由呼叫端合併後再送畫面） */
+  onStream: (itemId: number, text: string) => void;
   log: (message: string) => void;
 }
 
@@ -57,6 +63,12 @@ export class Runner {
   /** 每段對話目前那一輪的編號（補充指示、停止時要用） */
   private turns = new Map<string, string>();
   private skills: SkillInfo[] | null = null;
+  /** AI 正在寫、還沒寫完的回覆（只放記憶體；寫完才存進資料庫） */
+  private streaming = new Map<number, string>();
+  /** 你在準備階段已經同意的事（接著未提交的修改做、用本機版本繼續） */
+  private allowed = new Map<number, Set<'dirty' | 'diverged'>>();
+  /** 準備好之後，交代給 AI 時要說明的現況 */
+  private prepared = new Map<number, { continuing: boolean; commits: number; dirty: number }>();
   private scheduling = false;
   private rescheduleRequested = false;
 
@@ -78,6 +90,7 @@ export class Runner {
       folders: this.deps.settings().folders.map((f) => ({ ...f, itemId: occupiedBy.get(f.name) ?? null })),
       items: items.map(({ branchCreated: _, ...item }) => item),
       pendingRun: store.pendingPlannedRun(),
+      streaming: Object.fromEntries(this.streaming),
     };
   }
 
@@ -112,6 +125,7 @@ export class Runner {
           baseBranch: b.baseBranch,
           skill: plan.skill,
           prTitle: plan.prTitle,
+          preferredFolder: plan.entries.find((e) => e.project === b.project)?.folder ?? null,
         }));
     });
     store.createWorkItems(items);
@@ -136,10 +150,26 @@ export class Runner {
           const rule = settings.projects[item.project];
           const candidates = settings.folders.filter((f) => f.project === item.project && !occupied.has(f.name));
           if (!rule || candidates.length === 0) continue;
+          // 分支已經存在於某個資料夾：之前的提交只在那裡，一定要用那個資料夾
+          const projectFolders = settings.folders.filter((f) => f.project === item.project);
+          const holding: string[] = [];
+          for (const f of projectFolders) if (await localBranchExists(f.path, item.branch).catch(() => false)) holding.push(f.name);
+          let onlyFolder: string | null = null;
+          if (holding.length === 1) onlyFolder = holding[0];
+          else if (holding.length > 1) {
+            if (!item.preferredFolder || !holding.includes(item.preferredFolder)) {
+              this.update(item.id, { status: 'blocked', activity: `分支在 ${holding.join('、')} 都有，請在計畫表選擇要用哪一個資料夾` });
+              continue;
+            }
+            onlyFolder = item.preferredFolder;
+          }
           const branches: Record<string, string> = {};
           for (const f of candidates) branches[f.name] = await currentBranch(f.path).catch(() => '');
-          const folder = pickFolder(item, settings.folders, occupied, branches, rule);
-          if (!folder) continue;
+          const folder = pickFolder(item, settings.folders, occupied, branches, rule, onlyFolder);
+          if (!folder) {
+            if (onlyFolder) this.update(item.id, { activity: `分支在 ${onlyFolder}，等它空出來` });
+            continue;
+          }
           occupied.add(folder.name);
           this.update(item.id, { folder: folder.name, status: 'preparing', activity: '準備資料夾' });
           void this.prepare(item.id);
@@ -156,52 +186,106 @@ export class Runner {
     return folder.path;
   }
 
-  /** 抓遠端 → 確認乾淨 → 建立並切換分支 → 必要時安裝套件 → 啟動 AI */
+  /** 停下來問你；回答後從頭重新準備 */
+  private ask(id: number, key: 'dirty' | 'diverged', question: string, continueLabel: string) {
+    const item = this.update(id, {
+      status: 'waiting',
+      activity: question,
+      pending: { kind: 'decision', requestId: key, question, options: [{ id: 'continue', label: continueLabel }, { id: 'stop', label: '先不要，停止這張單' }] },
+    });
+    this.deps.notify(`${item.ticketKey} 要你決定`, question, id);
+  }
+
+  /**
+   * 準備資料夾，然後啟動 AI：
+   * - 分支不存在：從遠端最新的基底分支建立並切換（新開發）
+   * - 分支已存在：切換過去繼續開發；只在遠端就從遠端建立本機分支
+   * - 資料夾本來就在這條分支、而且有未提交的修改：先問你要不要接著做
+   * - 本機落後遠端：快轉；本機和遠端各有新提交（分歧）：先問你
+   */
   private async prepare(id: number): Promise<void> {
-    let item = this.deps.store.getWorkItem(id)!;
+    const item = this.deps.store.getWorkItem(id)!;
     const cwd = this.folderPath(item.folder!);
+    const allowed = this.allowed.get(id) ?? new Set();
     try {
       this.update(id, { activity: '抓遠端最新狀態' });
       await fetchOrigin(cwd);
 
       const here = await currentBranch(cwd);
-      if (here !== item.branch) {
+      const remote = await remoteBranchExists(cwd, item.branch);
+      let continuing = true;
+      if (here === item.branch) {
+        const dirty = await dirtyFiles(cwd);
+        if (dirty.length && !allowed.has('dirty')) {
+          return this.ask(id, 'dirty', `${item.folder} 已經在 ${item.branch}，有 ${dirty.length} 個未提交的修改（${dirty.slice(0, 3).join('、')}${dirty.length > 3 ? ' 等' : ''}）。要接著這些修改繼續開發嗎？`, '接著這些修改繼續開發');
+        }
+      } else {
         const dirty = await dirtyFiles(cwd);
         if (dirty.length) {
           this.update(id, {
             status: 'blocked',
-            activity: `資料夾有未提交的修改（${dirty.slice(0, 3).join('、')}${dirty.length > 3 ? ` 等 ${dirty.length} 個` : ''}），請先處理後按「重試」`,
+            activity: `資料夾目前在 ${here || '（不在任何分支）'}，有未提交的修改（${dirty.slice(0, 3).join('、')}${dirty.length > 3 ? ` 等 ${dirty.length} 個` : ''}），請先處理後按「重試」`,
           });
           return;
         }
-        const existsLocally = await localBranchExists(cwd, item.branch);
-        if (!item.branchCreated) {
-          // 名稱完全相同的分支已經存在：不是 FlowPilot 建的，一律停下來
-          if (existsLocally || (await remoteBranchExists(cwd, item.branch))) {
-            this.update(id, { status: 'blocked', activity: `分支 ${item.branch} 已經存在，這張單不執行` });
-            return;
-          }
-          this.update(id, { activity: `從 origin/${item.baseBranch} 建立分支` });
-          await createBranch(cwd, item.branch, item.baseBranch);
-          item = this.update(id, { branchCreated: true });
-        } else if (!existsLocally) {
-          await createBranch(cwd, item.branch, item.baseBranch);
-        }
         const lockBefore = await fileHash(cwd, 'package-lock.json');
-        this.update(id, { activity: `切換到 ${item.branch}` });
-        await switchBranch(cwd, item.branch);
+        if (await localBranchExists(cwd, item.branch)) {
+          this.update(id, { activity: `切換到已存在的分支 ${item.branch}` });
+          await switchBranch(cwd, item.branch);
+        } else if (remote) {
+          this.update(id, { activity: `從遠端切換到已存在的分支 ${item.branch}` });
+          await switchToRemoteBranch(cwd, item.branch);
+        } else {
+          continuing = false;
+          this.update(id, { activity: `從 origin/${item.baseBranch} 建立分支 ${item.branch}` });
+          await createBranch(cwd, item.branch, item.baseBranch);
+          await switchBranch(cwd, item.branch);
+        }
         const lockAfter = await fileHash(cwd, 'package-lock.json');
         if (lockBefore !== lockAfter || !existsSync(join(cwd, 'node_modules'))) {
           this.update(id, { activity: '套件不同，安裝套件中（npm install，可能要幾分鐘）' });
           await shell(cwd, 'npm install', 20 * 60_000);
         }
       }
+
+      if (remote && continuing) {
+        const { ahead, behind } = await aheadBehind(cwd, item.branch);
+        if (behind > 0 && ahead === 0) {
+          this.update(id, { activity: `本機落後遠端 ${behind} 個提交，快轉到最新` });
+          await fastForward(cwd, item.branch);
+        } else if (behind > 0 && ahead > 0 && !allowed.has('diverged')) {
+          return this.ask(id, 'diverged', `${item.branch} 的本機和遠端各有新的提交（本機多 ${ahead} 個、遠端多 ${behind} 個）。要用本機的版本繼續開發嗎？（不會動到遠端）`, '用本機版本繼續');
+        }
+      }
+
+      this.prepared.set(id, {
+        continuing,
+        commits: continuing ? await commitsSinceBase(cwd, item.baseBranch) : 0,
+        dirty: (await dirtyFiles(cwd)).length,
+      });
       await this.startAgent(id);
     } catch (error) {
       this.update(id, { status: 'failed', activity: `準備失敗：${(error as Error).message}` });
       this.deps.notify(`${item.ticketKey} 準備失敗`, (error as Error).message, id);
       void this.schedule();
     }
+  }
+
+  /** 回答準備階段的問題 */
+  async decide(id: number, optionId: string) {
+    const item = this.deps.store.getWorkItem(id)!;
+    if (item.pending?.kind !== 'decision') throw new Error('目前沒有要你決定的事');
+    if (optionId === 'stop') {
+      this.allowed.delete(id);
+      this.update(id, { status: 'stopped', activity: '你選擇先不要做這張單', pending: null });
+      void this.schedule();
+      return;
+    }
+    const allowed = this.allowed.get(id) ?? new Set();
+    allowed.add(item.pending.requestId as 'dirty' | 'diverged');
+    this.allowed.set(id, allowed);
+    this.update(id, { status: 'preparing', activity: '繼續準備', pending: null });
+    void this.prepare(id);
   }
 
   private async skillPath(name: string): Promise<string> {
@@ -228,11 +312,18 @@ export class Runner {
     this.update(id, { threadId: thread.id, status: 'running', activity: '執行技能' });
     await codex.request('thread/name/set', { threadId: thread.id, name: `${item.ticketKey}｜${item.merchant ? `m${item.merchant}｜` : ''}${item.folder}` }).catch(() => {});
 
+    const state = this.prepared.get(id) ?? { continuing: false, commits: 0, dirty: 0 };
+    this.prepared.delete(id);
+    this.allowed.delete(id);
+    const branchLine = state.continuing
+      ? `- 這是已經存在的分支 ${item.branch}（基底 origin/${item.baseBranch}），之前已經有開發內容：比基底多 ${state.commits} 個提交、${state.dirty} 個未提交的修改。` +
+        `請先看過現有的差異（git diff origin/${item.baseBranch}...HEAD 與 git status），了解做到哪裡，再接著完成剩下的部分；不要重做已經完成的內容，也不要丟掉未提交的修改。FlowPilot 已經切換好分支，不要切換分支。`
+      : `- FlowPilot 已經在這個資料夾建立並切換到分支 ${item.branch}（從 origin/${item.baseBranch} 開出）。請直接在目前分支開發，不要切換分支。`;
     const instructions = [
       `請使用 $${item.skill} 處理這張 Jira：${item.mainUrl}`,
       '',
       `- 指派給我的子任務是 ${item.ticketKey}（${item.ticketSummary}）；需求內容寫在主單 ${item.mainKey}。`,
-      `- FlowPilot 已經在這個資料夾建立並切換到分支 ${item.branch}（從 origin/${item.baseBranch} 開出）。請直接在目前分支開發，不要切換分支。`,
+      branchLine,
       '- 不要提交、不要推送；完成後由我審查並提交。',
       item.targetMerchants.length ? `- 這張單之後還要移植到商戶 ${item.targetMerchants.join('、')}，那是下一階段的事，這次只做目前這個商戶。` : '',
     ]
@@ -283,8 +374,18 @@ export class Runner {
         this.turns.set(threadId, message.params.turn?.id);
         if (item.status !== 'running') this.update(item.id, { status: 'running', activity: '執行中', pending: null });
         break;
+      case 'item/agentMessage/delta': {
+        const text = (this.streaming.get(item.id) ?? '') + (message.params.delta ?? '');
+        this.streaming.set(item.id, text);
+        this.deps.onStream(item.id, text);
+        break;
+      }
       case 'item/started': {
         const it = message.params.item ?? {};
+        if (it.type === 'agentMessage') {
+          this.streaming.set(item.id, '');
+          this.deps.onStream(item.id, '');
+        }
         const activity =
           it.type === 'commandExecution' ? `執行：${short(it.command ?? '', 80)}`
           : it.type === 'fileChange' ? '修改檔案'
@@ -296,7 +397,10 @@ export class Runner {
         break;
       }
       case 'item/completed':
-        if (message.params.item?.type === 'agentMessage') this.update(item.id, { lastMessage: message.params.item.text ?? '' });
+        if (message.params.item?.type === 'agentMessage') {
+          this.streaming.delete(item.id);
+          this.update(item.id, { lastMessage: message.params.item.text ?? '' });
+        }
         break;
       case 'serverRequest/resolved':
         // 你在 VS Code 那邊回覆了：清掉 FlowPilot 這邊的待處理
@@ -306,6 +410,7 @@ export class Runner {
         break;
       case 'turn/completed': {
         this.turns.delete(threadId);
+        this.streaming.delete(item.id);
         const turn = message.params.turn ?? {};
         const latest = this.deps.store.getWorkItem(item.id)!;
         if (turn.status === 'failed') {
@@ -388,6 +493,7 @@ export class Runner {
       await this.reply(id, '請從剛才中斷的地方繼續。');
       return;
     }
+    this.allowed.delete(id);
     this.update(id, { status: 'queued', folder: null, activity: '' });
     await this.schedule();
   }

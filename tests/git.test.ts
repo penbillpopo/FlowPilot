@@ -66,3 +66,30 @@ describe('準備資料夾', () => {
     await expect(createBranch(folder.path, 'ban/m8/ALL-9', 'master-8')).rejects.toThrow('建立分支');
   });
 });
+
+describe('已存在的分支', () => {
+  it('比對本機與遠端、從遠端切換、快轉', async () => {
+    const { aheadBehind, commitsSinceBase, currentBranch, fastForward, fetchOrigin, switchToRemoteBranch } = await import('../src/main/git');
+    const [a, b] = setup();
+    // 只在遠端的 ban/m8/ALL-2：從遠端切過去
+    await switchToRemoteBranch(a.path, 'ban/m8/ALL-2');
+    expect(await currentBranch(a.path)).toBe('ban/m8/ALL-2');
+    expect(await aheadBehind(a.path, 'ban/m8/ALL-2')).toEqual({ ahead: 0, behind: 0 });
+    // 另一個資料夾在同一條分支推了新提交 → 這邊落後 1
+    await switchToRemoteBranch(b.path, 'ban/m8/ALL-2');
+    git(b.path, '-c', 'user.name=t', '-c', 'user.email=t@t', 'commit', '-q', '--allow-empty', '-m', 'b');
+    git(b.path, 'push', '-q', 'origin', 'ban/m8/ALL-2');
+    await fetchOrigin(a.path);
+    expect(await aheadBehind(a.path, 'ban/m8/ALL-2')).toEqual({ ahead: 0, behind: 1 });
+    await fastForward(a.path, 'ban/m8/ALL-2');
+    expect(await aheadBehind(a.path, 'ban/m8/ALL-2')).toEqual({ ahead: 0, behind: 0 });
+    expect(await commitsSinceBase(a.path, 'master-8')).toBe(1);
+    // 兩邊各有新提交 → 分歧
+    git(a.path, '-c', 'user.name=t', '-c', 'user.email=t@t', 'commit', '-q', '--allow-empty', '-m', 'a');
+    git(b.path, '-c', 'user.name=t', '-c', 'user.email=t@t', 'commit', '-q', '--allow-empty', '-m', 'b2');
+    git(b.path, 'push', '-q', 'origin', 'ban/m8/ALL-2');
+    await fetchOrigin(a.path);
+    expect(await aheadBehind(a.path, 'ban/m8/ALL-2')).toEqual({ ahead: 1, behind: 1 });
+    await expect(fastForward(a.path, 'ban/m8/ALL-2')).rejects.toThrow('快轉');
+  });
+});

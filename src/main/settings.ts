@@ -32,7 +32,12 @@ export interface Settings {
   jira: {
     /** 沿用 JiraMcpServer 的 .env（JIRA_BASE_URL、JIRA_EMAIL、JIRA_TOKEN_FILE） */
     envFile: string;
-    jql: string;
+    /** 列單的基本條件（狀態另外在畫面上選） */
+    filter: string;
+    /** 畫面上可以選的狀態（Jira 上顯示的名稱） */
+    statuses: string[];
+    /** 第一次打開時預設選哪些狀態 */
+    defaultStatuses: string[];
   };
   projects: Record<string, ProjectRule>;
   folders: FolderSetting[];
@@ -45,9 +50,12 @@ export const DEFAULT_SETTINGS_YAML = `# FlowPilot 設定。改完存檔，重新
 jira:
   # 沿用 JiraMcpServer 專案的連線設定（網址、帳號、權杖檔），FlowPilot 不另外保存權杖
   envFile: ~/Desktop/Project/JiraMcpServer/.env
-  # 列出要做的單：指派給我、狀態是「進行中」
-  # 注意：查詢要用狀態的原始名稱 In Progress，畫面上的「進行中」是翻譯過的名稱，查不到
-  jql: assignee = currentUser() AND status = "In Progress" ORDER BY updated DESC
+  # 列單的基本條件：指派給我（狀態在畫面上選）
+  filter: assignee = currentUser()
+  # 畫面上可以選的狀態，寫 Jira 上顯示的名稱（FlowPilot 會自己換成狀態編號查詢，不受翻譯影響）
+  statuses: [待辦事項, 進行中, UAT, READY TO TEST]
+  # 第一次打開時預設選哪些狀態
+  defaultStatuses: [進行中]
 
 # 計畫表預設的開發技能（Codex 技能名稱）
 defaultSkill: frontend-workflow
@@ -97,7 +105,10 @@ export function expandHome(path: string): string {
 
 export function parseSettings(text: string): Settings {
   const raw = YAML.parse(text) as Settings;
-  if (!raw?.jira?.envFile || !raw.jira.jql) throw new Error('設定檔缺少 jira.envFile 或 jira.jql');
+  if (!raw?.jira?.envFile) throw new Error('設定檔缺少 jira.envFile');
+  raw.jira.filter ||= 'assignee = currentUser()';
+  raw.jira.statuses ||= ['待辦事項', '進行中', 'UAT', 'READY TO TEST'];
+  raw.jira.defaultStatuses ||= ['進行中'];
   if (!raw.projects || !Array.isArray(raw.folders)) throw new Error('設定檔缺少 projects 或 folders');
   raw.defaultSkill ||= 'frontend-workflow';
   for (const folder of raw.folders) {

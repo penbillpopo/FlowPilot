@@ -1,6 +1,8 @@
 // 執行看板：四個資料夾目前在做什麼，以及每張單的進度、AI 的提問與你的回覆。
 import { useEffect, useRef, useState } from 'react';
 import type { BoardState, WorkItem, WorkStatus } from '../../shared/types';
+import { Markdown } from './Markdown';
+import { TerminalPanel } from './TerminalPanel';
 
 const api = window.flowpilot;
 
@@ -19,11 +21,35 @@ function errorText(e: unknown) {
   return e instanceof Error ? e.message.replace(/^Error invoking remote method '[^']+': (Error: )?/, '') : String(e);
 }
 
-function ItemCard({ item, focused }: { item: WorkItem; focused: boolean }) {
+/** 回覆區塊：內容變長時，如果你停在最下面就自動跟著捲；你往上捲去看前面時不會被拉回來 */
+function MessageBox({ text, live }: { text: string; live: boolean }) {
+  const ref = useRef<HTMLDivElement>(null);
+  const stick = useRef(true);
+  useEffect(() => {
+    const box = ref.current;
+    if (box && stick.current) box.scrollTop = box.scrollHeight;
+  }, [text]);
+  return (
+    <div
+      ref={ref}
+      className={`message-box ${live ? 'live' : ''}`}
+      onScroll={(e) => {
+        const box = e.currentTarget;
+        stick.current = box.scrollHeight - box.scrollTop - box.clientHeight < 24;
+      }}
+    >
+      <Markdown text={text} />
+      {live && <span className="cursor" />}
+    </div>
+  );
+}
+
+function ItemCard({ item, focused, streaming }: { item: WorkItem; focused: boolean; streaming: string | undefined }) {
   const [text, setText] = useState('');
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [expanded, setExpanded] = useState(item.status === 'waiting' || item.status === 'review');
+  const [terminal, setTerminal] = useState(false);
   const ref = useRef<HTMLElement>(null);
 
   useEffect(() => {
@@ -45,7 +71,7 @@ function ItemCard({ item, focused }: { item: WorkItem; focused: boolean }) {
     }
   }
 
-  const canReply = !!item.threadId && !['queued', 'preparing'].includes(item.status) && item.pending?.kind !== 'approval';
+  const canReply = !!item.threadId && !['queued', 'preparing'].includes(item.status) && item.pending?.kind !== 'approval' && item.pending?.kind !== 'decision';
 
   return (
     <section ref={ref} className={`item status-${item.status} ${focused ? 'focused' : ''}`}>
@@ -72,6 +98,18 @@ function ItemCard({ item, focused }: { item: WorkItem; focused: boolean }) {
           </div>
         </div>
       )}
+      {item.pending?.kind === 'decision' && (
+        <div className="pending">
+          <div>{item.pending.question}</div>
+          <div className="row">
+            {item.pending.options.map((option, index) => (
+              <button key={option.id} className={index === 0 ? 'primary' : ''} disabled={busy} onClick={() => act(() => api.decide(item.id, option.id))}>
+                {option.label}
+              </button>
+            ))}
+          </div>
+        </div>
+      )}
       {item.pending?.kind === 'userInput' && (
         <div className="pending">
           {item.pending.questions.map((q) => (
@@ -83,11 +121,18 @@ function ItemCard({ item, focused }: { item: WorkItem; focused: boolean }) {
         </div>
       )}
 
-      {item.lastMessage && (
+      {streaming !== undefined ? (
         <div className="message">
-          <button className="link" onClick={() => setExpanded(!expanded)}>{expanded ? '收起 AI 的最後回覆' : '看 AI 的最後回覆'}</button>
-          {expanded && <pre>{item.lastMessage}</pre>}
+          <div className="live-label">AI 正在回覆…</div>
+          <MessageBox text={streaming} live />
         </div>
+      ) : (
+        item.lastMessage && (
+          <div className="message">
+            <button className="link" onClick={() => setExpanded(!expanded)}>{expanded ? '收起 AI 的最後回覆' : '看 AI 的最後回覆'}</button>
+            {expanded && <MessageBox text={item.lastMessage} live={false} />}
+          </div>
+        )
       )}
 
       {canReply && (
@@ -108,10 +153,16 @@ function ItemCard({ item, focused }: { item: WorkItem; focused: boolean }) {
       )}
 
       <div className="row">
+        {item.threadId && item.folder && (
+          <button className={terminal ? 'on' : ''} onClick={() => setTerminal(!terminal)}>
+            {terminal ? '收起終端機' : '在這裡打開終端機'}
+          </button>
+        )}
         {item.threadId && item.folder && <button onClick={() => act(() => api.openInVSCode(item.id))}>在 VS Code 查看</button>}
-        {['running', 'waiting', 'preparing'].includes(item.status) && <button disabled={busy} onClick={() => act(() => api.stop(item.id))}>停止</button>}
+        {['running', 'waiting', 'preparing'].includes(item.status) && item.pending?.kind !== 'decision' && <button disabled={busy} onClick={() => act(() => api.stop(item.id))}>停止</button>}
         {['blocked', 'failed', 'stopped'].includes(item.status) && <button disabled={busy} onClick={() => act(() => api.retry(item.id))}>重試</button>}
       </div>
+      {terminal && item.threadId && <TerminalPanel itemId={item.id} onClose={() => setTerminal(false)} />}
       {error && <div className="error">{error}</div>}
     </section>
   );
@@ -119,15 +170,28 @@ function ItemCard({ item, focused }: { item: WorkItem; focused: boolean }) {
 
 export function BoardView() {
   const [board, setBoard] = useState<BoardState | null>(null);
+  const [streams, setStreams] = useState<Record<number, string>>({});
   const [focus, setFocus] = useState<number | null>(null);
   const [error, setError] = useState<string | null>(null);
 
   useEffect(() => {
-    api.board().then(setBoard).catch((e) => setError(errorText(e)));
-    const offBoard = api.onBoardChanged(setBoard);
+    api
+      .board()
+      .then((b) => {
+        setBoard(b);
+        setStreams(b.streaming);
+      })
+      .catch((e) => setError(errorText(e)));
+    const offBoard = api.onBoardChanged((b) => {
+      setBoard(b);
+      // 寫完的回覆已經存進最後回覆，從即時內容拿掉
+      setStreams((prev) => Object.fromEntries(Object.entries(prev).filter(([id]) => id in b.streaming)));
+    });
+    const offStream = api.onStream((itemId, text) => setStreams((prev) => ({ ...prev, [itemId]: text })));
     const offFocus = api.onFocusItem(setFocus);
     return () => {
       offBoard();
+      offStream();
       offFocus();
     };
   }, []);
@@ -179,7 +243,7 @@ export function BoardView() {
       <div className="items">
         {items.length === 0 && <p className="empty">還沒有工作。到「單列表」勾選單、確認計畫後就會開始。</p>}
         {items.map((item) => (
-          <ItemCard key={item.id} item={item} focused={focus === item.id} />
+          <ItemCard key={item.id} item={item} focused={focus === item.id} streaming={streams[item.id]} />
         ))}
       </div>
     </main>

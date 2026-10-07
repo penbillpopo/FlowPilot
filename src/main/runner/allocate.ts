@@ -16,6 +16,7 @@ export function dependencyGroup(rule: ProjectRule, merchant: number | null): str
 /**
  * 挑一個空著的資料夾給這個工作項目；沒有就回傳 null（繼續排隊）。
  * 有套件群組的專案，優先挑目前分支同群組的資料夾，切過去不用重新安裝套件。
+ * onlyFolder：分支已經存在於某個資料夾時，只能用那個資料夾（被佔用就繼續排隊）。
  */
 export function pickFolder(
   item: { project: string; merchant: number | null },
@@ -23,8 +24,9 @@ export function pickFolder(
   occupied: Set<string>,
   currentBranches: Record<string, string>,
   rule: ProjectRule,
+  onlyFolder: string | null = null,
 ): FolderSetting | null {
-  const free = folders.filter((f) => f.project === item.project && !occupied.has(f.name));
+  const free = folders.filter((f) => f.project === item.project && !occupied.has(f.name) && (onlyFolder === null || f.name === onlyFolder));
   if (free.length <= 1) return free[0] ?? null;
   const wanted = dependencyGroup(rule, item.merchant);
   if (wanted === null) return free[0];

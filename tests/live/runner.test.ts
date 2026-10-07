@@ -48,6 +48,7 @@ it.runIf(process.env.LIVE)('完整執行流程', { timeout: 600_000 }, async () 
 
   const codex = new CodexRpc('daemon');
   const notes: string[] = [];
+  let streamed = '';
   const attached: string[] = [];
   const runner = new Runner({
     store,
@@ -56,6 +57,7 @@ it.runIf(process.env.LIVE)('完整執行流程', { timeout: 600_000 }, async () 
     vscode: { attach: async (_f: unknown, item: { threadId: string }) => void attached.push(item.threadId) } as unknown as VSCode,
     notify: (title) => notes.push(title),
     onChange: () => {},
+    onStream: (_id, text) => void (streamed = text),
     log: (m) => console.log('紀錄', m),
   });
   codex.on((m) => { if (m.method && (m.id !== undefined || m.method === 'item/started')) console.log('Codex：', m.method, m.id ?? '', JSON.stringify(m.params?.item?.command ?? m.params?.command ?? '')); });
@@ -74,6 +76,7 @@ it.runIf(process.env.LIVE)('完整執行流程', { timeout: 600_000 }, async () 
   console.log('分支：', git(folder, 'branch', '--show-current').trim(), '｜狀態：', item().status, '｜回覆：', item().lastMessage);
   expect(git(folder, 'branch', '--show-current').trim()).toBe('ban/m1/ALL-1');
   expect(item().status).toBe('waiting');
+  expect(streamed.length).toBeGreaterThan(0); // 有收到即時片段
   expect(attached).toEqual([item().threadId]);
 
   await runner.reply(item().id, '繼續');

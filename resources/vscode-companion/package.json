@@ -1,0 +1,10 @@
+{
+  "name": "flowpilot-companion",
+  "displayName": "FlowPilot 輔助外掛",
+  "description": "讓 FlowPilot 在 VS Code 開終端機分頁，即時看到每張單的 AI 在做什麼",
+  "version": "0.1.0",
+  "publisher": "flowpilot",
+  "engines": { "vscode": "^1.80.0" },
+  "activationEvents": ["onUri", "onStartupFinished"],
+  "main": "./extension.js"
+}

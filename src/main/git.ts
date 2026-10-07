@@ -1,0 +1,92 @@
+// git 操作：只用 execFile 帶參數陣列，不經過 shell，分支名稱有特殊字元也不會被拆開。
+import { execFile } from 'node:child_process';
+import type { PlanBranch } from '../shared/types';
+import type { FolderSetting } from './settings';
+
+export interface GitResult {
+  code: number;
+  stdout: string;
+  stderr: string;
+}
+
+export function runGit(cwd: string, args: string[], timeoutMs = 30_000): Promise<GitResult> {
+  return new Promise((resolve) => {
+    execFile('git', args, { cwd, timeout: timeoutMs, env: { ...process.env, GIT_TERMINAL_PROMPT: '0' } }, (error, stdout, stderr) => {
+      const code = error ? (typeof error.code === 'number' ? error.code : 1) : 0;
+      resolve({ code, stdout: stdout.toString(), stderr: stderr.toString() || (error && !stderr ? error.message : '') });
+    });
+  });
+}
+
+/** 抓遠端最新狀態（只更新遠端紀錄，不碰資料夾裡的檔案） */
+export async function fetchOrigin(cwd: string): Promise<void> {
+  const result = await runGit(cwd, ['fetch', '--prune', 'origin'], 120_000);
+  if (result.code !== 0) throw new Error(`抓遠端失敗（${cwd}）：${result.stderr.trim().split('\n').pop()}`);
+}
+
+async function refExists(cwd: string, ref: string): Promise<boolean> {
+  return (await runGit(cwd, ['rev-parse', '--verify', '--quiet', ref])).code === 0;
+}
+
+/**
+ * 檢查分支是否已建立：名稱完全相同才算。
+ * 每個專案的所有資料夾先抓一次遠端，再看各資料夾的本機分支與遠端分支。
+ * 你在計畫表修改內容時不重新抓遠端（剛抓過），只重新比對。
+ */
+export async function checkExisting(branches: PlanBranch[], folders: FolderSetting[], options = { fetch: true }): Promise<PlanBranch[]> {
+  const projects = [...new Set(branches.map((b) => b.project))];
+  const projectFolders = new Map(projects.map((p) => [p, folders.filter((f) => f.project === p)]));
+  for (const [project, list] of projectFolders) {
+    if (list.length === 0) throw new Error(`設定檔裡沒有「${project}」的資料夾`);
+  }
+  if (options.fetch) await Promise.all([...projectFolders.values()].flat().map((f) => fetchOrigin(f.path)));
+
+  return Promise.all(
+    branches.map(async (branch) => {
+      const list = projectFolders.get(branch.project)!;
+      const existsIn: string[] = [];
+      for (const folder of list) {
+        if (await refExists(folder.path, `refs/heads/${branch.branch}`)) existsIn.push(folder.name);
+      }
+      // 同一個專案的資料夾都連到同一個遠端，看第一個就好
+      if (await refExists(list[0].path, `refs/remotes/origin/${branch.branch}`)) existsIn.push('遠端');
+      return { ...branch, existsIn };
+    }),
+  );
+}
+
+/** 資料夾目前所在的分支（不在任何分支上時回傳空字串） */
+export async function currentBranch(cwd: string): Promise<string> {
+  return (await runGit(cwd, ['branch', '--show-current'])).stdout.trim();
+}
+
+/** 未提交的修改（包含未追蹤的檔案）；空陣列代表乾淨 */
+export async function dirtyFiles(cwd: string): Promise<string[]> {
+  const result = await runGit(cwd, ['status', '--porcelain']);
+  if (result.code !== 0) throw new Error(`讀不到 git 狀態（${cwd}）：${result.stderr.trim()}`);
+  return result.stdout.split('\n').filter(Boolean).map((line) => line.slice(3));
+}
+
+export async function localBranchExists(cwd: string, branch: string): Promise<boolean> {
+  return refExists(cwd, `refs/heads/${branch}`);
+}
+
+export async function remoteBranchExists(cwd: string, branch: string): Promise<boolean> {
+  return refExists(cwd, `refs/remotes/origin/${branch}`);
+}
+
+/** 從遠端最新的基底分支建立新分支（不切換） */
+export async function createBranch(cwd: string, branch: string, baseBranch: string): Promise<void> {
+  const result = await runGit(cwd, ['branch', '--no-track', branch, `origin/${baseBranch}`]);
+  if (result.code !== 0) throw new Error(`建立分支 ${branch} 失敗：${result.stderr.trim()}`);
+}
+
+export async function switchBranch(cwd: string, branch: string): Promise<void> {
+  const result = await runGit(cwd, ['switch', branch]);
+  if (result.code !== 0) throw new Error(`切換到 ${branch} 失敗：${result.stderr.trim()}`);
+}
+
+/** 某個檔案在目前分支的內容雜湊（用來判斷 package-lock.json 有沒有變） */
+export async function fileHash(cwd: string, path: string): Promise<string> {
+  return (await runGit(cwd, ['rev-parse', `HEAD:${path}`])).stdout.trim();
+}

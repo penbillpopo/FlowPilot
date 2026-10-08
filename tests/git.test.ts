@@ -93,3 +93,14 @@ describe('已存在的分支', () => {
     await expect(fastForward(a.path, 'ban/m8/ALL-2')).rejects.toThrow('快轉');
   });
 });
+
+describe('抓遠端', () => {
+  it('同一個倉庫同時抓好幾次也不會撞鎖（合併成一次）', async () => {
+    const { fetchOrigin } = await import('../src/main/git');
+    const [a] = setup();
+    const first = fetchOrigin(a.path);
+    expect(fetchOrigin(a.path)).toBe(first); // 還在抓：拿到同一個
+    await Promise.all([first, fetchOrigin(a.path), fetchOrigin(a.path)]);
+    await fetchOrigin(a.path); // 抓完之後可以再抓
+  });
+});

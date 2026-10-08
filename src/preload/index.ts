@@ -35,6 +35,10 @@ const api: FlowPilotApi = {
   approve: (id, accept) => ipcRenderer.invoke('item:approve', id, accept),
   decide: (id, optionId) => ipcRenderer.invoke('item:decide', id, optionId),
   stop: (id) => ipcRenderer.invoke('item:stop', id),
+  remove: (id) => ipcRenderer.invoke('item:remove', id),
+  handOff: (id) => ipcRenderer.invoke('item:handOff', id),
+  changedFiles: (id) => ipcRenderer.invoke('item:changedFiles', id),
+  commit: (id, files) => ipcRenderer.invoke('item:commit', id, files),
   retry: (id) => ipcRenderer.invoke('item:retry', id),
   openInVSCode: (id) => ipcRenderer.invoke('item:openInVSCode', id),
   terminal: {

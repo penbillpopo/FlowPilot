@@ -1,7 +1,7 @@
 // 資料庫：~/Library/Application Support/FlowPilot/flowpilot.db（SQLite，用 Node 內建的 node:sqlite）
 // 每次狀態改變先寫進來，重新啟動才接得回去。
 import { DatabaseSync } from 'node:sqlite';
-import type { JiraTicket, Judgement, PendingRequest, RunSummary, TicketPlan, WorkItem, WorkStatus } from '../shared/types';
+import type { JiraTicket, Judgement, PendingRequest, RunSummary, TicketPlan, WorkItem, WorkLane, WorkStatus } from '../shared/types';
 import type { PastDecision } from './planner/judge';
 
 // 依序執行的資料庫結構變更；只能往後加，不能改前面的
@@ -56,12 +56,20 @@ const MIGRATIONS: string[] = [
    );`,
   // 已存在的分支繼續開發：分支在哪個資料夾，就要用哪個資料夾
   `ALTER TABLE work_items ADD COLUMN preferred_folder TEXT;`,
+  // 一次只跟一張單對話：工作項目分成排隊、對話中、開發佇列、已完成
+  `ALTER TABLE work_items ADD COLUMN lane TEXT NOT NULL DEFAULT 'waiting';
+   ALTER TABLE work_items ADD COLUMN commit_sha TEXT;
+   UPDATE work_items SET lane = 'done' WHERE status IN ('removed', 'stopped', 'failed');
+   UPDATE work_items SET lane = 'development' WHERE lane = 'waiting' AND status != 'queued';`,
 ];
 
 /** 還佔著資料夾的狀態 */
 export const OCCUPYING: WorkStatus[] = ['preparing', 'running', 'waiting', 'review', 'blocked'];
 
-type NewWorkItem = Omit<WorkItem, 'id' | 'folder' | 'status' | 'activity' | 'threadId' | 'lastMessage' | 'pending' | 'updatedAt'>;
+/** 已經結束的狀態 */
+export const FINISHED: WorkStatus[] = ['failed', 'stopped', 'removed', 'committed'];
+
+type NewWorkItem = Omit<WorkItem, 'id' | 'folder' | 'lane' | 'status' | 'activity' | 'threadId' | 'lastMessage' | 'pending' | 'updatedAt'>;
 
 interface WorkItemRow {
   id: number;
@@ -79,16 +87,18 @@ interface WorkItemRow {
   pr_title: string;
   preferred_folder: string | null;
   folder: string | null;
+  lane: WorkLane;
   status: WorkStatus;
   activity: string;
   thread_id: string | null;
   last_message: string;
   pending_json: string | null;
   branch_created: number;
+  commit_sha: string | null;
   updated_at: string;
 }
 
-function toWorkItem(row: WorkItemRow): WorkItem & { branchCreated: boolean } {
+function toWorkItem(row: WorkItemRow): WorkItem & { branchCreated: boolean; commitSha: string | null } {
   return {
     id: row.id,
     runId: row.run_id,
@@ -105,6 +115,7 @@ function toWorkItem(row: WorkItemRow): WorkItem & { branchCreated: boolean } {
     prTitle: row.pr_title,
     preferredFolder: row.preferred_folder,
     folder: row.folder,
+    lane: row.lane,
     status: row.status,
     activity: row.activity,
     threadId: row.thread_id,
@@ -112,6 +123,7 @@ function toWorkItem(row: WorkItemRow): WorkItem & { branchCreated: boolean } {
     pending: row.pending_json ? (JSON.parse(row.pending_json) as PendingRequest) : null,
     updatedAt: row.updated_at,
     branchCreated: !!row.branch_created,
+    commitSha: row.commit_sha,
   };
 }
 
@@ -119,6 +131,8 @@ export type StoredWorkItem = ReturnType<typeof toWorkItem>;
 
 const PATCH_COLUMNS = {
   folder: 'folder',
+  lane: 'lane',
+  commitSha: 'commit_sha',
   preferredFolder: 'preferred_folder',
   status: 'status',
   activity: 'activity',
@@ -237,6 +251,10 @@ export class Store {
     return ids.map((id) => this.getWorkItem(id)!);
   }
 
+  markRunStarted(runId: number) {
+    this.db.prepare("UPDATE runs SET status = 'started' WHERE id = ?").run(runId);
+  }
+
   getWorkItem(id: number): StoredWorkItem | null {
     const row = this.db.prepare('SELECT * FROM work_items WHERE id = ?').get(id) as WorkItemRow | undefined;
     return row ? toWorkItem(row) : null;
@@ -251,8 +269,8 @@ export class Store {
   listWorkItems(): StoredWorkItem[] {
     const rows = this.db
       .prepare(
-        `SELECT * FROM work_items WHERE status NOT IN ('failed', 'stopped')
-         UNION SELECT * FROM (SELECT * FROM work_items WHERE status IN ('failed', 'stopped') ORDER BY id DESC LIMIT 30)
+        `SELECT * FROM work_items WHERE status NOT IN ('failed', 'stopped', 'removed', 'committed')
+         UNION SELECT * FROM (SELECT * FROM work_items WHERE status IN ('failed', 'stopped', 'committed') ORDER BY id DESC LIMIT 30)
          ORDER BY id`,
       )
       .all() as unknown as WorkItemRow[];
@@ -279,6 +297,14 @@ export class Store {
     }
     this.db.prepare(`UPDATE work_items SET ${sets.join(', ')} WHERE id = ?`).run(...values, id);
     return this.getWorkItem(id)!;
+  }
+
+  /** 同一個專案、同一條分支還沒結束的工作項目（避免重複建立） */
+  activeWorkItem(project: string, branch: string): StoredWorkItem | null {
+    const row = this.db
+      .prepare("SELECT * FROM work_items WHERE project = ? AND branch = ? AND status NOT IN ('failed', 'stopped', 'removed', 'committed') ORDER BY id DESC LIMIT 1")
+      .get(project, branch) as WorkItemRow | undefined;
+    return row ? toWorkItem(row) : null;
   }
 
   /** 已確認計畫、但還沒開始執行的最近一次 */

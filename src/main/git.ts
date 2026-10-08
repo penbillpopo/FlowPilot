@@ -18,10 +18,31 @@ export function runGit(cwd: string, args: string[], timeoutMs = 30_000): Promise
   });
 }
 
-/** 抓遠端最新狀態（只更新遠端紀錄，不碰資料夾裡的檔案） */
-export async function fetchOrigin(cwd: string): Promise<void> {
-  const result = await runGit(cwd, ['fetch', '--prune', 'origin'], 120_000);
-  if (result.code !== 0) throw new Error(`抓遠端失敗（${cwd}）：${result.stderr.trim().split('\n').pop()}`);
+/** 正在抓遠端的倉庫：同一個倉庫同時只抓一次，後來的請求等同一次的結果 */
+const fetching = new Map<string, Promise<void>>();
+
+/**
+ * 抓遠端最新狀態（只更新遠端紀錄，不碰資料夾裡的檔案）。
+ * 同一個倉庫同時抓兩次，git 會搶不到紀錄的鎖而失敗（unable to update local ref），
+ * 所以同一個倉庫的請求合併成一次；萬一還是撞到別的程式在抓，等一下再試一次。
+ */
+export function fetchOrigin(cwd: string): Promise<void> {
+  const running = fetching.get(cwd);
+  if (running) return running;
+  const task = (async () => {
+    for (let attempt = 1; ; attempt++) {
+      const result = await runGit(cwd, ['fetch', '--prune', 'origin'], 120_000);
+      if (result.code === 0) return;
+      const locked = /unable to update local ref|cannot lock ref|\.lock': File exists/i.test(result.stderr);
+      if (locked && attempt < 3) {
+        await new Promise((r) => setTimeout(r, 1500 * attempt));
+        continue;
+      }
+      throw new Error(`抓遠端失敗（${cwd}）：${result.stderr.trim().split('\n').pop()}`);
+    }
+  })().finally(() => fetching.delete(cwd));
+  fetching.set(cwd, task);
+  return task;
 }
 
 async function refExists(cwd: string, ref: string): Promise<boolean> {

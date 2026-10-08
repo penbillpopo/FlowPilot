@@ -60,3 +60,19 @@ describe('計畫與修正紀錄', () => {
     store.close();
   });
 });
+
+describe('工作項目', () => {
+  it('同一條分支還沒結束時找得到；移除後不再顯示、也不算進行中', () => {
+    const store = new Store(':memory:');
+    const run = store.createRun([ticket('ALL-1')]);
+    const [item] = store.createWorkItems([{
+      runId: run.id, ticketKey: 'ALL-1', ticketSummary: '', mainKey: 'ALL-1', mainUrl: '', project: 'PlatformWeb', merchant: 1,
+      targetMerchants: [], branch: 'ban/m1/ALL-1', baseBranch: 'master-1', skill: 'x', prTitle: 'feat(ALL-1) x', preferredFolder: null,
+    }]);
+    expect(store.activeWorkItem('PlatformWeb', 'ban/m1/ALL-1')?.id).toBe(item.id);
+    expect(store.activeWorkItem('PlatformAdmin', 'ban/m1/ALL-1')).toBeNull();
+    store.updateWorkItem(item.id, { status: 'removed' });
+    expect(store.activeWorkItem('PlatformWeb', 'ban/m1/ALL-1')).toBeNull();
+    expect(store.listWorkItems()).toEqual([]);
+  });
+});

@@ -1,7 +1,7 @@
 // 實測（LIVE=1 才跑）：用暫存的 git 倉庫與真的 Codex 常駐服務，跑一次完整的執行流程。
 // 測試技能會：執行 git status → 問你要不要繼續 → 你回覆後嘗試 git commit（危險，要你同意）→ 結束。
 import { execFileSync } from 'node:child_process';
-import { mkdirSync, mkdtempSync, writeFileSync } from 'node:fs';
+import { mkdirSync, mkdtempSync, readFileSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { expect, it } from 'vitest';
@@ -25,6 +25,8 @@ it.runIf(process.env.LIVE)('完整執行流程', { timeout: 600_000 }, async () 
     `---\nname: flowpilot-test\ndescription: FlowPilot 的測試技能\n---\n\n依序做：\n1. 執行 \`git branch --show-current\`。\n2. 回覆「目前分支是 X，要繼續嗎？」然後停下來等使用者回答。\n3. 使用者回答後，執行 \`git clean -n\`（只是預覽，不會刪檔）。不管成功或被拒絕，都回覆「測試完成」並結束。\n`,
   );
   writeFileSync(join(seed, 'package-lock.json'), '{}');
+  mkdirSync(join(seed, 'src/environments'), { recursive: true });
+  writeFileSync(join(seed, 'src/environments/environment.ts'), "export const apiUrl = 'sit';\n");
   mkdirSync(join(seed, 'node_modules'));
   writeFileSync(join(seed, '.gitignore'), 'node_modules\n');
   git(seed, 'add', '.');
@@ -88,6 +90,19 @@ it.runIf(process.env.LIVE)('完整執行流程', { timeout: 600_000 }, async () 
   await waitFor(() => item()?.status === 'review', 'AI 做完');
   console.log('最後：', item().status, '｜', item().lastMessage, '｜通知：', notes.join('、'));
   expect(git(folder, 'log', '--oneline').trim().split('\n')).toHaveLength(1); // 提交被拒絕，沒有新提交
+
+  // 審查與提交：environment.ts 預設不勾，提交後還原；資料夾變乾淨並讓出來
+  writeFileSync(join(folder, 'src/feature.ts'), 'export const x = 1;\n');
+  writeFileSync(join(folder, 'src/environments/environment.ts'), "export const apiUrl = 'uat';\n"); // 模擬瀏覽器測試切到 UAT
+  const changed = await runner.changedFiles(item().id);
+  expect(changed.find((c) => c.path === 'src/feature.ts')?.suggested).toBe(true);
+  expect(changed.find((c) => c.path === 'src/environments/environment.ts')?.suggested).toBe(false);
+  const result = await runner.commit(item().id, ['src/feature.ts']);
+  console.log('提交：', result.sha, '｜剩下的修改：', result.leftover, '｜狀態：', item()?.status ?? '已不在清單（已提交）');
+  expect(result.leftover).toEqual([]);
+  expect(git(folder, 'log', '-1', '--format=%s').trim()).toBe('feat(ALL-1) test');
+  expect(git(folder, 'status', '--porcelain').trim()).toBe('');
+  expect(readFileSync(join(folder, 'src/environments/environment.ts'), 'utf8')).toContain("'sit'"); // 已還原
   codex.stop();
   store.close();
 });

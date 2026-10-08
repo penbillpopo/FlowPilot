@@ -51,6 +51,10 @@ export function PlanView({ run, tickets, onBack, onConfirmed }: Props) {
   const [confirmError, setConfirmError] = useState<string | null>(null);
   const [confirming, setConfirming] = useState(false);
   const fetchedOnce = useRef(false);
+  /** 開發模式下 React 會把初始化跑兩次，用這個避免每張單判斷兩次 */
+  const started = useRef(false);
+  /** 看板上還沒結束的工作（同一條分支不會重複建立） */
+  const [active, setActive] = useState<{ branch: string; status: string }[]>([]);
 
   async function judge(ticket: JiraTicket, defaultSkill: string) {
     setJudgeErrors(({ [ticket.key]: _, ...rest }) => rest);
@@ -64,11 +68,17 @@ export function PlanView({ run, tickets, onBack, onConfirmed }: Props) {
   }
 
   useEffect(() => {
+    if (started.current) return;
+    started.current = true;
     api.planOptions().then((o) => {
       setOptions(o);
       tickets.forEach((t) => judge(t, o.defaultSkill));
     });
     api.listSkills().then(setSkills).catch(() => setSkills([]));
+    api
+      .board()
+      .then((b) => setActive(b.items.filter((i) => !['failed', 'stopped', 'removed'].includes(i.status)).map((i) => ({ branch: i.branch, status: i.status }))))
+      .catch(() => {});
   }, []);
 
   const allJudged = tickets.every((t) => plans[t.key]);
@@ -312,6 +322,13 @@ export function PlanView({ run, tickets, onBack, onConfirmed }: Props) {
                       </label>
                     );
                   })}
+                  {branchesOf(ticket.key)
+                    .filter((b) => b.role !== 'target' && active.some((a) => a.branch === b.branch))
+                    .map((b) => (
+                      <p key={`active-${b.branch}`} className="warn">
+                        {b.branch} 在執行看板上已經有進行中的工作，確認後不會重複建立，請到執行看板繼續處理。
+                      </p>
+                    ))}
                   {continuing(ticket.key) && (
                     <p className="reason">分支已存在：會切換過去，請 AI 先看過現有的差異再接著開發。資料夾有未提交的修改、或本機與遠端分歧時，會先問你。</p>
                   )}

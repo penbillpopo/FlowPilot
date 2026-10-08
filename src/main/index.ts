@@ -15,7 +15,9 @@ import { VSCode } from './vscode';
 import { loadSettings } from './settings';
 import { Store } from './store';
 
-const dataDir = join(app.getPath('appData'), 'FlowPilot');
+// 測試時可以用 FLOWPILOT_DATA_DIR 指定另一個資料位置，不碰到正式的設定與資料庫
+const dataDir = process.env.FLOWPILOT_DATA_DIR || join(app.getPath('appData'), 'FlowPilot');
+if (process.env.FLOWPILOT_DATA_DIR) app.setPath('userData', join(dataDir, 'electron'));
 const settingsFile = join(dataDir, '設定.yaml');
 
 let window: BrowserWindow | null = null;
@@ -199,6 +201,10 @@ function registerIpc() {
   ipcMain.handle('item:approve', (_event, id: number, accept: boolean) => runner.approve(id, accept));
   ipcMain.handle('item:decide', (_event, id: number, optionId: string) => runner.decide(id, optionId));
   ipcMain.handle('item:stop', (_event, id: number) => runner.stop(id));
+  ipcMain.handle('item:remove', (_event, id: number) => runner.remove(id));
+  ipcMain.handle('item:handOff', (_event, id: number) => runner.handOff(id));
+  ipcMain.handle('item:changedFiles', (_event, id: number) => runner.changedFiles(id));
+  ipcMain.handle('item:commit', (_event, id: number, files: string[]) => runner.commit(id, files));
   ipcMain.handle('item:retry', (_event, id: number) => runner.retry(id));
   ipcMain.handle('item:openInVSCode', (_event, id: number) => runner.openInVSCode(id));
   ipcMain.handle('term:open', (_event, id: number, cols: number, rows: number) => {

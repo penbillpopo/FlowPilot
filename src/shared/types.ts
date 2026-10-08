@@ -85,7 +85,27 @@ export type WorkStatus =
   | 'review' // 等你審查：AI 做完了
   | 'blocked' // 卡住了：例如資料夾有未提交的修改
   | 'failed' // 失敗
-  | 'stopped'; // 你停止了
+  | 'stopped' // 你停止了
+  | 'removed' // 你從看板移除了（不再顯示）
+  | 'committed'; // 你審查後提交了，讓出資料夾
+
+/**
+ * 工作項目在哪一區：
+ * - waiting：排隊，等輪到跟你對話（照計畫順序）
+ * - conversation：對話中，同一時間只有一張；你按「換下一張」才移到開發佇列
+ * - development：開發佇列，在背景跑，你自己點進去看
+ * - done：已提交或結束
+ */
+export type WorkLane = 'waiting' | 'conversation' | 'development' | 'done';
+
+/** 審查用：這張單改了哪些檔案 */
+export interface ChangedFile {
+  path: string;
+  /** git 狀態代碼，例如 M、A、D、?? */
+  code: string;
+  /** 預設要不要勾選提交（environment.ts 預設不勾） */
+  suggested: boolean;
+}
 
 /** AI 等你處理的事 */
 export type PendingRequest =
@@ -113,6 +133,7 @@ export interface WorkItem {
   /** 分支已存在於某個資料夾時，一定要用那個資料夾 */
   preferredFolder: string | null;
   folder: string | null;
+  lane: WorkLane;
   status: WorkStatus;
   /** 目前在做什麼（給人看的一句話） */
   activity: string;
@@ -135,6 +156,10 @@ export interface BoardState {
   items: WorkItem[];
   /** 已確認計畫、但還沒開始執行的那次 */
   pendingRun: { id: number; ticketKeys: string[] } | null;
+  /** 開發佇列的上限與目前數量 */
+  development: { max: number; count: number };
+  /** 下一張為什麼還沒開始對話（例如在等資料夾、開發佇列已滿） */
+  nextBlockedReason: string | null;
   /** AI 正在寫、還沒寫完的回覆：工作項目編號 → 目前內容 */
   streaming: Record<number, string>;
 }
@@ -170,6 +195,14 @@ export interface FlowPilotApi {
   /** 回答 FlowPilot 要你決定的事 */
   decide(itemId: number, optionId: string): Promise<void>;
   stop(itemId: number): Promise<void>;
+  /** 從看板移除（不會動到檔案或分支） */
+  remove(itemId: number): Promise<void>;
+  /** 對話中的單問完了：移到開發佇列，換下一張 */
+  handOff(itemId: number): Promise<void>;
+  /** 審查：列出改了哪些檔案 */
+  changedFiles(itemId: number): Promise<ChangedFile[]>;
+  /** 提交勾選的檔案（訊息用合併請求標題，不推送），讓出資料夾 */
+  commit(itemId: number, files: string[]): Promise<{ sha: string; leftover: string[] }>;
   retry(itemId: number): Promise<void>;
   openInVSCode(itemId: number): Promise<void>;
   /** FlowPilot 視窗裡的終端機（接上那張單的 AI 對話） */

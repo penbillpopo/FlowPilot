@@ -98,15 +98,23 @@ it.runIf(process.env.LIVE)('已存在的分支繼續開發', { timeout: 600_000 
   };
 
   runner.startRun(run.id);
-  await waitFor(() => item('ALL-1').pending?.kind === 'decision' && item('ALL-2').pending?.kind === 'decision', '兩張都問你');
+  // 一次只跟一張單對話：先輪到 ALL-1
+  await waitFor(() => item('ALL-1').pending?.kind === 'decision', 'ALL-1 問你');
   console.log('ALL-1：', item('ALL-1').folder, item('ALL-1').activity);
-  console.log('ALL-2：', item('ALL-2').folder, item('ALL-2').activity);
-  expect(item('ALL-1')).toMatchObject({ folder: 'PlatformWeb', pending: { requestId: 'dirty' } });
-  expect(item('ALL-2')).toMatchObject({ folder: 'PlatformWeb-2', pending: { requestId: 'diverged' } });
-
+  expect(item('ALL-1')).toMatchObject({ folder: 'PlatformWeb', lane: 'conversation', pending: { requestId: 'dirty' } });
+  expect(item('ALL-2')).toMatchObject({ lane: 'waiting', status: 'queued' });
   await runner.decide(item('ALL-1').id, 'continue');
+  await waitFor(() => item('ALL-1').status === 'review', 'ALL-1 做完');
+  expect(item('ALL-2').status).toBe('queued'); // 還沒換下一張，ALL-2 不會開始
+
+  // 換下一張：ALL-1 移到開發佇列，ALL-2 進來對話
+  await runner.handOff(item('ALL-1').id);
+  expect(item('ALL-1').lane).toBe('development');
+  await waitFor(() => item('ALL-2').pending?.kind === 'decision', 'ALL-2 問你');
+  console.log('ALL-2：', item('ALL-2').folder, item('ALL-2').activity);
+  expect(item('ALL-2')).toMatchObject({ folder: 'PlatformWeb-2', lane: 'conversation', pending: { requestId: 'diverged' } });
   await runner.decide(item('ALL-2').id, 'continue');
-  await waitFor(() => item('ALL-1').status === 'review' && item('ALL-2').status === 'review', '兩張都做完');
+  await waitFor(() => item('ALL-2').status === 'review', 'ALL-2 做完');
   console.log('ALL-1 回覆：', item('ALL-1').lastMessage, '｜ALL-2 回覆：', item('ALL-2').lastMessage);
   expect(item('ALL-1').lastMessage).toContain('1');
   expect(item('ALL-2').lastMessage).toContain('2'); // 本機版本：基底之後 2 個提交（之前的 + B 本機的）

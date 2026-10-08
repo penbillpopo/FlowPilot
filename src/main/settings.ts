@@ -43,6 +43,8 @@ export interface Settings {
   folders: FolderSetting[];
   /** 計畫表預設的開發技能 */
   defaultSkill: string;
+  /** 開發佇列最多幾張（再加上對話中的一張，就是同時佔用的資料夾上限） */
+  maxInDevelopment: number;
 }
 
 export const DEFAULT_SETTINGS_YAML = `# FlowPilot 設定。改完存檔，重新整理就生效。
@@ -59,6 +61,10 @@ jira:
 
 # 計畫表預設的開發技能（Codex 技能名稱）
 defaultSkill: frontend-workflow
+
+# 開發佇列最多幾張。一次只跟一張單對話，問完按「換下一張」才移到開發佇列；
+# 佇列滿了就要先審查提交或移除一張，才能換下一張。
+maxInDevelopment: 3
 
 # 分支規則：{商戶} 是商戶編號，{單號} 是子任務的單號（大寫）
 # description 是給 AI 判斷專案用的說明，寫得越清楚判斷越準
@@ -111,6 +117,7 @@ export function parseSettings(text: string): Settings {
   raw.jira.defaultStatuses ||= ['進行中'];
   if (!raw.projects || !Array.isArray(raw.folders)) throw new Error('設定檔缺少 projects 或 folders');
   raw.defaultSkill ||= 'frontend-workflow';
+  raw.maxInDevelopment = Math.max(1, Number(raw.maxInDevelopment) || 3);
   for (const folder of raw.folders) {
     if (!raw.projects[folder.project]) throw new Error(`資料夾「${folder.name}」的專案「${folder.project}」沒有分支規則`);
   }

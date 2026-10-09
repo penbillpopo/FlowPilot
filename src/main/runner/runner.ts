@@ -5,6 +5,7 @@ import { existsSync } from 'node:fs';
 import { join } from 'node:path';
 import type { BoardState, ChatEvent, PendingRequest, SkillInfo, TicketPlan } from '../../shared/types';
 import { toEntry } from '../chat';
+import { reviewBrief } from '../planner/review';
 import type { CodexRpc, RpcMessage } from '../codex/rpc';
 import { listSkills } from '../codex/structured';
 import {
@@ -420,6 +421,7 @@ export class Runner {
       branchLine,
       '- 不要提交、不要推送；完成後由我審查並提交。',
       item.targetMerchants.length ? `- 這張單之後還要移植到商戶 ${item.targetMerchants.join('、')}，那是下一階段的事，這次只做目前這個商戶。` : '',
+      reviewBrief(this.deps.store.getReview(item.ticketKey)?.review ?? null),
     ]
       .filter((line) => line !== '')
       .join('\n');

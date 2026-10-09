@@ -3,12 +3,12 @@ import { app, BrowserWindow, ipcMain, Menu, nativeImage, Notification, shell, Tr
 import { appendFileSync, mkdirSync, writeFileSync } from 'node:fs';
 import { randomUUID } from 'node:crypto';
 import { join } from 'node:path';
-import type { JiraTicket, Judgement, PlanOptions, TicketPlan } from '../shared/types';
+import type { JiraTicket, Judgement, PlanOptions, Review, ReviewIssue, TicketPlan } from '../shared/types';
 import { CodexRpc } from './codex/rpc';
-import { askStructured, listSkills } from './codex/structured';
+import { listSkills, runStructured } from './codex/structured';
 import { checkExisting } from './git';
 import { buildJql, getIssueContext, loadCredentials, searchTickets, statusIdsByName } from './jira';
-import { buildJudgePrompt, JUDGE_INSTRUCTIONS, judgementSchema, sanitizeJudgement } from './planner/judge';
+import { applyDiscussion, buildCodeCheckPrompt, buildDiscussionPrompt, buildReviewPrompt, discussionSchema, REVIEW_INSTRUCTIONS, reviewSchema, sanitizeReview } from './planner/review';
 import { deriveBranches, planProblem } from './planner/rules';
 import { loadHistory } from './chat';
 import { FolderTerminals } from './folderterminals';
@@ -110,26 +110,67 @@ async function withJudgeSlot<T>(task: () => Promise<T>): Promise<T> {
   }
 }
 
-async function judgeTicket(ticket: JiraTicket): Promise<Judgement> {
+/** 審閱一張單：讀單 → 判斷專案 → 大略看程式碼 → 找問題。已經審過就直接用上次的結果 */
+async function reviewTicket(ticket: JiraTicket, force = false): Promise<Review> {
+  const saved = store.getReview(ticket.key);
+  if (saved && !force) return saved.review;
   const settings = loadSettings(settingsFile);
   const credentials = loadCredentials(settings.jira.envFile);
   const [sub, main] = await Promise.all([
     getIssueContext(credentials, ticket.key),
     ticket.parent ? getIssueContext(credentials, ticket.parent.key) : Promise.resolve(null),
   ]);
-  const raw = await withJudgeSlot(() =>
-    askStructured<Judgement>(codex, {
+  const { result, threadId } = await withJudgeSlot(() =>
+    runStructured<any>(codex, {
       cwd: dataDir,
-      developerInstructions: JUDGE_INSTRUCTIONS,
-      prompt: buildJudgePrompt(ticket, sub, main, settings, store.recentDecisions()),
-      schema: judgementSchema(settings),
+      keep: true, // 保留對話，之後可以接著討論
+      developerInstructions: REVIEW_INSTRUCTIONS,
+      prompt: buildReviewPrompt(ticket, sub, main, settings, store.recentDecisions()),
+      schema: reviewSchema(settings),
+      timeoutMs: 300_000,
     }),
   );
-  const judgement = sanitizeJudgement(raw, ticket.key, settings);
+  let review = sanitizeReview(result, ticket, settings);
+  // 一般、複雜的單一定要大略看過程式碼：AI 第一輪沒看，就在同一段對話追加一輪，指定專案資料夾
+  const codePrompt = review.level !== '小' && !review.codeChecked ? buildCodeCheckPrompt(review.entries.map((e) => e.project), settings) : null;
+  if (codePrompt) {
+    try {
+      const checked = await withJudgeSlot(() =>
+        runStructured<any>(codex, { cwd: dataDir, keep: true, threadId, developerInstructions: REVIEW_INSTRUCTIONS, prompt: codePrompt, schema: reviewSchema(settings), timeoutMs: 300_000 }),
+      );
+      review = sanitizeReview({ ...checked.result, codeChecked: true }, ticket, settings);
+    } catch (error) {
+      log(`${ticket.key} 看程式碼失敗，先用只看單的結果：${(error as Error).message}`);
+    }
+  }
   // 參考資料直接從 Jira 擷取（主單在前），不經過 AI；同一個網址只留一筆
   const seen = new Set<string>();
-  judgement.resources = [...(main?.resources ?? []), ...sub.resources].filter((r) => !seen.has(r.url) && seen.add(r.url));
-  return judgement;
+  review.resources = [...(main?.resources ?? []), ...sub.resources].filter((r) => !seen.has(r.url) && seen.add(r.url));
+  store.saveReview(review, threadId);
+  return review;
+}
+
+function updateIssue(ticketKey: string, issueId: string, patch: { status: ReviewIssue['status']; answer?: string }): Review {
+  const saved = store.getReview(ticketKey);
+  if (!saved) throw new Error(`${ticketKey} 還沒有審閱`);
+  const review: Review = {
+    ...saved.review,
+    issues: saved.review.issues.map((i) => (i.id === issueId ? { ...i, status: patch.status, answer: patch.status === 'answered' ? (patch.answer ?? '').trim() : undefined } : i)),
+  };
+  store.saveReview(review, saved.threadId);
+  return review;
+}
+
+async function discussReview(ticketKey: string, text: string): Promise<Review> {
+  const saved = store.getReview(ticketKey);
+  if (!saved) throw new Error(`${ticketKey} 還沒有審閱`);
+  if (!text.trim()) throw new Error('訊息是空的');
+  const request = { cwd: dataDir, keep: true, developerInstructions: REVIEW_INSTRUCTIONS, schema: discussionSchema, prompt: buildDiscussionPrompt(saved.review, text), timeoutMs: 300_000 };
+  // 接著審閱時的對話討論（AI 記得單和程式碼）；對話不在了就開一段新的
+  const { result, threadId } = await runStructured<any>(codex, { ...request, threadId: saved.threadId ?? undefined }).catch(() => runStructured<any>(codex, request));
+  const review = applyDiscussion(saved.review, text.trim(), result);
+  store.saveReview(review, threadId);
+  return review;
 }
 
 function validatePlans(plans: TicketPlan[]) {
@@ -208,7 +249,9 @@ function registerIpc() {
     };
   });
   ipcMain.handle('skills:list', () => listSkills(codex, loadSettings(settingsFile).folders[0]?.path ?? dataDir));
-  ipcMain.handle('plan:judge', (_event, ticket: JiraTicket) => judgeTicket(ticket));
+  ipcMain.handle('review:run', (_event, ticket: JiraTicket, force: boolean) => reviewTicket(ticket, force));
+  ipcMain.handle('review:updateIssue', (_event, ticketKey: string, issueId: string, patch: { status: ReviewIssue['status']; answer?: string }) => updateIssue(ticketKey, issueId, patch));
+  ipcMain.handle('review:discuss', (_event, ticketKey: string, text: string) => discussReview(ticketKey, text));
   ipcMain.handle('plan:check', (_event, plans: TicketPlan[], fetch: boolean) => {
     const settings = loadSettings(settingsFile);
     const branches = plans.filter((p) => !planProblem(p, settings)).flatMap((p) => deriveBranches(p, settings));

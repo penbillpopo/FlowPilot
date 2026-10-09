@@ -1,4 +1,4 @@
-// 用一段不留紀錄的臨時對話，請 Codex 依固定格式（JSON Schema）回答一個問題。
+// 請 Codex 依固定格式（JSON Schema）回答：可以是不留紀錄的臨時對話，也可以保留對話之後接著問。
 import type { SkillInfo } from '../../shared/types';
 import type { CodexRpc, RpcMessage } from './rpc';
 
@@ -9,27 +9,42 @@ export interface StructuredRequest {
   developerInstructions?: string;
   effort?: 'low' | 'medium' | 'high';
   timeoutMs?: number;
+  /** 保留對話（之後可以用 threadId 接著問）；預設不保留 */
+  keep?: boolean;
+  /** 接著這段對話問（不用 cwd 等開新對話的參數） */
+  threadId?: string;
 }
 
-export async function askStructured<T>(rpc: CodexRpc, request: StructuredRequest): Promise<T> {
+/**
+ * 請 Codex 依固定格式（JSON Schema）回答。對話是唯讀的：可以讀檔、查程式碼，不能改東西。
+ * 回傳答案與對話編號（保留的對話之後可以接著問）。
+ */
+export async function runStructured<T>(rpc: CodexRpc, request: StructuredRequest): Promise<{ result: T; threadId: string }> {
   await rpc.start();
-  const { thread } = await rpc.request<{ thread: { id: string } }>('thread/start', {
-    cwd: request.cwd,
-    ephemeral: true,
-    approvalPolicy: 'never',
-    sandbox: 'read-only',
-    developerInstructions: request.developerInstructions ?? null,
-    config: { model_reasoning_effort: request.effort ?? 'low' },
-  });
-  const threadId = thread.id;
+  let threadId = request.threadId;
+  if (threadId) {
+    // 接著問：對話可能還沒載入（例如 FlowPilot 重新啟動過）
+    await rpc.request('thread/resume', { threadId, excludeTurns: true }).catch(() => {});
+  } else {
+    const { thread } = await rpc.request<{ thread: { id: string } }>('thread/start', {
+      cwd: request.cwd,
+      ephemeral: !request.keep,
+      approvalPolicy: 'never',
+      sandbox: 'read-only',
+      developerInstructions: request.developerInstructions ?? null,
+      config: { model_reasoning_effort: request.effort ?? 'low', features: { computer_use: false, browser_use: false, browser_use_external: false } },
+    });
+    threadId = thread.id;
+  }
+  const id = threadId;
 
   let lastMessage = '';
   let unsubscribe = () => {};
   const finished = new Promise<RpcMessage>((resolve, reject) => {
-    const timer = setTimeout(() => reject(new Error('AI 判斷逾時')), request.timeoutMs ?? 180_000);
+    const timer = setTimeout(() => reject(new Error('AI 逾時')), request.timeoutMs ?? 180_000);
     unsubscribe = rpc.on((message) => {
-      if (message.params?.threadId !== threadId) return;
-      // 這段對話是唯讀、不准執行指令；萬一來要同意，一律拒絕
+      if (message.params?.threadId !== id) return;
+      // 這段對話是唯讀的；萬一來要同意，一律拒絕
       if (message.id !== undefined && /requestApproval|execCommandApproval|applyPatchApproval/.test(message.method ?? '')) {
         rpc.reply(message.id, { decision: 'decline' });
       }
@@ -43,22 +58,27 @@ export async function askStructured<T>(rpc: CodexRpc, request: StructuredRequest
 
   try {
     await rpc.request('turn/start', {
-      threadId,
+      threadId: id,
       input: [{ type: 'text', text: request.prompt, text_elements: [] }],
       outputSchema: request.schema,
     });
     const done = await finished;
     const status = done.params.turn?.status;
-    if (status !== 'completed') throw new Error(`AI 判斷沒有完成（${done.params.turn?.error?.message ?? status}）`);
+    if (status !== 'completed') throw new Error(`AI 沒有完成（${done.params.turn?.error?.message ?? status}）`);
     try {
-      return JSON.parse(lastMessage) as T;
+      return { result: JSON.parse(lastMessage) as T, threadId: id };
     } catch {
       throw new Error('AI 回覆的格式不正確');
     }
   } finally {
     unsubscribe();
-    rpc.request('thread/unsubscribe', { threadId }).catch(() => {});
+    if (!request.keep && !request.threadId) rpc.request('thread/unsubscribe', { threadId: id }).catch(() => {});
   }
+}
+
+/** 問一次就結束（不保留對話） */
+export async function askStructured<T>(rpc: CodexRpc, request: StructuredRequest): Promise<T> {
+  return (await runStructured<T>(rpc, request)).result;
 }
 
 /** 列出 Codex 認得的技能 */

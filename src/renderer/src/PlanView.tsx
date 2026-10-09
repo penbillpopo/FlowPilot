@@ -1,6 +1,7 @@
 // 第二階段畫面：計畫表。AI 先判斷每張單的專案與商戶，你可以改；檢查分支是否已建立後確認。
 import { useEffect, useMemo, useRef, useState } from 'react';
-import type { JiraTicket, Judgement, PlanBranch, PlanEntry, PlanOptions, RunSummary, SkillInfo, TicketPlan } from '../../shared/types';
+import type { JiraTicket, PlanBranch, PlanEntry, PlanOptions, Review, RunSummary, SkillInfo, TicketPlan } from '../../shared/types';
+import { ReviewIssues } from './ReviewIssues';
 
 const api = window.flowpilot;
 
@@ -45,7 +46,8 @@ export function PlanView({ run, tickets, onBack, onConfirmed }: Props) {
   const [options, setOptions] = useState<PlanOptions | null>(null);
   const [skills, setSkills] = useState<SkillInfo[]>([]);
   const [plans, setPlans] = useState<Record<string, TicketPlan>>({});
-  const [judgements, setJudgements] = useState<Record<string, Judgement>>({});
+  /** 審閱結果（判斷＋問題清單＋討論） */
+  const [judgements, setJudgements] = useState<Record<string, Review>>({});
   const [judgeErrors, setJudgeErrors] = useState<Record<string, string>>({});
   const [branches, setBranches] = useState<PlanBranch[] | null>(null);
   const [checking, setChecking] = useState(false);
@@ -58,10 +60,14 @@ export function PlanView({ run, tickets, onBack, onConfirmed }: Props) {
   /** 看板上還沒結束的工作（同一條分支不會重複建立） */
   const [active, setActive] = useState<{ branch: string; status: string }[]>([]);
 
-  async function judge(ticket: JiraTicket, defaultSkill: string) {
+  async function judge(ticket: JiraTicket, defaultSkill: string, force = false) {
     setJudgeErrors(({ [ticket.key]: _, ...rest }) => rest);
+    if (force) {
+      setPlans(({ [ticket.key]: _, ...rest }) => rest);
+      setJudgements(({ [ticket.key]: _, ...rest }) => rest);
+    }
     try {
-      const j = await api.judgeTicket(ticket);
+      const j = await api.reviewTicket(ticket, force);
       setJudgements((prev) => ({ ...prev, [ticket.key]: j }));
       setPlans((prev) => ({
         ...prev,
@@ -201,12 +207,18 @@ export function PlanView({ run, tickets, onBack, onConfirmed }: Props) {
                     主單 <a href={ticket.parent.url} onClick={(e) => { e.preventDefault(); api.openExternal(ticket.parent!.url); }}>{ticket.parent.key}</a>
                   </span>
                 )}
+                {judgements[ticket.key] && (
+                  <span className="muted small">
+                    審閱於 {new Date(judgements[ticket.key].reviewedAt).toLocaleString('zh-TW', { month: 'numeric', day: 'numeric', hour: '2-digit', minute: '2-digit', hour12: false })}
+                    <button className="link" onClick={() => window.confirm('重新審閱這張單？目前的問題、你的回答和討論都會被新的結果取代。') && judge(ticket, options!.defaultSkill, true)}>重新審閱</button>
+                  </span>
+                )}
               </div>
 
-              {!plan && !error && <p className="muted">AI 判斷中…（讀取單的內容，約 10 秒）</p>}
+              {!plan && !error && <p className="muted">AI 審閱中…（讀單、判斷專案；一般或複雜的單會大略看程式碼，約 1 分鐘）</p>}
               {error && (
                 <div className="error">
-                  AI 判斷失敗：{error} <button onClick={() => judge(ticket, options!.defaultSkill)}>重試</button>
+                  AI 審閱失敗：{error} <button onClick={() => judge(ticket, options!.defaultSkill)}>重試</button>
                 </div>
               )}
 
@@ -237,6 +249,10 @@ export function PlanView({ run, tickets, onBack, onConfirmed }: Props) {
                       <p className="muted small">單上沒有附 Figma、文件或連結。</p>
                     )}
                   </div>
+
+                  {judgements[ticket.key] && (
+                    <ReviewIssues review={judgements[ticket.key]} onChange={(r) => setJudgements((prev) => ({ ...prev, [ticket.key]: r }))} />
+                  )}
 
                   <div className="plan-block-title">專案判斷</div>
                   {plan.reason && <p className="reason">{plan.reason}</p>}
@@ -376,7 +392,7 @@ export function PlanView({ run, tickets, onBack, onConfirmed }: Props) {
 
       <footer>
         <span className="muted">
-          {!allJudged ? 'AI 判斷中…' : checking ? '檢查分支中（會先抓遠端）…' : `${toRun.length} 張要執行${unchosen.length ? `，${unchosen.length} 張還沒選資料夾` : ''}`}
+          {!allJudged ? 'AI 審閱中…' : checking ? '檢查分支中（會先抓遠端）…' : `${toRun.length} 張要執行${unchosen.length ? `，${unchosen.length} 張還沒選資料夾` : ''}`}
         </span>
         <button className="primary" disabled={!canConfirm} onClick={confirm}>
           {confirming ? '確認中…' : '確認計畫，開始開發'}

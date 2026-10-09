@@ -1,7 +1,7 @@
 // 資料庫：~/Library/Application Support/FlowPilot/flowpilot.db（SQLite，用 Node 內建的 node:sqlite）
 // 每次狀態改變先寫進來，重新啟動才接得回去。
 import { DatabaseSync } from 'node:sqlite';
-import type { JiraTicket, Judgement, PendingRequest, RunSummary, TicketPlan, WorkItem, WorkLane, WorkStatus } from '../shared/types';
+import type { JiraTicket, Judgement, PendingRequest, Review, RunSummary, TicketPlan, WorkItem, WorkLane, WorkStatus } from '../shared/types';
 import type { PastDecision } from './planner/judge';
 
 // 依序執行的資料庫結構變更；只能往後加，不能改前面的
@@ -61,6 +61,13 @@ const MIGRATIONS: string[] = [
    ALTER TABLE work_items ADD COLUMN commit_sha TEXT;
    UPDATE work_items SET lane = 'done' WHERE status IN ('removed', 'stopped', 'failed');
    UPDATE work_items SET lane = 'development' WHERE lane = 'waiting' AND status != 'queued';`,
+  // 審閱結果：每張單一份（PM 隔天才回也還在；同一張單下次再選不用重新審閱）
+  `CREATE TABLE reviews (
+     ticket_key TEXT PRIMARY KEY,
+     review_json TEXT NOT NULL,
+     thread_id TEXT,
+     updated_at TEXT NOT NULL
+   );`,
 ];
 
 /** 還佔著資料夾的狀態 */
@@ -305,6 +312,24 @@ export class Store {
       .prepare("SELECT * FROM work_items WHERE project = ? AND branch = ? AND status NOT IN ('failed', 'stopped', 'removed', 'committed') ORDER BY id DESC LIMIT 1")
       .get(project, branch) as WorkItemRow | undefined;
     return row ? toWorkItem(row) : null;
+  }
+
+  // ---- 審閱 ----
+
+  getReview(ticketKey: string): { review: Review; threadId: string | null } | null {
+    const row = this.db.prepare('SELECT review_json, thread_id FROM reviews WHERE ticket_key = ?').get(ticketKey) as
+      | { review_json: string; thread_id: string | null }
+      | undefined;
+    return row ? { review: JSON.parse(row.review_json), threadId: row.thread_id } : null;
+  }
+
+  saveReview(review: Review, threadId: string | null, now = new Date()) {
+    this.db
+      .prepare(
+        `INSERT INTO reviews (ticket_key, review_json, thread_id, updated_at) VALUES (?, ?, ?, ?)
+         ON CONFLICT(ticket_key) DO UPDATE SET review_json = excluded.review_json, thread_id = excluded.thread_id, updated_at = excluded.updated_at`,
+      )
+      .run(review.ticketKey, JSON.stringify(review), threadId, now.toISOString());
   }
 
   /** 已確認計畫、但還沒開始執行的最近一次 */

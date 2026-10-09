@@ -294,3 +294,22 @@ details.more > summary::-webkit-details-marker { display: none; }
 .more-menu { position: absolute; z-index: 10; top: calc(100% + 4px); left: 0; min-width: 160px; background: var(--bg); border: 1px solid var(--line); border-radius: 8px; padding: 4px; display: flex; flex-direction: column; box-shadow: 0 6px 20px rgba(0,0,0,0.25); }
 .more-menu button { border: none; text-align: left; padding: 6px 10px; }
 .more-menu button.danger { color: var(--blocked); }
+
+/* 審閱：問題卡片與討論 */
+.review-meta { font-weight: 400; margin-left: 8px; }
+.issue { border: 1px solid var(--line); border-left: 3px solid var(--line); border-radius: 6px; padding: 8px 10px; display: flex; flex-direction: column; gap: 4px; font-size: 13px; }
+.issue.important { border-left-color: var(--waiting); }
+.issue.done { opacity: 0.7; }
+.issue-head { display: flex; gap: 6px; align-items: baseline; flex-wrap: wrap; }
+.issue-tag { font-size: 11px; padding: 0 6px; border-radius: 8px; background: var(--hover); color: var(--muted); }
+.issue-tag.important { background: #c2570022; color: var(--waiting); font-weight: 700; }
+.issue-type { font-size: 11px; color: var(--muted); }
+.issue-status { font-size: 11px; color: var(--review); margin-left: auto; }
+.issue-detail { color: var(--fg); opacity: 0.85; }
+.issue-quote { color: var(--muted); font-size: 12px; border-left: 2px solid var(--line); padding-left: 8px; }
+.issue-suggestion { font-size: 12px; color: var(--accent); }
+.issue-actions { display: flex; gap: 6px; flex-wrap: wrap; align-items: center; margin-top: 2px; }
+.issue-actions input { flex: 1; min-width: 200px; }
+.discussion { display: flex; flex-direction: column; gap: 6px; padding: 6px 0; border-top: 1px dashed var(--line); }
+.discuss-box { display: flex; gap: 8px; align-items: flex-end; }
+.discuss-box textarea { flex: 1; font: inherit; font-size: 13px; color: var(--fg); background: var(--bg); border: 1px solid var(--line); border-radius: 6px; padding: 6px 8px; resize: vertical; }

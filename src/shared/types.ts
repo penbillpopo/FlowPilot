@@ -88,6 +88,41 @@ export interface Judgement {
   resources: Resource[];
 }
 
+// ---- 審閱：找出單子的問題，跟你一起過 ----
+
+export type IssueType = '邏輯矛盾' | '需求不明確' | '遺漏情境' | '前後端對不上' | '跟設計稿不一致' | '範圍不清' | '跟現有功能衝突';
+
+export interface ReviewIssue {
+  id: string;
+  type: IssueType;
+  /** 重要：做下去可能做錯；一般：可以先照建議做 */
+  importance: '重要' | '一般';
+  title: string;
+  /** 為什麼是問題 */
+  detail: string;
+  /** 單上的原文出處 */
+  quote: string;
+  /** 出自哪張單 */
+  from: string;
+  /** AI 建議的預設做法 */
+  suggestion: string;
+  /** 還沒處理、你回答了、照 AI 建議、不是問題 */
+  status: 'open' | 'answered' | 'assumed' | 'dismissed';
+  /** 你的回答（status 為 answered 時） */
+  answer?: string;
+}
+
+/** 審閱結果：判斷（專案、要做什麼、參考資料）＋問題清單＋你們的討論 */
+export interface Review extends Judgement {
+  ticketKey: string;
+  /** 小單只看單；一般和複雜的單會大略看程式碼 */
+  level: '小' | '一般' | '複雜';
+  codeChecked: boolean;
+  issues: ReviewIssue[];
+  discussion: { role: 'you' | 'ai'; text: string; at: string }[];
+  reviewedAt: string;
+}
+
 export interface SkillInfo {
   name: string;
   description: string;
@@ -241,7 +276,12 @@ export interface FlowPilotApi {
   /** 計畫表需要的設定（專案、商戶） */
   planOptions(): Promise<PlanOptions>;
   listSkills(): Promise<SkillInfo[]>;
-  judgeTicket(ticket: JiraTicket): Promise<Judgement>;
+  /** 審閱一張單（已經審過就直接回傳上次的結果；force 為 true 時重新審閱） */
+  reviewTicket(ticket: JiraTicket, force?: boolean): Promise<Review>;
+  /** 處理一個問題：回答、照建議、不是問題、重新打開 */
+  updateIssue(ticketKey: string, issueId: string, patch: { status: ReviewIssue['status']; answer?: string }): Promise<Review>;
+  /** 跟 AI 討論這張單，AI 會一併更新問題清單 */
+  discussReview(ticketKey: string, text: string): Promise<Review>;
   /** 算出分支並檢查是否已建立；fetch 為 true 時先抓遠端 */
   checkBranches(plans: TicketPlan[], fetch: boolean): Promise<PlanBranch[]>;
   confirmPlan(runId: number, plans: TicketPlan[], judgements: Record<string, Judgement>): Promise<RunSummary>;

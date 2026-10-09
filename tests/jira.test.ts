@@ -106,3 +106,28 @@ describe('狀態篩選', () => {
     expect(() => buildJql('x', [], ids)).toThrow('至少要選一個狀態');
   });
 });
+
+describe('參考資料擷取', () => {
+  it('從內文、留言、附件抓出 Figma、文件、Jira、網頁、附件，並去掉重複', async () => {
+    const { extractResources } = await import('../src/main/jira');
+    const doc = {
+      type: 'doc',
+      content: [
+        { type: 'paragraph', content: [{ type: 'text', text: 'ALL-14396.md', marks: [{ type: 'link', attrs: { href: 'https://org.visualstudio.com/p/_git/Core?path=/requirements/ALL-14396.md&version=GBmaster' } }] }] },
+        { type: 'paragraph', content: [{ type: 'inlineCard', attrs: { url: 'https://www.figma.com/design/FmHY/PS---Production-SOT?node-id=5618-36404' } }] },
+        { type: 'paragraph', content: [{ type: 'inlineCard', attrs: { url: 'https://other.atlassian.net/browse/GBR-379' } }] },
+        { type: 'paragraph', content: [{ type: 'text', text: '後台頁面：https://uat.admin.example.com/bonus/event，請參考。' }] },
+      ],
+    };
+    const comment = { type: 'doc', content: [{ type: 'paragraph', content: [{ type: 'inlineCard', attrs: { url: 'https://www.figma.com/design/FmHY/PS---Production-SOT?node-id=5618-36404' } }] }] };
+    const resources = extractResources('ALL-14396', [doc, comment], [{ filename: 'image-1.png', content: 'https://x.atlassian.net/rest/api/3/attachment/content/1' }]);
+    expect(resources.map((r) => [r.kind, r.title])).toEqual([
+      ['document', 'ALL-14396.md'],
+      ['figma', 'PS Production SOT（節點 5618:36404）'],
+      ['jira', 'GBR-379'],
+      ['link', 'uat.admin.example.com/bonus/event'],
+      ['attachment', 'image-1.png'],
+    ]);
+    expect(resources.every((r) => r.from === 'ALL-14396')).toBe(true);
+  });
+});

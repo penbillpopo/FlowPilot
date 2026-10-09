@@ -1,6 +1,7 @@
 // 應用程式主程序：選單列圖示＋主視窗。關掉視窗不會結束，背景繼續跑；從選單列「結束」才真的關掉。
 import { app, BrowserWindow, ipcMain, Menu, nativeImage, Notification, shell, Tray } from 'electron';
-import { appendFileSync } from 'node:fs';
+import { appendFileSync, mkdirSync, writeFileSync } from 'node:fs';
+import { randomUUID } from 'node:crypto';
 import { join } from 'node:path';
 import type { JiraTicket, Judgement, PlanOptions, TicketPlan } from '../shared/types';
 import { CodexRpc } from './codex/rpc';
@@ -9,8 +10,10 @@ import { checkExisting } from './git';
 import { buildJql, getIssueContext, loadCredentials, searchTickets, statusIdsByName } from './jira';
 import { buildJudgePrompt, JUDGE_INSTRUCTIONS, judgementSchema, sanitizeJudgement } from './planner/judge';
 import { deriveBranches, planProblem } from './planner/rules';
+import { loadHistory } from './chat';
+import { FolderTerminals } from './folderterminals';
+import { commitStaged, discard, fileDiff, gitState, pushBranch, stage, unstage } from './gitpanel';
 import { Runner } from './runner/runner';
-import { Terminals } from './terminals';
 import { VSCode } from './vscode';
 import { loadSettings } from './settings';
 import { Store } from './store';
@@ -24,7 +27,6 @@ let window: BrowserWindow | null = null;
 let tray: Tray | null = null;
 let store: Store;
 let runner: Runner;
-const terminals = new Terminals((channel, ...args) => window?.webContents.send(channel, ...args), (m) => log(m));
 let quitting = false;
 /** AI 判斷用：自己啟動的 Codex，臨時對話 */
 const codex = new CodexRpc();
@@ -58,6 +60,30 @@ function streamChanged(itemId: number, text: string) {
     for (const [id, value] of pendingStreams) window?.webContents.send('board:stream', id, value);
     pendingStreams.clear();
   }, 100);
+}
+
+// 聊天的即時更新：每 50 毫秒送一批，避免 AI 打字時一個字送一次
+const chatQueue: [number, unknown][] = [];
+let chatTimer: NodeJS.Timeout | null = null;
+function chatChanged(itemId: number, event: unknown) {
+  chatQueue.push([itemId, event]);
+  if (chatTimer) return;
+  chatTimer = setTimeout(() => {
+    chatTimer = null;
+    window?.webContents.send('chat:events', chatQueue.splice(0));
+  }, 50);
+}
+
+const folderTerminals = new FolderTerminals((channel, ...args) => window?.webContents.send(channel, ...args), (m) => log(m));
+
+/** 這張單所在的資料夾 */
+function folderOf(itemId: number) {
+  const item = store.getWorkItem(itemId);
+  if (!item?.folder) throw new Error('這張單還沒有分配資料夾');
+  const settings = loadSettings(settingsFile);
+  const folder = settings.folders.find((f) => f.name === item.folder);
+  if (!folder) throw new Error(`設定檔裡沒有資料夾「${item.folder}」`);
+  return { item, folder, rule: settings.projects[folder.project] };
 }
 
 function notify(title: string, body: string, itemId: number) {
@@ -99,7 +125,11 @@ async function judgeTicket(ticket: JiraTicket): Promise<Judgement> {
       schema: judgementSchema(settings),
     }),
   );
-  return sanitizeJudgement(raw, ticket.key, settings);
+  const judgement = sanitizeJudgement(raw, ticket.key, settings);
+  // 參考資料直接從 Jira 擷取（主單在前），不經過 AI；同一個網址只留一筆
+  const seen = new Set<string>();
+  judgement.resources = [...(main?.resources ?? []), ...sub.resources].filter((r) => !seen.has(r.url) && seen.add(r.url));
+  return judgement;
 }
 
 function validatePlans(plans: TicketPlan[]) {
@@ -168,7 +198,12 @@ function registerIpc() {
   ipcMain.handle('plan:options', (): PlanOptions => {
     const settings = loadSettings(settingsFile);
     return {
-      projects: Object.entries(settings.projects).map(([name, rule]) => ({ name, merchants: rule.merchants?.length ? rule.merchants : null })),
+      projects: Object.entries(settings.projects).map(([name, rule]) => ({
+        name,
+        merchants: rule.merchants?.length ? rule.merchants : null,
+        side: rule.side ?? '',
+        description: rule.description ?? '',
+      })),
       defaultSkill: settings.defaultSkill,
     };
   });
@@ -203,20 +238,47 @@ function registerIpc() {
   ipcMain.handle('item:stop', (_event, id: number) => runner.stop(id));
   ipcMain.handle('item:remove', (_event, id: number) => runner.remove(id));
   ipcMain.handle('item:handOff', (_event, id: number) => runner.handOff(id));
-  ipcMain.handle('item:changedFiles', (_event, id: number) => runner.changedFiles(id));
-  ipcMain.handle('item:commit', (_event, id: number, files: string[]) => runner.commit(id, files));
+  ipcMain.handle('item:finish', (_event, id: number, restoreEnvironment: boolean) => runner.finish(id, restoreEnvironment));
+  ipcMain.handle('item:interrupt', (_event, id: number) => runner.interrupt(id));
+  ipcMain.handle('item:send', (_event, id: number, text: string, images: string[]) => runner.reply(id, text, images));
+  ipcMain.handle('chat:saveImage', (_event, bytes: ArrayBuffer, extension: string) => {
+    const dir = join(dataDir, 'attachments');
+    mkdirSync(dir, { recursive: true });
+    const file = join(dir, `${randomUUID()}.${/^(png|jpe?g|gif|webp)$/i.test(extension) ? extension.toLowerCase() : 'png'}`);
+    writeFileSync(file, Buffer.from(bytes));
+    return file;
+  });
+  ipcMain.handle('chat:history', (_event, id: number) => {
+    const item = store.getWorkItem(id);
+    return item?.threadId ? loadHistory(daemon, item.threadId) : [];
+  });
+  ipcMain.handle('git:state', (_event, id: number) => {
+    const { item, folder } = folderOf(id);
+    return gitState(folder.path, item.baseBranch);
+  });
+  ipcMain.handle('git:diff', (_event, id: number, path: string, staged: boolean) => fileDiff(folderOf(id).folder.path, path, staged));
+  ipcMain.handle('git:stage', (_event, id: number, paths: string[]) => stage(folderOf(id).folder.path, paths));
+  ipcMain.handle('git:unstage', (_event, id: number, paths: string[]) => unstage(folderOf(id).folder.path, paths));
+  ipcMain.handle('git:discard', (_event, id: number, paths: string[]) => discard(folderOf(id).folder.path, paths));
+  ipcMain.handle('git:commit', (_event, id: number, message: string) => commitStaged(folderOf(id).folder.path, message));
+  ipcMain.handle('git:push', (_event, id: number) => pushBranch(folderOf(id).folder.path));
+  ipcMain.handle('folderTerm:open', (_event, id: number, cols: number, rows: number) => {
+    const { folder } = folderOf(id);
+    return { folder: folder.name, ...folderTerminals.open(folder.name, folder.path, cols, rows) };
+  });
+  ipcMain.on('folderTerm:input', (_event, folder: string, data: string) => folderTerminals.write(folder, data));
+  ipcMain.on('folderTerm:resize', (_event, folder: string, cols: number, rows: number) => folderTerminals.resize(folder, cols, rows));
+  ipcMain.on('folderTerm:interrupt', (_event, folder: string) => folderTerminals.interrupt(folder));
+  ipcMain.handle('folderTerm:startSite', (_event, id: number) => {
+    const { folder, rule } = folderOf(id);
+    folderTerminals.run(folder.name, (rule?.startCommand ?? 'npm start').replaceAll('{port}', String(folder.port ?? 4200)));
+  });
+  ipcMain.handle('shell:openUrl', (_event, url: string) => {
+    if (!/^https?:\/\/(localhost|127\.0\.0\.1)(:\d+)?(\/|$)/.test(url)) throw new Error('只能打開本機網址');
+    return shell.openExternal(url);
+  });
   ipcMain.handle('item:retry', (_event, id: number) => runner.retry(id));
   ipcMain.handle('item:openInVSCode', (_event, id: number) => runner.openInVSCode(id));
-  ipcMain.handle('term:open', (_event, id: number, cols: number, rows: number) => {
-    const item = store.getWorkItem(id);
-    if (!item?.threadId || !item.folder) throw new Error('這張單還沒有 AI 對話');
-    const folder = loadSettings(settingsFile).folders.find((f) => f.name === item.folder);
-    if (!folder) throw new Error(`設定檔裡沒有資料夾「${item.folder}」`);
-    return terminals.open(id, { threadId: item.threadId, cwd: folder.path, cols, rows });
-  });
-  ipcMain.on('term:input', (_event, id: number, data: string) => terminals.write(id, data));
-  ipcMain.on('term:resize', (_event, id: number, cols: number, rows: number) => terminals.resize(id, cols, rows));
-  ipcMain.handle('term:close', (_event, id: number) => terminals.close(id));
 }
 
 app.whenReady().then(() => {
@@ -230,6 +292,7 @@ app.whenReady().then(() => {
     notify,
     onChange: boardChanged,
     onStream: streamChanged,
+    onChat: chatChanged,
     log,
   });
   registerIpc();
@@ -241,7 +304,7 @@ app.whenReady().then(() => {
 
 app.on('before-quit', () => {
   quitting = true;
-  terminals.closeAll();
+  folderTerminals.closeAll();
   codex.stop();
   daemon.stop(); // 只斷開連線；常駐服務繼續跑，進行中的 AI 不受影響
   store?.close();

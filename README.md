@@ -46,4 +46,6 @@ LIVE=1 npm test -- tests/live   # 實測：會用到真的 Jira、Codex 與 VS C
 - [x] 第 4 階段：執行與追蹤（Codex 常駐服務、執行技能、提問與同意、VS Code 終端機分頁、系統通知）
 - [x] 一次只跟一張單對話：問完按「換下一張」移到開發佇列（佇列上限可在設定檔 `maxInDevelopment` 調整）
 - [x] 第 5 階段：審查與提交（勾選檔案、environment.ts 預設不提交並還原、不推送）
+- [x] 工作台：左邊單、中間跟 AI 對話（完整紀錄、思考、指令、改動、截圖）、右邊本機網站與 Git 改動（暫存、捨棄、提交、推送）
+- [x] 不再自動打開 VS Code
 - [ ] 第 6 階段：多商戶移植（platform-web-copy）

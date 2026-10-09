@@ -1,8 +1,8 @@
-// 主畫面：上方切換「單列表」與「執行看板」。
+// 主畫面：上方切換「工作台」與「單列表」。
 // 單列表：列出 Jira 上進行中的單，由你勾選這次要做哪幾張；確認後進入計畫表，計畫確認後跳到執行看板。
 import { useEffect, useState } from 'react';
 import type { JiraTicket, RunSummary } from '../../shared/types';
-import { BoardView } from './BoardView';
+import { Workbench } from './Workbench';
 import { PlanView } from './PlanView';
 
 const api = window.flowpilot;
@@ -32,23 +32,23 @@ function formatTime(iso: string) {
 }
 
 export function App() {
-  const [tab, setTab] = useState<'tickets' | 'board'>('tickets');
+  const [tab, setTab] = useState<'tickets' | 'board'>('board');
 
-  // 點系統通知時跳到執行看板
+  // 點系統通知時跳到工作台
   useEffect(() => api.onFocusItem(() => setTab('board')), []);
 
   return (
     <div className="shell">
       <nav>
+        <button className={tab === 'board' ? 'on' : ''} onClick={() => setTab('board')}>工作台</button>
         <button className={tab === 'tickets' ? 'on' : ''} onClick={() => setTab('tickets')}>單列表</button>
-        <button className={tab === 'board' ? 'on' : ''} onClick={() => setTab('board')}>執行看板</button>
       </nav>
       {/* 兩個分頁都保持掛著，切換時不會丟掉計畫表或輸入到一半的回覆 */}
       <div hidden={tab !== 'tickets'}>
         <TicketList onConfirmed={() => setTab('board')} />
       </div>
       <div hidden={tab !== 'board'}>
-        <BoardView />
+        <Workbench onNewTicket={() => setTab('tickets')} />
       </div>
     </div>
   );

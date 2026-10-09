@@ -51,6 +51,7 @@ it.runIf(process.env.LIVE)('完整執行流程', { timeout: 600_000 }, async () 
   const codex = new CodexRpc('daemon');
   const notes: string[] = [];
   let streamed = '';
+  const chatEvents: unknown[] = [];
   const attached: string[] = [];
   const runner = new Runner({
     store,
@@ -60,6 +61,7 @@ it.runIf(process.env.LIVE)('完整執行流程', { timeout: 600_000 }, async () 
     notify: (title) => notes.push(title),
     onChange: () => {},
     onStream: (_id, text) => void (streamed = text),
+    onChat: (_id, event) => void chatEvents.push(event),
     log: (m) => console.log('紀錄', m),
   });
   codex.on((m) => { if (m.method && (m.id !== undefined || m.method === 'item/started')) console.log('Codex：', m.method, m.id ?? '', JSON.stringify(m.params?.item?.command ?? m.params?.command ?? '')); });
@@ -79,7 +81,12 @@ it.runIf(process.env.LIVE)('完整執行流程', { timeout: 600_000 }, async () 
   expect(git(folder, 'branch', '--show-current').trim()).toBe('ban/m1/ALL-1');
   expect(item().status).toBe('waiting');
   expect(streamed.length).toBeGreaterThan(0); // 有收到即時片段
-  expect(attached).toEqual([item().threadId]);
+  expect(chatEvents.length).toBeGreaterThan(0); // 聊天畫面有收到即時更新
+  const { loadHistory } = await import('../../src/main/chat');
+  const history = await loadHistory(codex, item().threadId!);
+  console.log('對話紀錄：', history.map((h) => h.kind).join('、'));
+  expect(history.some((h) => h.kind === 'user') && history.some((h) => h.kind === 'assistant')).toBe(true);
+  expect(attached).toEqual([]); // 不再自動打開 VS Code
 
   await runner.reply(item().id, '繼續');
   await waitFor(() => item()?.pending?.kind === 'approval' || item()?.status === 'review', '危險指令');
@@ -94,12 +101,17 @@ it.runIf(process.env.LIVE)('完整執行流程', { timeout: 600_000 }, async () 
   // 審查與提交：environment.ts 預設不勾，提交後還原；資料夾變乾淨並讓出來
   writeFileSync(join(folder, 'src/feature.ts'), 'export const x = 1;\n');
   writeFileSync(join(folder, 'src/environments/environment.ts'), "export const apiUrl = 'uat';\n"); // 模擬瀏覽器測試切到 UAT
-  const changed = await runner.changedFiles(item().id);
-  expect(changed.find((c) => c.path === 'src/feature.ts')?.suggested).toBe(true);
-  expect(changed.find((c) => c.path === 'src/environments/environment.ts')?.suggested).toBe(false);
-  const result = await runner.commit(item().id, ['src/feature.ts']);
-  console.log('提交：', result.sha, '｜剩下的修改：', result.leftover, '｜狀態：', item()?.status ?? '已不在清單（已提交）');
-  expect(result.leftover).toEqual([]);
+  const { gitState, stage, commitStaged } = await import('../../src/main/gitpanel');
+  const state = await gitState(folder);
+  expect(state.unstaged.map((f) => f.path).sort()).toEqual(['src/environments/environment.ts', 'src/feature.ts']);
+  await stage(folder, ['src/feature.ts']);
+  const sha = await commitStaged(folder, 'feat(ALL-1) test');
+  console.log('提交：', sha);
+  // environment.ts 還沒處理：不能完成；選擇還原就可以
+  await expect(runner.finish(item().id, false)).rejects.toThrow('未提交的修改');
+  const id = item().id;
+  await runner.finish(id, true);
+  expect(store.getWorkItem(id)).toMatchObject({ status: 'committed', lane: 'done' });
   expect(git(folder, 'log', '-1', '--format=%s').trim()).toBe('feat(ALL-1) test');
   expect(git(folder, 'status', '--porcelain').trim()).toBe('');
   expect(readFileSync(join(folder, 'src/environments/environment.ts'), 'utf8')).toContain("'sit'"); // 已還原

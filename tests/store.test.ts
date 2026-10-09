@@ -41,8 +41,8 @@ describe('計畫與修正紀錄', () => {
       { ticket: b, entries: [entry([2, 1])], skill: 'frontend-workflow', prTitle: 'feat(ALL-2) b', reason: '' },
     ];
     const judgements = {
-      'ALL-1': { entries: [entry([8])], prTitle: '', reason: '' },
-      'ALL-2': { entries: [entry([5])], prTitle: '', reason: '' },
+      'ALL-1': { entries: [entry([8])], prTitle: '', reason: '', summary: [], resources: [] },
+      'ALL-2': { entries: [entry([5])], prTitle: '', reason: '', summary: [], resources: [] },
     };
     expect(store.confirmPlan(run.id, plans, judgements).status).toBe('planned');
     expect(store.getPlan(run.id)).toEqual(plans);

@@ -18,8 +18,13 @@ export function judgementSchema(settings: Settings) {
   return {
     type: 'object',
     additionalProperties: false,
-    required: ['entries', 'prTitle', 'reason'],
+    required: ['summary', 'entries', 'prTitle', 'reason'],
     properties: {
+      summary: {
+        type: 'array',
+        description: '這張單要做什麼：用繁體中文條列 3～6 點具體的開發重點（改哪個畫面、加什麼欄位或行為、有什麼限制），讓人不看單也知道要做什麼',
+        items: { type: 'string' },
+      },
       entries: {
         type: 'array',
         description: '這張單要做在哪些專案；通常只有一個',
@@ -34,7 +39,7 @@ export function judgementSchema(settings: Settings) {
               description: '只有有商戶的專案才填；判斷不出來就給空陣列',
               items: { type: 'integer', enum: allMerchants },
             },
-            reason: { type: 'string', description: '用繁體中文一句話說明判斷依據' },
+            reason: { type: 'string', description: '用繁體中文說明為什麼是這個專案：單上哪段內容指向這裡（例如提到的頁面、後台選單、前台功能），以及商戶的判斷依據' },
           },
         },
       },
@@ -47,7 +52,7 @@ export function judgementSchema(settings: Settings) {
 function describeProjects(settings: Settings): string {
   return Object.entries(settings.projects)
     .map(([name, rule]) => {
-      const lines = [`- ${name}：${rule.description ?? '（沒有說明）'}`];
+      const lines = [`- ${name}（${rule.side ?? '未標示前後台'}）：${rule.description ?? '（沒有說明）'}`];
       if (hasMerchants(rule)) {
         lines.push(`  可選商戶：${rule.merchants!.join('、')}`);
         const names = Object.entries(rule.merchantNames ?? {}).filter(([, v]) => v?.length);
@@ -76,7 +81,9 @@ export const JUDGE_INSTRUCTIONS = `你是前端工程師的助理，負責判斷
 - 前端子任務（[FE]）通常只做一個專案；同時提到前台與後台設定時，請把兩個專案都列出來，在理由裡說明。
 - 標題或內文裡的 M1、M2、M8 這類代號就是商戶編號；也可能用品牌名稱稱呼商戶。
 - 判斷不出商戶時給空陣列，並在理由說明，不要亂猜。
-- 合併請求標題用英文，格式「feat(單號) 描述」，單號用指派給使用者的那張（子任務）的單號，描述簡短、小寫開頭。`;
+- 合併請求標題用英文，格式「feat(單號) 描述」，單號用指派給使用者的那張（子任務）的單號，描述簡短、小寫開頭。
+- 「要做什麼」要具體：寫出要改的畫面或功能、要加的欄位或行為、有沒有串接 API、有什麼限制；不要只重複標題。
+- 特別注意前台（玩家端）與後台（管理端）的區別：需求在後台設定、玩家端只是顯示結果的，開發專案通常是後台。`;
 
 export function buildJudgePrompt(ticket: JiraTicket, sub: IssueContext, main: IssueContext | null, settings: Settings, history: PastDecision[]): string {
   const parts = [
@@ -104,5 +111,6 @@ export function sanitizeJudgement(raw: Judgement, ticketKey: string, settings: S
     .filter((e) => settings.projects[e.project] && !seen.has(e.project) && seen.add(e.project))
     .map((e) => normalizeEntry({ project: e.project, merchants: e.merchants ?? [], sourceMerchant: null, reason: e.reason ?? '' }, settings.projects[e.project]));
   const description = (raw.prTitle ?? '').replace(/^feat\([^)]*\)\s*/i, '').trim();
-  return { entries, prTitle: `feat(${ticketKey}) ${description || 'update'}`, reason: raw.reason ?? '' };
+  const summary = (raw.summary ?? []).map((line) => String(line).trim()).filter(Boolean).slice(0, 8);
+  return { entries, prTitle: `feat(${ticketKey}) ${description || 'update'}`, reason: raw.reason ?? '', summary, resources: [] };
 }

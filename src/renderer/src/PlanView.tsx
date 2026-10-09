@@ -29,6 +29,8 @@ function problemOf(plan: TicketPlan, options: PlanOptions): string | null {
 /** 你自己寫的技能放在 ~/.codex/skills/ 底下，排在前面 */
 const isOwnSkill = (skill: SkillInfo) => /\/\.codex\/skills\/[^/]+\/SKILL\.md$/.test(skill.path);
 
+const RESOURCE_LABEL = { figma: 'Figma', document: '文件', jira: 'Jira', attachment: '附件', link: '網頁' } as const;
+
 const ROLE_LABEL: Record<PlanBranch['role'], string> = { single: '開發', source: '開發（來源）', target: '移植目標' };
 
 interface Props {
@@ -61,7 +63,10 @@ export function PlanView({ run, tickets, onBack, onConfirmed }: Props) {
     try {
       const j = await api.judgeTicket(ticket);
       setJudgements((prev) => ({ ...prev, [ticket.key]: j }));
-      setPlans((prev) => ({ ...prev, [ticket.key]: { ticket, entries: j.entries, skill: defaultSkill, prTitle: j.prTitle, reason: j.reason } }));
+      setPlans((prev) => ({
+        ...prev,
+        [ticket.key]: { ticket, entries: j.entries, skill: defaultSkill, prTitle: j.prTitle, reason: j.reason, summary: j.summary, resources: j.resources },
+      }));
     } catch (e) {
       setJudgeErrors((prev) => ({ ...prev, [ticket.key]: errorText(e) }));
     }
@@ -207,7 +212,34 @@ export function PlanView({ run, tickets, onBack, onConfirmed }: Props) {
 
               {plan && options && (
                 <>
-                  {plan.reason && <p className="reason">AI：{plan.reason}</p>}
+                  <div className="plan-block">
+                    <div className="plan-block-title">要做什麼</div>
+                    {plan.summary?.length ? (
+                      <ul className="summary">{plan.summary.map((line, i) => <li key={i}>{line}</li>)}</ul>
+                    ) : (
+                      <p className="muted small">AI 沒有整理出重點，請點單號看原文。</p>
+                    )}
+                  </div>
+
+                  <div className="plan-block">
+                    <div className="plan-block-title">參考資料（{plan.resources?.length ?? 0}）</div>
+                    {plan.resources?.length ? (
+                      <ul className="resources">
+                        {plan.resources.map((r) => (
+                          <li key={r.url}>
+                            <span className={`res-kind res-${r.kind}`}>{RESOURCE_LABEL[r.kind]}</span>
+                            <a href={r.url} onClick={(e) => { e.preventDefault(); api.openExternal(r.url); }}>{r.title}</a>
+                            <span className="muted small">（{r.from}）</span>
+                          </li>
+                        ))}
+                      </ul>
+                    ) : (
+                      <p className="muted small">單上沒有附 Figma、文件或連結。</p>
+                    )}
+                  </div>
+
+                  <div className="plan-block-title">專案判斷</div>
+                  {plan.reason && <p className="reason">{plan.reason}</p>}
 
                   {plan.entries.map((entry, index) => {
                     const project = options.projects.find((p) => p.name === entry.project);
@@ -216,9 +248,10 @@ export function PlanView({ run, tickets, onBack, onConfirmed }: Props) {
                         <label>
                           專案
                           <select value={entry.project} onChange={(e) => updateEntry(ticket.key, index, { project: e.target.value })}>
-                            {options.projects.map((p) => <option key={p.name}>{p.name}</option>)}
+                            {options.projects.map((p) => <option key={p.name} value={p.name}>{p.name}{p.side ? `（${p.side}）` : ''}</option>)}
                           </select>
                         </label>
+                        {project?.side && <span className={`side ${project.side.startsWith('前台') ? 'front' : 'back'}`}>{project.side}</span>}
                         {project?.merchants && (
                           <div className="merchants">
                             商戶
@@ -249,7 +282,7 @@ export function PlanView({ run, tickets, onBack, onConfirmed }: Props) {
                         {plan.entries.length > 1 && (
                           <button className="link" onClick={() => update(ticket.key, (p) => ({ ...p, entries: p.entries.filter((_, i) => i !== index) }))}>移除</button>
                         )}
-                        {entry.reason && <p className="reason small">{entry.reason}</p>}
+                        {entry.reason && <p className="reason small why">為什麼是這個專案：{entry.reason}</p>}
                       </div>
                     );
                   })}

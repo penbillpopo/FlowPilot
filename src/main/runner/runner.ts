@@ -3,7 +3,8 @@
 import { execFile } from 'node:child_process';
 import { existsSync } from 'node:fs';
 import { join } from 'node:path';
-import type { BoardState, ChangedFile, PendingRequest, SkillInfo, TicketPlan } from '../../shared/types';
+import type { BoardState, ChatEvent, PendingRequest, SkillInfo, TicketPlan } from '../../shared/types';
+import { toEntry } from '../chat';
 import type { CodexRpc, RpcMessage } from '../codex/rpc';
 import { listSkills } from '../codex/structured';
 import {
@@ -26,8 +27,6 @@ import type { Settings } from '../settings';
 import { FINISHED, OCCUPYING, type StoredWorkItem, type Store } from '../store';
 import type { VSCode } from '../vscode';
 import { pickFolder } from './allocate';
-import { mkdtempSync, writeFileSync } from 'node:fs';
-import { tmpdir } from 'node:os';
 import { commandPolicy, looksLikeQuestion } from './policy';
 
 export interface RunnerDeps {
@@ -40,6 +39,8 @@ export interface RunnerDeps {
   onChange: () => void;
   /** AI 正在寫的回覆有新內容（即時顯示用，很頻繁，由呼叫端合併後再送畫面） */
   onStream: (itemId: number, text: string) => void;
+  /** 聊天紀錄的即時更新（新的一則、或某一則多了內容） */
+  onChat?: (itemId: number, event: ChatEvent) => void;
   log: (message: string) => void;
 }
 
@@ -430,8 +431,7 @@ export class Runner {
       ],
     });
     this.turns.set(thread.id, turn.id);
-    // 對話開始之後才接得上：叫 VS Code 開分頁
-    void this.openInVSCode(id).catch((e) => this.deps.log(`打開 VS Code 失敗：${e.message}`));
+    // 不自動打開 VS Code：工作台就看得到對話與改動；需要時再按「在 VS Code 查看」
   }
 
   // ---- Codex 訊息 ----
@@ -463,6 +463,8 @@ export class Runner {
       this.deps.codex.reply(message.id, { decision: 'decline' });
       return;
     }
+
+    this.forwardChat(item.id, method, message.params);
 
     switch (method) {
       case 'turn/started':
@@ -543,6 +545,20 @@ export class Runner {
     this.notify(item.id, `${item.ticketKey} 要你確認`, `${params.serverName}：${short(params.message ?? '', 80)}`);
   }
 
+  /** 把 Codex 的事件轉成聊天畫面的即時更新 */
+  private forwardChat(itemId: number, method: string, params: any) {
+    const emit = this.deps.onChat;
+    if (!emit) return;
+    if (method === 'item/started' || method === 'item/completed') {
+      const entry = toEntry(params.item, Date.now());
+      if (entry) emit(itemId, { type: 'upsert', entry });
+    } else if (method === 'item/agentMessage/delta' || method === 'item/reasoning/summaryTextDelta' || method === 'item/plan/delta') {
+      emit(itemId, { type: 'delta', id: params.itemId, field: 'text', delta: params.delta ?? '' });
+    } else if (method === 'item/commandExecution/outputDelta') {
+      emit(itemId, { type: 'delta', id: params.itemId, field: 'output', delta: params.delta ?? '' });
+    }
+  }
+
   private onApproval(item: StoredWorkItem, message: RpcMessage) {
     const params = message.params ?? {};
     const command: string = params.command ?? (Array.isArray(params.command) ? params.command.join(' ') : '');
@@ -569,7 +585,7 @@ export class Runner {
     this.update(id, { status: 'running', activity: accept ? '已同意，繼續執行' : '已拒絕，繼續執行', pending: null });
   }
 
-  async reply(id: number, text: string) {
+  async reply(id: number, text: string, images: string[] = []) {
     const { codex } = this.deps;
     const item = this.deps.store.getWorkItem(id)!;
     if (!item.threadId) throw new Error('這張單還沒有 AI 對話');
@@ -581,7 +597,11 @@ export class Runner {
       this.update(id, { status: 'running', activity: '已回答，繼續執行', pending: null });
       return;
     }
-    const input = [{ type: 'text', text, text_elements: [] }];
+    const input: object[] = [
+      ...(text.trim() ? [{ type: 'text', text, text_elements: [] }] : []),
+      ...images.map((path) => ({ type: 'localImage', path })),
+    ];
+    if (input.length === 0) throw new Error('訊息是空的');
     const turnId = this.turns.get(item.threadId);
     if (turnId) {
       await codex.request('turn/steer', { threadId: item.threadId, input, expectedTurnId: turnId });
@@ -592,6 +612,14 @@ export class Runner {
     this.update(id, { status: 'running', activity: '已送出，繼續執行', pending: null });
   }
 
+  /** 中斷 AI 這一輪：單不停止，之後可以再補充指示讓它繼續 */
+  async interrupt(id: number) {
+    const item = this.deps.store.getWorkItem(id)!;
+    const turnId = item.threadId ? this.turns.get(item.threadId) : undefined;
+    if (!item.threadId || !turnId) throw new Error('AI 目前沒有在執行');
+    await this.deps.codex.request('turn/interrupt', { threadId: item.threadId, turnId });
+  }
+
   async stop(id: number) {
     const item = this.deps.store.getWorkItem(id)!;
     const turnId = item.threadId ? this.turns.get(item.threadId) : undefined;
@@ -600,70 +628,37 @@ export class Runner {
     void this.schedule();
   }
 
-  // ---- 審查與提交 ----
-
-  /** 這張單改了哪些檔案；environment.ts（瀏覽器測試切 SIT／UAT 用的）預設不勾 */
-  async changedFiles(id: number): Promise<ChangedFile[]> {
-    const item = this.deps.store.getWorkItem(id)!;
-    if (!item.folder) throw new Error('這張單還沒有資料夾');
-    const result = await runGit(this.folderPath(item.folder), ['status', '--porcelain', '--untracked-files=all']);
-    if (result.code !== 0) throw new Error(`讀不到 git 狀態：${result.stderr.trim()}`);
-    return result.stdout
-      .split('\n')
-      .filter(Boolean)
-      .map((line) => {
-        const code = line.slice(0, 2).trim() || '?';
-        const path = line.slice(3).split(' -> ').pop()!.replace(/^"|"$/g, '');
-        return { path, code, suggested: !isEnvironmentFile(path) };
-      });
-  }
+  // ---- 完成 ----
 
   /**
-   * 提交勾選的檔案：訊息用合併請求標題，不推送。
-   * 提交後還原沒勾的 environment.ts，讓資料夾回到乾淨，空出來給下一張。
+   * 這張單做完了：讓出資料夾給下一張。
+   * 資料夾要乾淨（提交或捨棄都可以）；environment.ts（瀏覽器測試切 SIT／UAT 用的）可以選擇直接還原。
    */
-  async commit(id: number, files: string[]): Promise<{ sha: string; leftover: string[] }> {
+  async finish(id: number, restoreEnvironment: boolean) {
     const item = this.deps.store.getWorkItem(id)!;
-    if (!item.folder) throw new Error('這張單還沒有資料夾');
-    if (['running', 'preparing'].includes(item.status)) throw new Error('AI 還在執行，請等它停下來（或按停止）再提交');
-    if (files.length === 0) throw new Error('至少要勾選一個檔案');
-    const cwd = this.folderPath(item.folder);
-    if ((await currentBranch(cwd)) !== item.branch) throw new Error(`${item.folder} 目前不在 ${item.branch}，不提交`);
-    const changed = await this.changedFiles(id);
-    const unknown = files.filter((f) => !changed.some((c) => c.path === f));
-    if (unknown.length) throw new Error(`這些檔案沒有修改：${unknown.join('、')}`);
-
-    this.update(id, { activity: `提交中（${files.length} 個檔案）` });
-    const add = await runGit(cwd, ['add', '-A', '--', ...files]);
-    if (add.code !== 0) throw new Error(`加入檔案失敗：${add.stderr.trim()}`);
-    const messageFile = join(mkdtempSync(join(tmpdir(), 'flowpilot-commit-')), 'message.txt');
-    writeFileSync(messageFile, `${item.prTitle}\n`);
-    try {
-      // 用登入 shell 執行，專案的提交前檢查（例如 lint）才找得到 node
-      await shell(cwd, `git commit -F '${messageFile}'`, 10 * 60_000);
-    } catch (error) {
-      await runGit(cwd, ['reset', '-q', '--', ...files]);
-      this.update(id, { activity: `提交失敗：${(error as Error).message}` });
-      throw new Error(`提交失敗（檔案已退回未暫存）：${(error as Error).message}`);
+    if (['running', 'preparing'].includes(item.status)) throw new Error('AI 還在執行，請先等它停下來（或中斷）');
+    if (item.folder) {
+      const cwd = this.folderPath(item.folder);
+      if ((await currentBranch(cwd)) === item.branch) {
+        let dirty = await dirtyFiles(cwd);
+        if (restoreEnvironment) {
+          for (const file of dirty.filter(isEnvironmentFile)) await runGit(cwd, ['restore', '--staged', '--worktree', '--', file]);
+          dirty = await dirtyFiles(cwd);
+        }
+        if (dirty.length) throw new Error(`還有 ${dirty.length} 個未提交的修改（${dirty.slice(0, 3).join('、')}${dirty.length > 3 ? ' 等' : ''}），請先提交或捨棄`);
+      }
     }
-    const sha = (await runGit(cwd, ['rev-parse', '--short', 'HEAD'])).stdout.trim();
-    // 沒勾的 environment.ts 是 AI 切 SIT／UAT 留下的，還原
-    for (const file of changed.filter((c) => !files.includes(c.path) && isEnvironmentFile(c.path) && c.code !== '??')) {
-      await runGit(cwd, ['restore', '--staged', '--worktree', '--', file.path]);
-    }
-    const leftover = await dirtyFiles(cwd);
+    const sha = item.folder ? (await runGit(this.folderPath(item.folder), ['rev-parse', '--short', 'HEAD'])).stdout.trim() : null;
     this.update(id, {
       status: 'committed',
       lane: 'done',
       commitSha: sha,
       pending: null,
       activity:
-        `已提交 ${sha}（沒有推送）` +
-        (item.targetMerchants.length ? `；之後要移植到 ${item.targetMerchants.map((m) => `m${m}`).join('、')}（移植功能還在開發中）` : '') +
-        (leftover.length ? `；資料夾還有 ${leftover.length} 個未提交的修改，下一張單會先跳過這個資料夾` : ''),
+        '已完成' +
+        (item.targetMerchants.length ? `；之後要移植到 ${item.targetMerchants.map((m) => `m${m}`).join('、')}（移植功能還在開發中）` : ''),
     });
     await this.schedule();
-    return { sha, leftover };
   }
 
   /**

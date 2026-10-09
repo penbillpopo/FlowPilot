@@ -37,26 +37,50 @@ const api: FlowPilotApi = {
   stop: (id) => ipcRenderer.invoke('item:stop', id),
   remove: (id) => ipcRenderer.invoke('item:remove', id),
   handOff: (id) => ipcRenderer.invoke('item:handOff', id),
-  changedFiles: (id) => ipcRenderer.invoke('item:changedFiles', id),
-  commit: (id, files) => ipcRenderer.invoke('item:commit', id, files),
-  retry: (id) => ipcRenderer.invoke('item:retry', id),
-  openInVSCode: (id) => ipcRenderer.invoke('item:openInVSCode', id),
-  terminal: {
-    open: (id, cols, rows) => ipcRenderer.invoke('term:open', id, cols, rows),
-    write: (id, data) => ipcRenderer.send('term:input', id, data),
-    resize: (id, cols, rows) => ipcRenderer.send('term:resize', id, cols, rows),
-    close: (id) => ipcRenderer.invoke('term:close', id),
+  finish: (id, restoreEnvironment) => ipcRenderer.invoke('item:finish', id, restoreEnvironment),
+  interrupt: (id) => ipcRenderer.invoke('item:interrupt', id),
+  send: (id, text, images) => ipcRenderer.invoke('item:send', id, text, images),
+  saveImage: (bytes, extension) => ipcRenderer.invoke('chat:saveImage', bytes, extension),
+  chatHistory: (id) => ipcRenderer.invoke('chat:history', id),
+  onChat: (listener) => {
+    const handler = (_event: unknown, batch: [number, Parameters<typeof listener>[1]][]) => batch.forEach(([id, e]) => listener(id, e));
+    ipcRenderer.on('chat:events', handler);
+    return () => ipcRenderer.removeListener('chat:events', handler);
+  },
+  git: {
+    state: (id) => ipcRenderer.invoke('git:state', id),
+    diff: (id, path, staged) => ipcRenderer.invoke('git:diff', id, path, staged),
+    stage: (id, paths) => ipcRenderer.invoke('git:stage', id, paths),
+    unstage: (id, paths) => ipcRenderer.invoke('git:unstage', id, paths),
+    discard: (id, paths) => ipcRenderer.invoke('git:discard', id, paths),
+    commit: (id, message) => ipcRenderer.invoke('git:commit', id, message),
+    push: (id) => ipcRenderer.invoke('git:push', id),
+  },
+  folderTerminal: {
+    open: (id, cols, rows) => ipcRenderer.invoke('folderTerm:open', id, cols, rows),
+    write: (folder, data) => ipcRenderer.send('folderTerm:input', folder, data),
+    resize: (folder, cols, rows) => ipcRenderer.send('folderTerm:resize', folder, cols, rows),
+    startSite: (id) => ipcRenderer.invoke('folderTerm:startSite', id),
+    interrupt: (folder) => ipcRenderer.send('folderTerm:interrupt', folder),
     onData: (listener) => {
-      const handler = (_event: unknown, id: number, data: string) => listener(id, data);
-      ipcRenderer.on('term:data', handler);
-      return () => ipcRenderer.removeListener('term:data', handler);
+      const handler = (_event: unknown, folder: string, data: string) => listener(folder, data);
+      ipcRenderer.on('folderTerm:data', handler);
+      return () => ipcRenderer.removeListener('folderTerm:data', handler);
+    },
+    onUrl: (listener) => {
+      const handler = (_event: unknown, folder: string, url: string | null) => listener(folder, url);
+      ipcRenderer.on('folderTerm:url', handler);
+      return () => ipcRenderer.removeListener('folderTerm:url', handler);
     },
     onExit: (listener) => {
-      const handler = (_event: unknown, id: number, code: number) => listener(id, code);
-      ipcRenderer.on('term:exit', handler);
-      return () => ipcRenderer.removeListener('term:exit', handler);
+      const handler = (_event: unknown, folder: string) => listener(folder);
+      ipcRenderer.on('folderTerm:exit', handler);
+      return () => ipcRenderer.removeListener('folderTerm:exit', handler);
     },
   },
+  openUrl: (url) => ipcRenderer.invoke('shell:openUrl', url),
+  retry: (id) => ipcRenderer.invoke('item:retry', id),
+  openInVSCode: (id) => ipcRenderer.invoke('item:openInVSCode', id),
 };
 
 contextBridge.exposeInMainWorld('flowpilot', api);

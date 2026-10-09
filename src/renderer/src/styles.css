@@ -197,3 +197,100 @@ details.finished .item { opacity: 0.8; margin-bottom: 8px; }
 ul.files { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 4px; max-height: 260px; overflow: auto; }
 ul.files label { display: flex; gap: 6px; align-items: center; flex-wrap: wrap; }
 ul.files .code { font-family: ui-monospace, Menlo, monospace; font-size: 11px; color: var(--muted); width: 18px; }
+
+/* ===== 工作台：左邊單、中間對話、右邊本機網站與 Git ===== */
+.workbench { display: grid; grid-template-columns: 250px minmax(0, 1fr) 440px; height: 100%; min-height: 0; }
+.workbench > * { min-height: 0; }
+.sidebar { border-right: 1px solid var(--line); padding: 12px; overflow: auto; display: flex; flex-direction: column; gap: 6px; }
+.new-ticket { width: 100%; }
+.side-section { font-size: 12px; font-weight: 600; color: var(--muted); margin-top: 10px; cursor: default; }
+details.finished-list > summary { cursor: pointer; }
+ul.tickets { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 4px; }
+li.ticket { padding: 8px 10px; border-radius: 6px; cursor: pointer; border-left: 3px solid transparent; }
+li.ticket:hover { background: var(--hover); }
+li.ticket.selected { background: var(--selected); }
+li.ticket.status-waiting { border-left-color: var(--waiting); }
+li.ticket.status-review { border-left-color: var(--review); }
+li.ticket.status-running, li.ticket.status-preparing { border-left-color: var(--running); }
+li.ticket.status-blocked, li.ticket.status-failed { border-left-color: var(--blocked); }
+.ticket-line { display: flex; gap: 6px; align-items: center; flex-wrap: wrap; }
+.ticket-summary { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.empty-row { padding: 4px 10px; }
+.folders-mini { margin-top: auto; padding-top: 12px; border-top: 1px solid var(--line); display: flex; flex-direction: column; gap: 2px; }
+.sidebar .pending-run { flex-direction: column; align-items: stretch; padding: 8px; margin: 0; }
+
+.center { min-width: 0; display: flex; flex-direction: column; height: 100%; padding: 0 !important; }
+.empty-state { margin: auto; text-align: center; color: var(--muted); display: flex; flex-direction: column; gap: 12px; align-items: center; }
+.chat { display: flex; flex-direction: column; height: 100%; min-height: 0; }
+.chat-head { padding: 12px 16px; border-bottom: 1px solid var(--line); display: flex; flex-direction: column; gap: 6px; }
+.chat-title { display: flex; gap: 8px; align-items: baseline; flex-wrap: wrap; }
+.chat-scroll { flex: 1; overflow: auto; padding: 14px 16px; display: flex; flex-direction: column; gap: 8px; }
+.msg { line-height: 1.6; font-size: 14px; }
+.msg.user { align-self: flex-end; max-width: 80%; background: var(--selected); padding: 6px 12px; border-radius: 10px; }
+.msg.user .markdown > :first-child { margin-top: 4px; }
+.msg.assistant { padding: 2px 2px; }
+.fold { border-radius: 6px; font-size: 13px; }
+.fold.bad .fold-head { color: var(--blocked); }
+.fold-head { border: none; background: none; padding: 2px 0; text-align: left; color: var(--fg); display: flex; gap: 6px; align-items: baseline; width: 100%; }
+.fold-head code { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; max-width: 560px; display: inline-block; vertical-align: bottom; }
+.fold-arrow { color: var(--muted); width: 10px; }
+.fold-body { padding: 4px 0 6px 16px; }
+pre.output { background: var(--code-bg); padding: 8px 10px; border-radius: 6px; max-height: 300px; overflow: auto; font-size: 12px; white-space: pre-wrap; word-break: break-all; margin: 0; }
+pre.output.log { max-height: 220px; }
+pre.diff { background: var(--code-bg); border-radius: 6px; max-height: 360px; overflow: auto; font-size: 12px; margin: 0; padding: 6px 0; font-family: ui-monospace, Menlo, monospace; }
+pre.diff > div { padding: 0 10px; white-space: pre-wrap; word-break: break-all; }
+pre.diff .add { background: rgba(46, 160, 67, 0.18); }
+pre.diff .del { background: rgba(248, 81, 73, 0.18); }
+pre.diff .hunk { color: var(--muted); }
+.typing { padding: 4px 0; }
+.composer { border-top: 1px solid var(--line); padding: 10px 16px 14px; display: flex; flex-direction: column; gap: 6px; }
+.composer textarea { width: 100%; font: inherit; color: var(--fg); background: var(--bg); border: 1px solid var(--line); border-radius: 8px; padding: 8px 10px; resize: vertical; }
+.composer-actions { justify-content: flex-end; }
+.attachments { display: flex; gap: 6px; flex-wrap: wrap; }
+.chat .pending { margin-top: 6px; }
+
+.right { border-left: 1px solid var(--line); padding: 12px; overflow: auto; display: flex; flex-direction: column; gap: 12px; }
+.panel { border: 1px solid var(--line); border-radius: 8px; padding: 10px 12px; display: flex; flex-direction: column; gap: 8px; font-size: 13px; }
+.panel-head { display: flex; justify-content: space-between; align-items: center; gap: 8px; }
+.dev-running { color: var(--review) !important; }
+.dev-failed { color: var(--blocked) !important; }
+.git-section-head { display: flex; justify-content: space-between; align-items: center; font-size: 12px; font-weight: 600; color: var(--muted); }
+ul.git-files { list-style: none; margin: 4px 0 0; padding: 0; display: flex; flex-direction: column; }
+ul.git-files li { display: flex; align-items: center; gap: 4px; border-radius: 4px; }
+ul.git-files li:hover, ul.git-files li.open { background: var(--hover); }
+ul.git-files li.diff-row { display: block; background: none; padding: 4px 0 8px; }
+.file-name { flex: 1; min-width: 0; border: none; background: none; text-align: left; padding: 3px 4px; color: var(--fg); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.file-actions { display: flex; gap: 2px; }
+.file-actions button.link { font-size: 15px; padding: 0 6px; }
+.code { font-family: ui-monospace, Menlo, monospace; font-size: 11px; font-weight: 700; display: inline-block; width: 14px; }
+.c-M { color: #d29922; } .c-A, .c-U { color: var(--review); } .c-D { color: var(--blocked); } .c-R { color: var(--running); }
+.git-commit { display: flex; flex-direction: column; gap: 6px; border-top: 1px solid var(--line); padding-top: 8px; }
+.git-commit input { width: 100%; }
+.notice-ok { color: var(--review); font-size: 12px; }
+
+/* 資料夾終端機：固定顯示 */
+.folder-term { height: 300px; border-radius: 6px; overflow: hidden; background: #161618; padding: 4px; }
+@media (prefers-color-scheme: light) { .folder-term { background: #ffffff; border: 1px solid var(--line); } }
+
+/* 計畫表：要做什麼、參考資料、專案判斷 */
+.plan-block { display: flex; flex-direction: column; gap: 4px; }
+.plan-block-title { font-size: 12px; font-weight: 700; color: var(--muted); }
+ul.summary { margin: 0; padding-left: 20px; font-size: 13px; line-height: 1.6; }
+ul.resources { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 4px; font-size: 13px; }
+ul.resources a { color: var(--accent); text-decoration: none; margin: 0 6px; word-break: break-all; }
+.res-kind { font-size: 11px; padding: 1px 6px; border-radius: 8px; background: var(--hover); color: var(--muted); }
+.res-figma { background: #f24e1e22; color: #f24e1e; }
+.res-document { background: var(--ok-bg); color: var(--ok-fg); }
+.side { font-size: 12px; padding: 1px 8px; border-radius: 10px; font-weight: 600; }
+.side.front { background: #2f80ed22; color: var(--accent); }
+.side.back { background: #9b51e022; color: #9b51e0; }
+@media (prefers-color-scheme: dark) { .side.back { color: #c39bff; } }
+.reason.why { color: var(--fg); opacity: 0.85; }
+
+/* 標題列的「更多」選單 */
+details.more { position: relative; }
+details.more > summary { list-style: none; cursor: pointer; font-size: 13px; padding: 6px 14px; border: 1px solid var(--line); border-radius: 6px; }
+details.more > summary::-webkit-details-marker { display: none; }
+.more-menu { position: absolute; z-index: 10; top: calc(100% + 4px); left: 0; min-width: 160px; background: var(--bg); border: 1px solid var(--line); border-radius: 8px; padding: 4px; display: flex; flex-direction: column; box-shadow: 0 6px 20px rgba(0,0,0,0.25); }
+.more-menu button { border: none; text-align: left; padding: 6px 10px; }
+.more-menu button.danger { color: var(--blocked); }

@@ -1,0 +1,76 @@
+import { execFileSync } from 'node:child_process';
+import { existsSync, mkdtempSync, readFileSync, writeFileSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
+import { describe, expect, it } from 'vitest';
+import { commitStaged, discard, fileDiff, gitState, parseStatus, pushBranch, stage, unstage } from '../src/main/gitpanel';
+
+const git = (cwd: string, ...args: string[]) => execFileSync('git', args, { cwd, stdio: 'pipe' }).toString();
+
+function repo() {
+  const root = mkdtempSync(join(tmpdir(), 'flowpilot-panel-'));
+  const remote = join(root, 'remote.git');
+  git(root, 'init', '-q', '--bare', '-b', 'main', remote);
+  const dir = join(root, 'work');
+  git(root, 'clone', '-q', remote, dir);
+  git(dir, 'config', 'user.name', 't');
+  git(dir, 'config', 'user.email', 't@t');
+  writeFileSync(join(dir, 'a.ts'), 'a\n');
+  writeFileSync(join(dir, 'b.ts'), 'b\n');
+  git(dir, 'add', '.');
+  git(dir, 'commit', '-q', '-m', 'init');
+  git(dir, 'push', '-q', 'origin', 'main');
+  git(dir, 'switch', '-q', '-c', 'ban/ALL-1');
+  return dir;
+}
+
+describe('Git 改動面板', () => {
+  it('解析狀態：暫存、未暫存、新檔案、改名', () => {
+    expect(parseStatus('M  a.ts\0 M b.ts\0MM c.ts\0?? new.ts\0R  to.ts\0from.ts\0')).toEqual({
+      staged: [{ path: 'a.ts', code: 'M' }, { path: 'c.ts', code: 'M' }, { path: 'to.ts', code: 'R' }],
+      unstaged: [{ path: 'b.ts', code: 'M' }, { path: 'c.ts', code: 'M' }, { path: 'new.ts', code: 'U' }],
+    });
+  });
+
+  it('暫存、取消暫存、看差異、捨棄、提交、推送', async () => {
+    const dir = repo();
+    writeFileSync(join(dir, 'a.ts'), 'a2\n');
+    writeFileSync(join(dir, 'new.ts'), 'n\n');
+    expect(await gitState(dir)).toMatchObject({
+      branch: 'ban/ALL-1', staged: [], unstaged: [{ path: 'a.ts', code: 'M' }, { path: 'new.ts', code: 'U' }], hasRemote: false, unpushed: null,
+    });
+    expect(await fileDiff(dir, 'a.ts', false)).toContain('+a2');
+    expect(await fileDiff(dir, 'new.ts', false)).toContain('+n');
+
+    await stage(dir, ['a.ts']);
+    expect((await gitState(dir)).staged).toEqual([{ path: 'a.ts', code: 'M' }]);
+    expect(await fileDiff(dir, 'a.ts', true)).toContain('+a2');
+    await unstage(dir, ['a.ts']);
+    expect((await gitState(dir)).staged).toEqual([]);
+
+    await discard(dir, ['new.ts', 'a.ts']);
+    expect(existsSync(join(dir, 'new.ts'))).toBe(false);
+    expect(readFileSync(join(dir, 'a.ts'), 'utf8')).toBe('a\n');
+
+    writeFileSync(join(dir, 'b.ts'), 'b2\n');
+    await stage(dir, ['b.ts']);
+    await expect(commitStaged(dir, '  ')).rejects.toThrow('提交訊息');
+    const sha = await commitStaged(dir, 'feat(ALL-1) change b');
+    expect(git(dir, 'log', '-1', '--format=%h %s').trim()).toBe(`${sha} feat(ALL-1) change b`);
+    await expect(commitStaged(dir, 'x')).rejects.toThrow('沒有暫存的變更');
+
+    await pushBranch(dir);
+    expect(await gitState(dir)).toMatchObject({ hasRemote: true, unpushed: 0 });
+    writeFileSync(join(dir, 'b.ts'), 'b3\n');
+    await stage(dir, ['b.ts']);
+    await commitStaged(dir, 'feat(ALL-1) more');
+    expect((await gitState(dir)).unpushed).toBe(1);
+    expect((await gitState(dir, 'main')).ahead).toBe(2); // 比基底多 2 個提交
+  });
+
+  it('資料夾外的路徑一律拒絕', async () => {
+    const dir = repo();
+    await expect(stage(dir, ['../outside.ts'])).rejects.toThrow('路徑不在資料夾裡');
+    await expect(discard(dir, ['../../etc/passwd'])).rejects.toThrow('路徑不在資料夾裡');
+  });
+});

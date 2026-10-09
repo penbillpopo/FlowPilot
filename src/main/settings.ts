@@ -8,6 +8,8 @@ import YAML from 'yaml';
 export interface ProjectRule {
   /** 給 AI 判斷用的說明：這個專案是什麼、單上會怎麼稱呼它 */
   description?: string;
+  /** 前台或後台（顯示在計畫表上，讓你一眼看出開的是哪一種） */
+  side?: string;
   /** 基底分支，可用 {商戶} */
   baseBranch: string;
   /** 新分支名稱，可用 {商戶}、{單號} */
@@ -20,12 +22,16 @@ export interface ProjectRule {
   dependencyGroups?: Record<string, number[]>;
   /** 商戶的品牌名稱（單上常用品牌稱呼商戶），例如 8: [Pubs] */
   merchantNames?: Record<number, string[]>;
+  /** 在本機啟動網站的指令，{port} 會換成資料夾設定的連接埠 */
+  startCommand?: string;
 }
 
 export interface FolderSetting {
   name: string;
   path: string;
   project: string;
+  /** 在本機啟動網站用的連接埠（每個資料夾不同，才能同時跑） */
+  port?: number;
 }
 
 export interface Settings {
@@ -70,6 +76,7 @@ maxInDevelopment: 3
 # description 是給 AI 判斷專案用的說明，寫得越清楚判斷越準
 projects:
   PlatformWeb:
+    side: 前台（玩家端）
     description: 前台（玩家端網站，Web＋H5），多商戶，每個商戶一條 master 分支。單上常寫 Web、H5、前台，或用 M1、M8 這種商戶代號
     baseBranch: master-{商戶}
     branch: ban/m{商戶}/{單號}
@@ -80,29 +87,40 @@ projects:
       B: [5, 9]
     # 商戶的品牌名稱：單上常用品牌稱呼商戶，填了 AI 才認得出來，例如 8: [Pubs]
     merchantNames: {}
+    # 在本機啟動網站的指令（{port} 換成資料夾的連接埠）
+    startCommand: npm start -- --port {port}
   PlatformAdmin:
+    side: 後台（GoGaming）
     description: GoGaming 後台（GG、GoGaming BO、Go Gaming 後台、BO）
     baseBranch: version/0.0.1
     branch: ban/{單號}
+    startCommand: npm start -- --port {port}
   GoMoneyAdmin:
+    side: 後台（GoMoney）
     description: GoMoney 後台（GM、GoMoney）
     baseBranch: version/0.0.1
     branch: ban/{單號}
+    # GoMoneyAdmin 的 npm start 已經固定用 5200
+    startCommand: npm start
 
-# 固定的專案資料夾：一個資料夾同時只做一張單
+# 固定的專案資料夾：一個資料夾同時只做一張單；port 是在本機啟動網站用的連接埠
 folders:
   - name: PlatformWeb
     path: ~/Desktop/Project/PlatformWeb
     project: PlatformWeb
+    port: 4200
   - name: PlatformWeb-2
     path: ~/Desktop/PlatformWeb-2
     project: PlatformWeb
+    port: 4201
   - name: PlatformAdmin
     path: ~/Desktop/Project/PlatformAdmin
     project: PlatformAdmin
+    port: 4300
   - name: GoMoneyAdmin
     path: ~/Desktop/Project/GoMoneyAdmin
     project: GoMoneyAdmin
+    port: 5200
 `;
 
 export function expandHome(path: string): string {

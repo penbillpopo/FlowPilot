@@ -48,6 +48,10 @@ export interface TicketPlan {
   prTitle: string;
   /** AI 的整體說明 */
   reason: string;
+  /** 這張單要做什麼（重點條列） */
+  summary?: string[];
+  /** 單上附的參考資料 */
+  resources?: Resource[];
 }
 
 export type BranchRole = 'single' | 'source' | 'target';
@@ -64,11 +68,24 @@ export interface PlanBranch {
   existsIn: string[];
 }
 
+/** 單上附的參考資料（從 Jira 內文、留言、附件直接擷取，不經過 AI） */
+export interface Resource {
+  kind: 'figma' | 'document' | 'jira' | 'attachment' | 'link';
+  title: string;
+  url: string;
+  /** 出現在哪張單（主單或子任務的單號） */
+  from: string;
+}
+
 /** AI 判斷的結果（還沒經過你修改） */
 export interface Judgement {
   entries: PlanEntry[];
   prTitle: string;
   reason: string;
+  /** 這張單要做什麼（重點條列） */
+  summary: string[];
+  /** 單上附的參考資料 */
+  resources: Resource[];
 }
 
 export interface SkillInfo {
@@ -164,6 +181,54 @@ export interface BoardState {
   streaming: Record<number, string>;
 }
 
+// ---- 工作台：聊天、Git、本機網站 ----
+
+/** 對話裡的一則紀錄（你的訊息、AI 回覆、思考、指令、改動、工具…） */
+export interface ChatEntry {
+  id: string;
+  kind: 'user' | 'assistant' | 'reasoning' | 'command' | 'fileChange' | 'tool' | 'plan' | 'search' | 'notice';
+  /** 主要文字：訊息內容、思考摘要、計畫、工具名稱… */
+  text: string;
+  /** 指令 */
+  command?: string;
+  /** 指令輸出 */
+  output?: string;
+  exitCode?: number | null;
+  /** 進行中、完成、失敗… */
+  status?: string;
+  /** 改了哪些檔案（含差異） */
+  files?: { path: string; kind: string; diff: string }[];
+  /** 你附上的圖片（本機路徑） */
+  images?: string[];
+  at?: number | null;
+}
+
+/** 聊天的即時更新 */
+export type ChatEvent =
+  | { type: 'upsert'; entry: ChatEntry }
+  | { type: 'delta'; id: string; field: 'text' | 'output'; delta: string };
+
+export interface GitFile {
+  path: string;
+  /** 狀態代碼：M 修改、A 新增、D 刪除、R 改名、U 新檔案（未追蹤） */
+  code: string;
+}
+
+export interface GitState {
+  branch: string;
+  /** 準備提交（已暫存） */
+  staged: GitFile[];
+  /** 變更（未暫存，含新檔案） */
+  unstaged: GitFile[];
+  /** 本機有幾個提交還沒推送；null 代表遠端還沒有這條分支 */
+  unpushed: number | null;
+  /** 遠端有沒有這條分支 */
+  hasRemote: boolean;
+  /** 比基底分支多幾個提交 */
+  ahead: number;
+}
+
+
 /** 畫面可以呼叫的主程序功能（由 preload 掛在 window.flowpilot） */
 export interface FlowPilotApi {
   listTickets(statuses: string[]): Promise<JiraTicket[]>;
@@ -199,25 +264,46 @@ export interface FlowPilotApi {
   remove(itemId: number): Promise<void>;
   /** 對話中的單問完了：移到開發佇列，換下一張 */
   handOff(itemId: number): Promise<void>;
-  /** 審查：列出改了哪些檔案 */
-  changedFiles(itemId: number): Promise<ChangedFile[]>;
-  /** 提交勾選的檔案（訊息用合併請求標題，不推送），讓出資料夾 */
-  commit(itemId: number, files: string[]): Promise<{ sha: string; leftover: string[] }>;
+  /** 這張單做完了：資料夾要乾淨（environment.ts 可選擇還原），讓出資料夾給下一張 */
+  finish(itemId: number, restoreEnvironment: boolean): Promise<void>;
+  /** 中斷 AI 這一輪（單本身不停止，可以再補充指示） */
+  interrupt(itemId: number): Promise<void>;
+  /** 送訊息給 AI，可附截圖 */
+  send(itemId: number, text: string, images: string[]): Promise<void>;
+  /** 存一張貼上的截圖，回傳本機路徑 */
+  saveImage(bytes: ArrayBuffer, extension: string): Promise<string>;
+  /** 完整的對話紀錄 */
+  chatHistory(itemId: number): Promise<ChatEntry[]>;
+  onChat(listener: (itemId: number, event: ChatEvent) => void): () => void;
+  git: {
+    state(itemId: number): Promise<GitState>;
+    diff(itemId: number, path: string, staged: boolean): Promise<string>;
+    stage(itemId: number, paths: string[]): Promise<void>;
+    unstage(itemId: number, paths: string[]): Promise<void>;
+    discard(itemId: number, paths: string[]): Promise<void>;
+    commit(itemId: number, message: string): Promise<string>;
+    push(itemId: number): Promise<string>;
+  };
+  /** 資料夾終端機：每個資料夾一個互動式 shell */
+  folderTerminal: {
+    /** 打開（已經開著就沿用），回傳目前為止的輸出與抓到的本機網址 */
+    open(itemId: number, cols: number, rows: number): Promise<{ folder: string; buffer: string; url: string | null }>;
+    write(folder: string, data: string): void;
+    resize(folder: string, cols: number, rows: number): void;
+    /** 在終端機裡執行啟動本機網站的指令 */
+    startSite(itemId: number): Promise<void>;
+    /** 等於按 Ctrl+C */
+    interrupt(folder: string): void;
+    onData(listener: (folder: string, data: string) => void): () => void;
+    onUrl(listener: (folder: string, url: string | null) => void): () => void;
+    onExit(listener: (folder: string) => void): () => void;
+  };
+  openUrl(url: string): Promise<void>;
   retry(itemId: number): Promise<void>;
   openInVSCode(itemId: number): Promise<void>;
-  /** FlowPilot 視窗裡的終端機（接上那張單的 AI 對話） */
-  terminal: {
-    /** 打開並回傳目前為止的輸出（已經開著就沿用） */
-    open(itemId: number, cols: number, rows: number): Promise<string>;
-    write(itemId: number, data: string): void;
-    resize(itemId: number, cols: number, rows: number): void;
-    close(itemId: number): Promise<void>;
-    onData(listener: (itemId: number, data: string) => void): () => void;
-    onExit(listener: (itemId: number, exitCode: number) => void): () => void;
-  };
 }
 
 export interface PlanOptions {
-  projects: { name: string; merchants: number[] | null }[];
+  projects: { name: string; merchants: number[] | null; side: string; description: string }[];
   defaultSkill: string;
 }

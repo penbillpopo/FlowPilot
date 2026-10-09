@@ -1,7 +1,7 @@
 // Jira 查詢：連線資訊沿用 JiraMcpServer 的 .env 與權杖檔，權杖只在執行時讀取。
 import { readFileSync } from 'node:fs';
 import { dirname, isAbsolute, resolve } from 'node:path';
-import type { JiraTicket } from '../shared/types';
+import type { JiraTicket, Resource } from '../shared/types';
 import { expandHome } from './settings';
 
 export interface JiraCredentials {
@@ -99,6 +99,64 @@ export interface IssueContext {
   description: string;
   comments: string[];
   subtasks: { key: string; summary: string }[];
+  /** 內文、留言、附件裡的參考資料 */
+  resources: Resource[];
+}
+
+const URL_IN_TEXT = /https?:\/\/[^\s<>"'）)\]】，。]+/g;
+
+function classify(url: string): Resource['kind'] {
+  if (/(^|\.)figma\.com\//.test(new URL(url).hostname + '/')) return 'figma';
+  if (/atlassian\.net\/browse\//.test(url)) return 'jira';
+  if (/\/_git\/.*\.(md|pdf|docx?|xlsx?)/i.test(url) || /docs\.google\.com|\/wiki\/|notion\.(so|site)|\.(pdf|docx?|xlsx?)(\?|$)/i.test(url)) return 'document';
+  return 'link';
+}
+
+function titleOf(url: string, text: string | undefined, kind: Resource['kind']): string {
+  if (text && text.trim() && text.trim() !== url) return text.trim();
+  try {
+    const u = new URL(url);
+    if (kind === 'figma') {
+      const name = decodeURIComponent(u.pathname.split('/')[3] ?? 'Figma').replace(/-+/g, ' ');
+      const node = u.searchParams.get('node-id');
+      return node ? `${name}（節點 ${node.replace('-', ':')}）` : name;
+    }
+    if (kind === 'jira') return u.pathname.split('/').pop() ?? url;
+    const path = u.searchParams.get('path');
+    if (path) return path.split('/').pop() ?? url;
+    return `${u.hostname}${u.pathname.length > 1 ? u.pathname : ''}`.slice(0, 80);
+  } catch {
+    return url;
+  }
+}
+
+/** 從 Jira 的內文格式（ADF）、留言與附件擷取參考資料；同一個網址只留一筆 */
+export function extractResources(from: string, docs: unknown[], attachments: { filename: string; content: string }[]): Resource[] {
+  const found = new Map<string, Resource>();
+  const add = (url: string | undefined, text?: string) => {
+    if (!url || !/^https?:\/\//.test(url)) return;
+    const clean = url.replace(/[.,;:]+$/, '');
+    if (found.has(clean)) return;
+    const kind = classify(clean);
+    found.set(clean, { kind, title: titleOf(clean, text, kind), url: clean, from });
+  };
+  const walk = (node: unknown) => {
+    if (Array.isArray(node)) return node.forEach(walk);
+    if (!node || typeof node !== 'object') return;
+    const n = node as { type?: string; text?: string; attrs?: { url?: string }; marks?: { type: string; attrs?: { href?: string } }[]; content?: unknown[] };
+    if (n.type === 'inlineCard' || n.type === 'blockCard' || n.type === 'embedCard') add(n.attrs?.url);
+    if (n.type === 'text') {
+      const link = n.marks?.find((m) => m.type === 'link')?.attrs?.href;
+      if (link) add(link, n.text);
+      else for (const match of (n.text ?? '').match(URL_IN_TEXT) ?? []) add(match);
+    }
+    walk(n.content ?? []);
+  };
+  docs.forEach(walk);
+  for (const a of attachments) {
+    if (!found.has(a.content)) found.set(a.content, { kind: 'attachment', title: a.filename, url: a.content, from });
+  }
+  return [...found.values()];
 }
 
 /** Jira 的內文格式（ADF）轉成純文字 */
@@ -120,7 +178,7 @@ const MAX_TEXT = 6000;
 
 export async function getIssueContext(credentials: JiraCredentials, key: string, fetchImpl: typeof fetch = fetch): Promise<IssueContext> {
   const auth = Buffer.from(`${credentials.email}:${credentials.token}`).toString('base64');
-  const params = new URLSearchParams({ fields: 'summary,issuetype,description,comment,subtasks' });
+  const params = new URLSearchParams({ fields: 'summary,issuetype,description,comment,subtasks,attachment' });
   const response = await fetchImpl(`${credentials.baseUrl}/rest/api/3/issue/${encodeURIComponent(key)}?${params}`, {
     headers: { Authorization: `Basic ${auth}`, Accept: 'application/json' },
   });
@@ -132,6 +190,7 @@ export async function getIssueContext(credentials: JiraCredentials, key: string,
       description: unknown;
       comment?: { comments: { body: unknown }[] };
       subtasks?: { key: string; fields: { summary: string } }[];
+      attachment?: { filename: string; content: string }[];
     };
   };
   return {
@@ -142,6 +201,7 @@ export async function getIssueContext(credentials: JiraCredentials, key: string,
     // 最近 5 則留言
     comments: (fields.comment?.comments ?? []).slice(-5).map((c) => adfToText(c.body).trim().slice(0, 1500)),
     subtasks: (fields.subtasks ?? []).map((s) => ({ key: s.key, summary: s.fields.summary })),
+    resources: extractResources(key.toUpperCase(), [fields.description, ...(fields.comment?.comments ?? []).map((c) => c.body)], fields.attachment ?? []),
   };
 }
 

@@ -88,6 +88,32 @@ export async function discard(cwd: string, paths: string[]): Promise<void> {
   }
 }
 
+/** 測試時切 SIT／UAT 改到的檔案：不提交 */
+export const isTestOnlyFile = (path: string) => /(^|\/)src\/environments\/environment[^/]*\.ts$/.test(path);
+
+/**
+ * 提交全部改動（給操作者用：不用管暫存）：
+ * - 測試用的 environment.ts 不提交
+ * - 專案的提交前檢查（例如 ng lint --fix）順手改到的無關檔案，提交後自動還原（它們提交前是乾淨的，還原就是回到原樣）
+ */
+export async function commitAll(cwd: string, message: string, identity?: GitIdentity): Promise<CommitResult & { restored: string[] }> {
+  if (!message.trim()) throw new Error('請輸入提交訊息');
+  const before = await gitState(cwd);
+  const files = [...before.staged, ...before.unstaged].map((f) => f.path);
+  const toCommit = [...new Set(files.filter((p) => !isTestOnlyFile(p)))];
+  if (toCommit.length === 0) throw new Error('沒有要提交的改動');
+  // 先把暫存區整理成「只有要提交的」：測試用的檔案如果被暫存過就拿出來
+  const testOnlyStaged = before.staged.map((f) => f.path).filter(isTestOnlyFile);
+  if (testOnlyStaged.length) await git(cwd, ['restore', '--staged', '--', ...testOnlyStaged]);
+  await git(cwd, ['add', '-A', '--', ...toCommit]);
+  const result = await commitStaged(cwd, message, identity);
+  // 提交前檢查改到的無關檔案：自動還原
+  for (const path of result.hookChanged) {
+    await runGit(cwd, ['restore', '--staged', '--worktree', '--', path]);
+  }
+  return { ...result, restored: result.hookChanged };
+}
+
 /** 在資料夾裡用登入 shell 執行（專案的提交前檢查、推送的帳密都需要使用者的環境） */
 export function loginShell(cwd: string, command: string, timeoutMs: number): Promise<string> {
   return new Promise((resolvePromise, reject) => {

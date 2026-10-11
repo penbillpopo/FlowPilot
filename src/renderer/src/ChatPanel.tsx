@@ -2,6 +2,7 @@
 import { useEffect, useRef, useState } from 'react';
 import type { BranchInfo, ChatEntry, ChatEvent, WorkItem, WorkStage, WorkStatus } from '../../shared/types';
 import { DiffView } from './DiffView';
+import { commitPrefs, deliveryOf, gitChanged, useGitState } from './delivery';
 import { Markdown } from './Markdown';
 
 const api = window.flowpilot;
@@ -22,8 +23,8 @@ export const STATUS_LABEL: Record<WorkStatus, string> = {
 /** 跟狀態標籤意思一樣的說明，不重複顯示 */
 const REDUNDANT_ACTIVITY = /^(AI 在問你問題|執行中|執行技能|開發中|AI 做完了，等你審查|已完成)$/;
 
-/** 流程：審閱 ✓ → 開發 → 自動測試 → 等你測試（修改、重測都算在等你測試這一步） */
-const STEPS = ['審閱', '開發', '自動測試', '等你測試'];
+/** 流程：審閱 ✓ → 開發 → 自動測試 → 等你測試（修改、重測都算在等你測試這一步）→ 交付（提交過之後：推送、完成） */
+const STEPS = ['審閱', '開發', '自動測試', '等你測試', '交付'];
 const STEP_OF: Record<WorkStage, number> = { develop: 1, selfcheck: 1, autotest: 2, manual: 3, fix: 3, retest: 3 };
 const RUNNING_NOTE: Record<WorkStage, string> = { develop: 'AI 開發中', selfcheck: 'AI 自我審查中', autotest: 'AI 測試中', manual: 'AI 處理中', fix: 'AI 修改中', retest: 'AI 重測中' };
 
@@ -41,8 +42,8 @@ function stepNote(item: WorkItem): string {
   }
 }
 
-function Stages({ item }: { item: WorkItem }) {
-  const current = STEP_OF[item.stage] ?? 1;
+function Stages({ item, delivering }: { item: WorkItem; delivering: boolean }) {
+  const current = delivering && item.stage === 'manual' ? 4 : STEP_OF[item.stage] ?? 1;
   const finished = item.status === 'committed';
   const note = stepNote(item);
   const tone = ['waiting', 'blocked'].includes(item.status) ? 'attn' : ['failed', 'stopped'].includes(item.status) ? 'bad' : '';
@@ -57,7 +58,7 @@ function Stages({ item }: { item: WorkItem }) {
           <li key={label} className={result ? result.className : done ? 'done' : now ? `now ${tone}` : ''} title={result?.title}>
             {label}
             {result ? result.text : done ? ' ✓' : ''}
-            {now && note && <span className="step-note">・{note}</span>}
+            {now && (i === 4 && item.status === 'review' ? <span className="step-note">・推送、完成</span> : note && <span className="step-note">・{note}</span>)}
           </li>
         );
       })}
@@ -89,26 +90,25 @@ function flowPilotLabel(text: string): string | null {
 }
 
 /**
- * 移除的確認視窗：可以勾選同時刪除本機分支（預設不勾）。
- * 勾了會列出刪掉會失去什麼：只在本機的提交、遠端有沒有、沒提交的修改（有的話不刪）。
+ * 移除的確認視窗：移除就是回到從沒做過的樣子——刪本機分支（遠端不動）、資料夾還原、審閱紀錄刪掉。
+ * 會遺失的東西（沒推送的提交、沒提交的改動）用紅字列出來，你確定才移除。
  */
 function RemoveDialog({ item, onClose }: { item: WorkItem; onClose(): void }) {
-  const [info, setInfo] = useState<BranchInfo | null | undefined>(undefined);
-  const [deleteBranch, setDeleteBranch] = useState(false);
+  const [info, setInfo] = useState<BranchInfo | null | undefined>(item.folder ? undefined : null);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const running = ['running', 'preparing'].includes(item.status);
 
   useEffect(() => {
-    api.branchInfo(item.id).then(setInfo).catch((e) => (setInfo(null), setError(`讀不到分支狀況：${errorText(e)}`)));
+    if (item.folder) api.branchInfo(item.id).then(setInfo).catch((e) => (setInfo(null), setError(`讀不到分支狀況：${errorText(e)}`)));
   }, [item.id]);
 
   async function confirm() {
     setBusy(true);
     setError(null);
     try {
-      const result = await api.remove(item.id, deleteBranch);
-      if (deleteBranch && !result.branchDeleted) window.alert(`已從工作台移除 ${item.ticketKey}，但分支沒有刪：${result.reason ?? '原因不明'}`);
+      const result = await api.remove(item.id);
+      if (info?.exists && !result.branchDeleted) window.alert(`已從工作台移除 ${item.ticketKey}，但本機分支沒有刪成：${result.reason ?? '原因不明'}`);
       onClose();
     } catch (e) {
       setError(errorText(e));
@@ -123,48 +123,35 @@ function RemoveDialog({ item, onClose }: { item: WorkItem; onClose(): void }) {
         <p className="muted small">
           {item.project}{item.merchant ? ` m${item.merchant}` : ''} · <code>{item.branch}</code>
         </p>
-        <ul className="modal-notes small">
-          {running && <li>AI 正在執行，會先中斷它。</li>}
-          <li>移除後沒辦法從 FlowPilot 叫回來；要重新做，到「單列表」再確認一次計畫。</li>
-          {!deleteBranch && <li>不會動到 {item.folder ?? '資料夾'} 裡的檔案或分支。</li>}
-        </ul>
-
-        {info === undefined && item.folder && <p className="muted small">讀取分支狀況中…</p>}
-        {info?.exists && (
-          <label className={`modal-check ${running ? 'disabled' : ''}`}>
-            <input type="checkbox" checked={deleteBranch} disabled={running || busy} onChange={(e) => setDeleteBranch(e.target.checked)} />
-            同時刪除本機分支 <code>{info.branch}</code>
-            {running && <span className="muted small">（AI 執行中不能刪，請先中斷）</span>}
-          </label>
-        )}
-        {info && !info.exists && <p className="muted small">本機沒有 {info.branch}，不用刪。</p>}
-
-        {deleteBranch && info && (
-          <ul className="modal-notes small">
-            {info.unpushed === null ? (
-              <li className="danger-text">算不出有幾個提交只在這台電腦上；刪掉的話，這些提交可能就沒了。</li>
-            ) : info.unpushed > 0 ? (
-              <li className="danger-text">有 {info.unpushed} 個提交只在這台電腦上，刪掉就沒了。</li>
-            ) : (
-              <li>沒有只在本機的提交。</li>
+        {running ? (
+          <p className="warn small">AI 還在執行，請先按「中斷這一輪」，停下來之後再移除。</p>
+        ) : (
+          <>
+            <p className="small">移除就是回到從沒做過的樣子：</p>
+            <ul className="modal-notes small">
+              {info?.exists && <li>刪掉本機分支 <code>{info.branch}</code>；{item.folder} 停在這條分支上的話，會切回 {info.baseBranch}。</li>}
+              <li><strong>遠端分支不會動</strong>{info?.hasRemote ? '（遠端有這條分支，要刪請你自己刪）' : ''}。</li>
+              <li>審閱紀錄刪掉，單列表上的標籤也會消失；要重新做，從單列表再選一次。</li>
+            </ul>
+            {info === undefined && <p className="muted small">讀取分支狀況中…</p>}
+            {info && (info.unpushed === null || info.unpushed > 0 || info.dirty.length > 0) && (
+              <ul className="modal-notes small">
+                {info.unpushed === null && <li className="danger-text">算不出有幾個提交還沒推送；移除後，這些提交可能就沒了。</li>}
+                {!!info.unpushed && <li className="danger-text">有 {info.unpushed} 個提交還沒推送，移除後就沒了。</li>}
+                {info.dirty.length > 0 && (
+                  <li className="danger-text">
+                    有 {info.dirty.length} 個沒提交的改動會被丟掉：{info.dirty.slice(0, 5).join('、')}{info.dirty.length > 5 ? ' 等' : ''}
+                  </li>
+                )}
+              </ul>
             )}
-            <li>{info.hasRemote ? '遠端有這條分支：只刪本機的，之後還能從遠端拿回來。' : '遠端沒有這條分支。'}</li>
-            {info.dirty.length > 0 ? (
-              <li className="warn">
-                資料夾還有 {info.dirty.length} 個沒提交的修改（{info.dirty.slice(0, 3).join('、')}{info.dirty.length > 3 ? ' 等' : ''}），為了不丟掉它們，<strong>分支不會刪</strong>，只會移除。
-              </li>
-            ) : (
-              <li>資料夾會先切回 {info.baseBranch}（environment.ts 會還原），再刪分支。</li>
-            )}
-            <li>只刪本機，不會動遠端。</li>
-          </ul>
+          </>
         )}
-
         {error && <div className="error small">{error}</div>}
         <div className="row modal-actions">
           <button disabled={busy} onClick={onClose}>取消</button>
-          <button className="danger-solid" disabled={busy || info === undefined} onClick={confirm}>
-            {busy ? '處理中…' : deleteBranch ? '移除並刪除分支' : '移除'}
+          <button className="danger-solid" disabled={busy || running || info === undefined} onClick={confirm}>
+            {busy ? '處理中…' : '移除'}
           </button>
         </div>
       </div>
@@ -296,8 +283,21 @@ export function ChatPanel({ item }: { item: WorkItem }) {
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [removing, setRemoving] = useState(false);
+  const [notice, setNotice] = useState<string | null>(null);
   const scroller = useRef<HTMLDivElement>(null);
   const stick = useRef(true);
+  const input = useRef<HTMLTextAreaElement>(null);
+
+  // 右邊「改動」的「跟 AI 說」：把檔名帶進輸入框，接著打要怎麼改
+  useEffect(() => {
+    const onAsk = (e: Event) => {
+      const detail = (e as CustomEvent<string>).detail;
+      setText((prev) => (prev.trim() ? `${prev}\n${detail}` : detail));
+      setTimeout(() => input.current?.focus(), 0);
+    };
+    window.addEventListener('flowpilot:ask-ai', onAsk);
+    return () => window.removeEventListener('flowpilot:ask-ai', onAsk);
+  }, []);
 
   // 讀完整紀錄；讀取期間收到的即時更新先暫存，讀完再套上
   useEffect(() => {
@@ -338,9 +338,17 @@ export function ChatPanel({ item }: { item: WorkItem }) {
     if (box && stick.current) box.scrollTop = box.scrollHeight;
   }, [entries, item.pending]);
 
+  // 「已提交」這類回饋幾秒後自動消失
+  useEffect(() => {
+    if (!notice) return;
+    const timer = setTimeout(() => setNotice(null), 5000);
+    return () => clearTimeout(timer);
+  }, [notice]);
+
   async function act(action: () => Promise<unknown>) {
     setBusy(true);
     setError(null);
+    setNotice(null);
     try {
       await action();
     } catch (e) {
@@ -391,6 +399,45 @@ export function ChatPanel({ item }: { item: WorkItem }) {
     if (ok) act(() => api.finish(item.id, true));
   }
   const active = !['committed', 'removed'].includes(item.status);
+  // 交付：標題列的主要按鈕照進度變成「提交 → 推送 → 完成這張單」
+  const { state: git } = useGitState(item, active && !!item.threadId);
+  const delivery = deliveryOf(item, git);
+  const canDeliver = active && !!item.folder && !!item.threadId && ['review', 'waiting'].includes(item.status) && !item.pending?.kind?.match(/approval|decision/);
+  let next: { label: string; title?: string; run(): void } | null = null;
+  if (canDeliver && delivery?.onBranch && git) {
+    if (delivery.changes.length) {
+      next = {
+        label: busy ? '提交中…' : `提交 ${delivery.changes.length} 個檔案`,
+        title: '把 AI 的改動提交到這張單的分支（專案的提交前檢查可能要等幾十秒）；提交訊息可以在右邊「改動」修改',
+        run: () => act(async () => {
+          const prefs = commitPrefs(item.id);
+          const result = await api.git.commitAll(item.id, prefs.message ?? item.prTitle, prefs.who ?? undefined);
+          gitChanged();
+          setNotice(`已提交（${result.sha}）${result.restored.length ? `；提交前檢查順手改到的 ${result.restored.length} 個無關檔案已還原` : ''}`);
+        }),
+      };
+    } else if (delivery.pushCount > 0) {
+      const count = delivery.pushCount;
+      next = {
+        label: busy ? '推送中…' : git.needsForce ? `強制推送 ${count} 個提交` : `推送 ${count} 個提交`,
+        title: git.needsForce ? '分支 rebase 過，跟遠端的歷史不一樣，會用 --force-with-lease 推送' : git.hasRemote ? undefined : '遠端還沒有這條分支，推送時會建立',
+        run: () => {
+          const what = git.needsForce
+            ? `遠端的 ${item.branch} 跟本機的歷史不一樣（rebase 過），要強制推送嗎？\n\n會用 --force-with-lease：遠端被別人推了新的提交時會拒絕覆蓋。`
+            : `推送 ${count} 個提交到遠端的 ${item.branch}${git.hasRemote ? '' : '（建立遠端分支）'}？`;
+          if (window.confirm(what)) act(async () => {
+            await api.git.push(item.id);
+            gitChanged();
+            setNotice('已推送');
+          });
+        },
+      };
+    } else if (item.status === 'review') {
+      next = { label: '完成這張單', run: finish };
+    }
+  } else if (item.status === 'review' && item.folder) {
+    next = { label: '完成這張單', run: finish };
+  }
   // 自動測試沒測成或看不出結果時，處理好之後可以再跑一次
   const canRerun = active && !!item.threadId && item.stage === 'manual' && ['review', 'waiting'].includes(item.status) && !item.pending && !!item.autotestResult && item.autotestResult.kind !== 'passed';
   const canRetest = active && !!item.threadId && item.stage === 'manual' && ['review', 'waiting'].includes(item.status) && !item.pending;
@@ -411,19 +458,7 @@ export function ChatPanel({ item }: { item: WorkItem }) {
         </div>
         <div className="row head-actions">
           {running && <button disabled={busy} onClick={() => act(() => api.interrupt(item.id))}>中斷這一輪</button>}
-          {canRerun && (
-            <button
-              disabled={busy}
-              title="用無頭瀏覽器再跑一次自動測試（例如處理好帳號、開了 VPN 之後）"
-              onClick={() => act(async () => {
-                stick.current = true;
-                await api.rerunAutotest(item.id);
-              })}
-            >
-              重跑自動測試
-            </button>
-          )}
-          {canRetest && (
+          {canRetest && !delivery?.delivering && (
             <button
               disabled={busy}
               title="AI 先列測試計畫給你確認，再開瀏覽器測給你看（用測試帳號自動登入）"
@@ -435,30 +470,63 @@ export function ChatPanel({ item }: { item: WorkItem }) {
               開瀏覽器測給我看
             </button>
           )}
-          {item.status === 'review' && item.folder && (
-            <button className="primary" disabled={busy} onClick={finish}>
-              完成這張單
+          {next && (
+            <button className="primary" disabled={busy} onClick={next.run} title={next.title}>
+              {next.label}
             </button>
           )}
           {['blocked', 'failed', 'stopped'].includes(item.status) && <button disabled={busy} onClick={() => act(() => api.retry(item.id))}>重試</button>}
-          {active && item.threadId && (
-            <button
-              disabled={busy || running}
-              title={running ? 'AI 執行中，等它停下來再更新需求' : '重新讀 Jira，跟上次的內容比對，請 AI 在對話裡說明有沒有變更、打算怎麼改'}
-              onClick={() => act(async () => {
-                stick.current = true;
-                await api.requestRequirementUpdate(item.id);
-              })}
-            >
-              {busy ? '處理中…' : '更新需求'}
-            </button>
-          )}
-          {active && (
+          {item.status !== 'removed' && (
             <details className="more">
               <summary>更多</summary>
               <div className="more-menu">
-                {item.threadId && item.folder && <button onClick={() => act(() => api.openInVSCode(item.id))}>在 VS Code 查看</button>}
-                {item.status !== 'review' && !running && item.status !== 'preparing' && item.folder && <button onClick={finish}>完成這張單</button>}
+                {canRerun && (
+                  <button
+                    disabled={busy}
+                    title="用無頭瀏覽器再跑一次自動測試（例如處理好帳號、開了 VPN 之後）"
+                    onClick={(e) => {
+                      e.currentTarget.closest('details')?.removeAttribute('open');
+                      act(async () => {
+                        stick.current = true;
+                        await api.rerunAutotest(item.id);
+                      });
+                    }}
+                  >
+                    重跑自動測試
+                  </button>
+                )}
+                {canRetest && delivery?.delivering && (
+                  <button
+                    disabled={busy}
+                    title="AI 先列測試計畫給你確認，再開瀏覽器測給你看（用測試帳號自動登入）"
+                    onClick={(e) => {
+                      e.currentTarget.closest('details')?.removeAttribute('open');
+                      act(async () => {
+                        stick.current = true;
+                        await api.retest(item.id);
+                      });
+                    }}
+                  >
+                    開瀏覽器測給我看
+                  </button>
+                )}
+                {active && item.threadId && (
+                  <button
+                    disabled={busy || running}
+                    title={running ? 'AI 執行中，等它停下來再更新需求' : '重新讀 Jira，跟上次的內容比對，請 AI 在對話裡說明有沒有變更、打算怎麼改'}
+                    onClick={(e) => {
+                      e.currentTarget.closest('details')?.removeAttribute('open');
+                      act(async () => {
+                        stick.current = true;
+                        await api.requestRequirementUpdate(item.id);
+                      });
+                    }}
+                  >
+                    更新需求
+                  </button>
+                )}
+                {active && item.threadId && item.folder && <button onClick={() => act(() => api.openInVSCode(item.id))}>在 VS Code 查看</button>}
+                {active && item.status !== 'review' && !running && item.status !== 'preparing' && item.folder && <button onClick={finish}>完成這張單</button>}
                 <button
                   className="danger"
                   disabled={busy}
@@ -481,7 +549,7 @@ export function ChatPanel({ item }: { item: WorkItem }) {
             {item.folder !== item.project && <> · {item.folder ?? '等資料夾'}</>} · <code>{item.branch}</code>
             {item.activity && !REDUNDANT_ACTIVITY.test(item.activity) && <> · {item.activity}</>}
           </div>
-          {item.threadId && <Stages item={item} />}
+          {item.threadId && <Stages item={item} delivering={!!delivery?.delivering} />}
         </div>
       </div>
 
@@ -537,6 +605,7 @@ export function ChatPanel({ item }: { item: WorkItem }) {
         )}
       </div>
 
+      {notice && <div className="notice-ok">{notice}</div>}
       {error && <div className="error">{error}</div>}
 
       {canSend && (
@@ -552,6 +621,7 @@ export function ChatPanel({ item }: { item: WorkItem }) {
             </div>
           )}
           <textarea
+            ref={input}
             rows={3}
             value={text}
             placeholder={

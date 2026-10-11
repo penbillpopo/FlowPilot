@@ -3,9 +3,10 @@ import { FitAddon } from '@xterm/addon-fit';
 import { Terminal } from '@xterm/xterm';
 import '@xterm/xterm/css/xterm.css';
 import { useEffect, useRef, useState } from 'react';
-import type { Env, GitFile, GitState, TestState, WorkItem } from '../../shared/types';
+import type { Env, GitFile, TestState, WorkItem } from '../../shared/types';
 import { errorText } from './ChatPanel';
 import { DiffView } from './DiffView';
+import { commitPrefs, deliveryOf, isTestOnly, setCommitPrefs, useGitState } from './delivery';
 
 const api = window.flowpilot;
 
@@ -157,6 +158,7 @@ export function FolderTerminalPanel({ item, onSiteUrl }: { item: WorkItem; onSit
   const [url, setUrl] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [exited, setExited] = useState(false);
+  const [showTerminal, setShowTerminal] = useState(false);
 
   useEffect(() => {
     if (!item.folder) return;
@@ -212,260 +214,154 @@ export function FolderTerminalPanel({ item, onSiteUrl }: { item: WorkItem; onSit
 
   return (
     <div className="panel term">
-      <div className="row">
-        <button className="primary" onClick={() => api.folderTerminal.startSite(item.id).catch((e) => setError(errorText(e)))}>在本機啟動</button>
-        <button onClick={() => folder && api.folderTerminal.interrupt(folder)}>停止</button>
-        {url && <button className="primary" onClick={() => api.openUrl(url).catch((e) => setError(errorText(e)))}>打開網頁</button>}
-        <span className="muted small push-right">{folder ?? item.folder}</span>
+      <div className="site-status">
+        <span className={`site-dot ${url ? 'on' : ''}`} />
+        {url ? <span>本機網站在跑：<code>{url}</code></span> : <span className="muted">本機網站沒有在跑</span>}
       </div>
-      {url && <div className="muted small">{url}</div>}
-      <div ref={host} className="folder-term" />
+      <div className="row">
+        {url ? (
+          <>
+            <button className="primary" onClick={() => api.openUrl(url).catch((e) => setError(errorText(e)))}>打開網頁</button>
+            <button onClick={() => folder && api.folderTerminal.interrupt(folder)}>停止</button>
+          </>
+        ) : (
+          <button className="primary" onClick={() => api.folderTerminal.startSite(item.id).catch((e) => setError(errorText(e)))}>啟動</button>
+        )}
+        {/* 終端機是開發者的工具，平常收起來；真的需要時再打開 */}
+        <button className="link small push-right" onClick={() => setShowTerminal(!showTerminal)}>{showTerminal ? '收起終端機' : '顯示終端機'}</button>
+      </div>
+      <div ref={host} className="folder-term" style={showTerminal ? undefined : { display: 'none' }} />
       {exited && <div className="muted small">終端機已結束，切換到別張單再切回來會重新打開。</div>}
       {error && <div className="error">{error}</div>}
     </div>
   );
 }
 
-function FileRow({ file, actions, onOpen, open, note }: { file: GitFile; actions: React.ReactNode; onOpen(): void; open: boolean; note?: string }) {
-  const name = file.path.split('/').pop();
-  const dir = file.path.slice(0, file.path.length - (name?.length ?? 0));
-  return (
-    <li className={`${open ? 'open' : ''} ${note ? 'noted' : ''}`} title={note}>
-      <button className="file-name" onClick={onOpen} title={file.path}>
-        <span className={`code c-${file.code}`}>{file.code}</span> {name} <span className="muted small">{note ? '提交前檢查改的' : dir}</span>
-      </button>
-      <span className="file-actions">{actions}</span>
-    </li>
-  );
-}
-
+/**
+ * 改動：給操作者看的。唯讀列出 AI 改了哪些檔案（點檔名看改了什麼），一顆主要按鈕永遠是「下一步」：
+ * 有改動 → 提交；提交完還沒推送 → 推送。不放暫存、還原這些開發者的動作；覺得哪裡不對就「跟 AI 說」。
+ */
 export function GitPanel({ item, onCount }: { item: WorkItem; onCount?(changes: number): void }) {
-  const [state, setState] = useState<GitState | null>(null);
-  const [message, setMessage] = useState(item.prTitle);
-  /** 這一次提交改用的身分（信箱）；null 代表用資料夾設定的 */
-  const [who, setWho] = useState<string | null>(null);
-  const [diff, setDiff] = useState<{ path: string; staged: boolean; text: string } | null>(null);
-  const [busy, setBusy] = useState(false);
+  const { state, error: loadError } = useGitState(item);
+  const [message, setMessage] = useState(commitPrefs(item.id).message ?? item.prTitle);
+  const [who, setWho] = useState<string | null>(commitPrefs(item.id).who ?? null);
+  const [editing, setEditing] = useState(false);
+  const [diff, setDiff] = useState<{ path: string; text: string } | null>(null);
   const [error, setError] = useState<string | null>(null);
-  const [notice, setNotice] = useState<string | null>(null);
-  /** 上次提交時，被專案的提交前檢查順手改到的無關檔案 */
-  const [hookChanged, setHookChanged] = useState<string[]>([]);
-  /** 提交中（專案的提交前檢查可能要等幾十秒） */
-  const [committing, setCommitting] = useState(false);
 
-  // 「已提交」「已捨棄」這類回饋幾秒後自動消失，不會一直殘留
+  const delivery = deliveryOf(item, state);
   useEffect(() => {
-    if (!notice) return;
-    const timer = setTimeout(() => setNotice(null), 4000);
-    return () => clearTimeout(timer);
-  }, [notice]);
+    if (delivery) onCount?.(delivery.changes.length);
+  }, [delivery?.changes.length]);
 
-  async function refresh() {
-    if (!item.folder) return;
+  async function showDiff(file: GitFile) {
+    if (diff?.path === file.path) return setDiff(null);
     try {
-      const next = await api.git.state(item.id);
-      setState(next);
-      onCount?.(next.staged.length + next.unstaged.length);
-    } catch (e) {
-      setError(errorText(e));
-    }
-  }
-
-  useEffect(() => {
-    setState(null);
-    setDiff(null);
-    setError(null);
-    setNotice(null);
-    setHookChanged([]);
-    setMessage(item.prTitle);
-    setWho(null);
-    refresh();
-    // AI 在改檔案時，每 3 秒更新一次
-    const timer = setInterval(refresh, 3000);
-    return () => clearInterval(timer);
-  }, [item.id, item.folder]);
-
-  // AI 一輪做完（狀態改變）就馬上更新，不用等下一次的 3 秒
-  useEffect(() => {
-    refresh();
-  }, [item.status]);
-
-  async function act(action: () => Promise<unknown>, done?: string) {
-    setBusy(true);
-    setError(null);
-    setNotice(null);
-    try {
-      await action();
-      if (done) setNotice(done);
-    } catch (e) {
-      setError(errorText(e));
-    } finally {
-      setBusy(false);
-      refresh();
-    }
-  }
-
-  async function showDiff(path: string, staged: boolean) {
-    if (diff?.path === path && diff.staged === staged) return setDiff(null);
-    try {
-      setDiff({ path, staged, text: await api.git.diff(item.id, path, staged) });
+      // 暫存過的和沒暫存的都看得到：先看沒暫存的，沒有內容就看暫存的
+      let text = await api.git.diff(item.id, file.path, false);
+      if (!text.trim()) text = await api.git.diff(item.id, file.path, true);
+      setDiff({ path: file.path, text });
     } catch (e) {
       setError(errorText(e));
     }
   }
 
   if (!item.folder) return null;
-  if (!state) return <div className="panel"><strong>Git 改動</strong><p className="muted small">讀取中…</p>{error && <div className="error">{error}</div>}</div>;
+  if (!state || !delivery) return <div className="panel"><p className="muted small">讀取中…</p>{!!loadError && <div className="error">{errorText(loadError)}</div>}</div>;
 
-  const onBranch = state.branch === item.branch;
-  // 有新的提交才能推送：遠端已有分支時看還沒推送的數量；還沒有時看比基底多幾個提交
-  // 可以選的身分：設定檔列的，加上資料夾目前設定的（如果不在清單裡）
+  const { changes, pushCount, onBranch } = delivery;
+  const files = [...state.staged, ...state.unstaged].filter((f, i, all) => all.findIndex((x) => x.path === f.path) === i);
+  const testOnly = files.filter((f) => isTestOnly(f.path));
+  const aiWorking = ['running', 'preparing'].includes(item.status);
   const identityOptions = [
     ...(state.identity.email && !state.identities.some((i) => i.email === state.identity.email) ? [state.identity] : []),
     ...state.identities,
   ];
-  const chosen = who ?? state.identity.email;
-  // 還留在資料夾裡的（你自己捨棄或提交了就不再提示）
-  const dirtyPaths = new Set([...state.staged, ...state.unstaged].map((f) => f.path));
-  const pendingHook = hookChanged.filter((p) => dirtyPaths.has(p));
-  const ownChanges = state.unstaged.filter((f) => !pendingHook.includes(f.path));
-  const canPush = state.hasRemote ? (state.unpushed ?? 0) > 0 : state.ahead > 0;
-  const diffBlock = (path: string, staged: boolean) => diff?.path === path && diff.staged === staged && <li className="diff-row"><DiffView diff={diff.text} /></li>;
+
+  // 提交、推送用標題列的主要按鈕；這裡只說明現在的狀況
+  const status = !onBranch
+    ? `資料夾目前在 ${state.branch}，不是這張單的分支 ${item.branch}`
+    : changes.length
+      ? aiWorking ? 'AI 還在改，做完之後用上方的「提交」按鈕提交' : '確認沒問題後，用上方的「提交」按鈕提交'
+      : pushCount > 0
+        ? `有 ${pushCount} 個提交還沒推送，用上方的「推送」按鈕推送`
+        : state.hasRemote && state.ahead > 0 ? '改動都已推送到遠端' : '';
 
   return (
     <div className="panel git">
       <div className="panel-head">
-        <span className="muted small">目前分支</span>
+        <span className="muted small">分支</span>
         <code className="small">{state.branch || '（不在分支上）'}</code>
       </div>
-      {!onBranch && <p className="warn">資料夾目前在 {state.branch}，不是這張單的 {item.branch}。</p>}
-      {notice && <div className="notice-ok">{notice}</div>}
-      {error && <div className="error">{error}</div>}
-      {pendingHook.length > 0 && (
-        <div className="hook-notice warn small">
-          提交前的檢查（專案設定的 lint 等）順手改了 {pendingHook.length} 個跟這次無關的檔案，它們沒有被提交，還留在資料夾裡：
-          <ul>{pendingHook.slice(0, 5).map((p) => <li key={p} title={p}><code>{p.split('/').pop()}</code></li>)}{pendingHook.length > 5 && <li>…等 {pendingHook.length} 個</li>}</ul>
-          <div className="row">
-            <button
-              className="danger"
-              disabled={busy}
-              onClick={() => window.confirm(`捨棄這 ${pendingHook.length} 個檔案的修改？只會還原這些被檢查改到的檔案。`) && act(async () => {
-                await api.git.discard(item.id, pendingHook);
-                setHookChanged([]);
-              }, '已捨棄')}
-            >
-              全部捨棄
-            </button>
-            <button disabled={busy} onClick={() => setHookChanged([])}>先不管</button>
-          </div>
-        </div>
-      )}
+      {(error || !!loadError) && <div className="error">{error ?? errorText(loadError)}</div>}
+      {status && <p className="muted small git-status">{status}</p>}
 
       <div className="git-section">
-        <div className="git-section-head">
-          <span>暫存的變更（{state.staged.length}）</span>
-          {state.staged.length > 0 && <button className="link" disabled={busy} onClick={() => act(() => api.git.unstage(item.id, state.staged.map((f) => f.path)))}>全部取消暫存</button>}
-        </div>
+        <div className="git-section-head"><span>AI 改了 {changes.length} 個檔案</span></div>
+        {changes.length === 0 && <p className="muted small">{pushCount > 0 || state.ahead > 0 ? '改動都提交了。' : '目前沒有改動。'}</p>}
         <ul className="git-files">
-          {state.staged.map((file) => (
-            <FileRowWithDiff key={`s-${file.path}`} file={file} staged diffBlock={diffBlock} open={diff?.path === file.path && diff.staged} onOpen={() => showDiff(file.path, true)}
-              actions={<button className="link" title="取消暫存" disabled={busy} onClick={() => act(() => api.git.unstage(item.id, [file.path]))}>−</button>} />
-          ))}
+          {changes.map((file) => {
+            const name = file.path.split('/').pop();
+            return (
+              <li key={file.path} className={diff?.path === file.path ? 'open' : ''}>
+                <button className="file-name" onClick={() => showDiff(file)} title={`${file.path}（點一下看改了什麼）`}>
+                  <span className={`code c-${file.code}`}>{CHANGE_LABEL[file.code] ?? '修改'}</span> {name} <span className="muted small">{file.path.slice(0, file.path.length - (name?.length ?? 0))}</span>
+                </button>
+                <button
+                  className="link small file-actions"
+                  title="這個檔案改得不對？在輸入框帶入檔名，跟 AI 說要怎麼改"
+                  onClick={() => window.dispatchEvent(new CustomEvent('flowpilot:ask-ai', { detail: `${file.path}：` }))}
+                >
+                  跟 AI 說
+                </button>
+                {diff?.path === file.path && <div className="diff-row"><DiffView diff={diff.text} /></div>}
+              </li>
+            );
+          })}
         </ul>
+        {testOnly.length > 0 && <p className="muted small">environment.ts 是測試時切環境改的，不會提交；完成這張單時會還原。</p>}
       </div>
 
-      <div className="git-section">
-        <div className="git-section-head">
-          <span>變更（{state.unstaged.length}）</span>
-          {ownChanges.length > 0 && <button className="link" disabled={busy} onClick={() => act(() => api.git.stage(item.id, ownChanges.map((f) => f.path)))} title={pendingHook.length ? '不含提交前檢查改到的檔案' : undefined}>全部暫存</button>}
-        </div>
-        <ul className="git-files">
-          {state.unstaged.map((file) => (
-            <FileRowWithDiff key={`u-${file.path}`} file={file} staged={false} diffBlock={diffBlock} open={diff?.path === file.path && !diff.staged} onOpen={() => showDiff(file.path, false)}
-              note={pendingHook.includes(file.path) ? `提交前的檢查改到的，跟這次無關：${file.path}` : undefined}
-              actions={
-                <>
-                  <button
-                    className="link danger"
-                    title="捨棄修改"
-                    disabled={busy}
-                    onClick={() => {
-                      const what = file.code === 'U' ? '刪除這個新檔案' : '還原這個檔案的修改';
-                      if (window.confirm(`${what}？\n${file.path}\n\n這個動作沒辦法復原。`)) act(() => api.git.discard(item.id, [file.path]));
+      {changes.length > 0 && onBranch && (
+        <div className="git-commit">
+          <button className="link small" onClick={() => setEditing(!editing)}>{editing ? '收起' : '修改提交訊息'}</button>
+          {editing && (
+            <>
+              <input
+                value={message}
+                onChange={(e) => {
+                  setMessage(e.target.value);
+                  setCommitPrefs(item.id, { message: e.target.value });
+                }}
+                placeholder="提交訊息"
+              />
+              {identityOptions.length > 1 && (
+                <label className="identity">
+                  <span className="muted small">提交身分（只套用在這一次）</span>
+                  <select
+                    value={who ?? state.identity.email}
+                    onChange={(e) => {
+                      const next = e.target.value === state.identity.email ? null : e.target.value;
+                      setWho(next);
+                      setCommitPrefs(item.id, { who: next });
                     }}
                   >
-                    ↺
-                  </button>
-                  <button className="link" title="暫存" disabled={busy} onClick={() => act(() => api.git.stage(item.id, [file.path]))}>＋</button>
-                </>
-              }
-            />
-          ))}
-        </ul>
-        {state.unstaged.some((f) => /environments\/environment[^/]*\.ts$/.test(f.path)) && (
-          <p className="muted small">environment.ts 通常是瀏覽器測試切 SIT／UAT 留下的，不用提交；按「完成這張單」時可以一起還原。</p>
-        )}
-      </div>
-
-      {(state.staged.length > 0 || state.unstaged.length > 0) && (
-        <div className="git-commit">
-          <input value={message} onChange={(e) => setMessage(e.target.value)} placeholder="提交訊息" />
-          {identityOptions.length > 1 && (
-            <label className="identity">
-              <span className="muted small">提交身分</span>
-              <select value={chosen} onChange={(e) => setWho(e.target.value === state.identity.email ? null : e.target.value)}>
-                {identityOptions.map((i) => (
-                  <option key={i.email} value={i.email}>
-                    {i.name} &lt;{i.email}&gt;{i.email === state.identity.email ? '（資料夾預設）' : ''}
-                  </option>
-                ))}
-              </select>
-            </label>
+                    {identityOptions.map((i) => (
+                      <option key={i.email} value={i.email}>
+                        {i.name} &lt;{i.email}&gt;{i.email === state.identity.email ? '（預設）' : ''}
+                      </option>
+                    ))}
+                  </select>
+                </label>
+              )}
+            </>
           )}
-          {who && <p className="warn small">這一次提交會用 {who}，不是資料夾預設的 {state.identity.email || '（沒有設定）'}；只套用在這一次。</p>}
-          <button
-            className="primary"
-            disabled={busy || !onBranch || state.staged.length === 0 || !message.trim()}
-            onClick={() => act(async () => {
-              setCommitting(true);
-              try {
-                const result = await api.git.commit(item.id, message, who ?? undefined);
-                setWho(null); // 下次提交回到資料夾預設
-                setHookChanged(result.hookChanged);
-              } finally {
-                setCommitting(false);
-              }
-            }, '已提交')}
-          >
-            {committing ? '提交中…（專案的提交前檢查可能要等幾十秒）' : state.staged.length === 0 ? '先把要提交的檔案暫存（＋）' : `提交 ${state.staged.length} 個檔案`}
-          </button>
         </div>
-      )}
-      {state.staged.length === 0 && state.unstaged.length === 0 && <p className="muted small">沒有未提交的改動。</p>}
-      {/* AI 還在改的時候不放推送，避免誤按 */}
-      {canPush && !['running', 'preparing'].includes(item.status) && (
-        <button
-          className="push-button"
-          disabled={busy || !onBranch}
-          onClick={() => {
-            const what = state.needsForce
-              ? `遠端的 ${state.branch} 跟本機的歷史不一樣（通常是 rebase 過），要強制推送嗎？\n\n會用 --force-with-lease：如果遠端在你上次推送後被別人推了新的提交，會拒絕覆蓋。`
-              : state.hasRemote ? `推送 ${state.unpushed} 個提交到遠端的 ${state.branch}？` : `遠端還沒有 ${state.branch}，要建立並推送 ${state.ahead} 個提交嗎？`;
-            if (window.confirm(what)) act(() => api.git.push(item.id), '已推送');
-          }}
-        >
-          {state.needsForce ? '強制推送（rebase 過）' : state.hasRemote ? `推送 ${state.unpushed} 個提交` : `推送（建立遠端分支，${state.ahead} 個提交）`}
-        </button>
       )}
     </div>
   );
 }
 
-function FileRowWithDiff({ file, staged, diffBlock, ...rest }: { file: GitFile; staged: boolean; diffBlock: (path: string, staged: boolean) => React.ReactNode; actions: React.ReactNode; onOpen(): void; open: boolean; note?: string }) {
-  return (
-    <>
-      <FileRow file={file} {...rest} />
-      {diffBlock(file.path, staged)}
-    </>
-  );
-}
+/** Git 的代號換成操作者看得懂的字 */
+const CHANGE_LABEL: Record<string, string> = { M: '修改', A: '新增', U: '新增', D: '刪除', R: '改名', C: '複製' };
+

@@ -6,7 +6,9 @@ import { FolderTerminalPanel, GitPanel, TestPanel, TestReportPanel } from './Sid
 
 const api = window.flowpilot;
 
-const FINISHED: WorkStatus[] = ['failed', 'stopped', 'removed', 'committed'];
+const FINISHED: WorkStatus[] = ['removed', 'committed'];
+/** 資料夾已經讓出（可能正在做別張單）：右邊不再顯示會動到資料夾的操作 */
+const RELEASED: WorkStatus[] = ['failed', 'stopped', ...FINISHED];
 
 /** 專案的前台／後台（來自設定檔），用來標示這一列做在哪裡 */
 const SideContext = createContext<Record<string, string>>({});
@@ -47,13 +49,13 @@ function RightPanels({ item }: { item: WorkItem }) {
       <TestPanel item={item} />
       <div className="right-tabs" role="tablist">
         <button role="tab" className={tab === 'git' ? 'on' : ''} onClick={() => setTab('git')}>
-          Git 改動{changes > 0 && <span className="tab-count">{changes}</span>}
+          改動{changes > 0 && <span className="tab-count">{changes}</span>}
         </button>
         <button role="tab" className={tab === 'report' ? 'on' : ''} onClick={() => setTab('report')} title={pendingManual ? `還有 ${pendingManual} 個手動測試項目沒勾` : undefined}>
           測試結果{pendingManual > 0 && <span className="tab-count">{pendingManual}</span>}
         </button>
         <button role="tab" className={tab === 'term' ? 'on' : ''} onClick={() => setTab('term')} title={siteUrl ? `本機網站在跑：${siteUrl}` : undefined}>
-          終端機{siteUrl && <span className="tab-dot" />}
+          本機網站{siteUrl && <span className="tab-dot" />}
         </button>
       </div>
       <div className="tab-body" hidden={tab !== 'git'}>
@@ -87,8 +89,8 @@ export function Workbench({ onGoTickets }: { onGoTickets(): void }) {
   }, []);
 
   const items = board?.items ?? [];
-  // 進行中：已經分到資料夾的（等你回答的排最上面）；排隊：等專案有空的資料夾
-  const order: WorkStatus[] = ['waiting', 'blocked', 'failed', 'review', 'running', 'preparing'];
+  // 進行中：已經分到資料夾的（等你回答的排最上面，失敗、停止的也在這裡）；排隊：等專案有空的資料夾；已完成：按過完成、還沒移除的
+  const order: WorkStatus[] = ['waiting', 'blocked', 'failed', 'stopped', 'review', 'running', 'preparing'];
   const active = items.filter((i) => i.status !== 'queued' && !FINISHED.includes(i.status)).sort((a, b) => order.indexOf(a.status) - order.indexOf(b.status) || a.id - b.id);
   const waitingTurn = items.filter((i) => i.status === 'queued');
   const finished = items.filter((i) => FINISHED.includes(i.status)).sort((a, b) => b.id - a.id);
@@ -149,14 +151,14 @@ export function Workbench({ onGoTickets }: { onGoTickets(): void }) {
         )}
 
         {finished.length > 0 && (
-          <details className="finished-list">
-            <summary className="side-section">已結束（{finished.length}）</summary>
+          <>
+            <div className="side-section">已完成（{finished.length}）</div>
             <ul className="tickets">
               {finished.map((i) => (
                 <Row key={i.id} item={i} selected={selected === i.id} onSelect={() => setSelected(i.id)} />
               ))}
             </ul>
-          </details>
+          </>
         )}
 
       </aside>
@@ -173,13 +175,20 @@ export function Workbench({ onGoTickets }: { onGoTickets(): void }) {
       </main>
 
       <aside className="right">
-        {current && FINISHED.includes(current.status) ? (
+        {current && ['failed', 'stopped'].includes(current.status) ? (
+          <div className="panel finished-note">
+            <strong>這張單停下來了</strong>
+            <p className="muted small">資料夾 {current.folder ?? '—'} 已經讓出，可能正在做別張單。按「重試」會重新分配資料夾接著做；不做了可以從「更多 → 移除」拿掉。</p>
+            <p className="small">分支：<code>{current.branch}</code></p>
+          </div>
+        ) : current && RELEASED.includes(current.status) ? (
           // 已結束的單：資料夾可能已經是別張單在用，這裡不再提供會動到資料夾的操作
           <div className="panel finished-note">
-            <strong>這張單已結束</strong>
+            <strong>這張單已完成</strong>
             <p className="muted small">
-              {current.status === 'committed' ? '已完成，' : ''}資料夾 {current.folder ?? '—'} 已經讓出，可能正在做別張單，所以這裡不再顯示環境切換、終端機和 Git 操作。
+              資料夾 {current.folder ?? '—'} 已經讓出，可能正在做別張單，所以這裡不再顯示環境切換、終端機和改動。
             </p>
+            <p className="muted small">確定不用再改了，可以從「更多 → 移除」把它從工作台拿掉：會刪掉本機分支（遠端分支不動），單列表上的「已完成」標籤也會消失。</p>
             <p className="small">分支：<code>{current.branch}</code></p>
             {current.activity && <p className="muted small">{current.activity}</p>}
           </div>

@@ -1,9 +1,9 @@
 import { execFileSync } from 'node:child_process';
-import { chmodSync, existsSync, mkdtempSync, readFileSync, writeFileSync } from 'node:fs';
+import { chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { describe, expect, it } from 'vitest';
-import { commitStaged, discard, fileDiff, gitState, parseStatus, pushBranch, stage, unstage } from '../src/main/gitpanel';
+import { commitAll, commitStaged, discard, fileDiff, gitState, parseStatus, pushBranch, stage, unstage } from '../src/main/gitpanel';
 
 const git = (cwd: string, ...args: string[]) => execFileSync('git', args, { cwd, stdio: 'pipe' }).toString();
 
@@ -99,5 +99,24 @@ describe('Git 改動面板', () => {
     const { hookChanged } = await commitStaged(dir, 'feat(ALL-1) change b');
     expect(hookChanged).toEqual(['a.ts']);
     expect(git(dir, 'show', '--name-only', '--format=', 'HEAD').trim()).toBe('b.ts');
+  });
+
+  it('提交全部（操作者用）：environment.ts 不提交；提交前檢查改到的無關檔案自動還原', async () => {
+    const dir = repo();
+    mkdirSync(join(dir, 'src/environments'), { recursive: true });
+    writeFileSync(join(dir, 'src/environments/environment.ts'), 'sit\n');
+    git(dir, 'add', '.');
+    git(dir, 'commit', '-q', '-m', 'env');
+    writeFileSync(join(dir, '.git/hooks/pre-commit'), '#!/bin/sh\necho "// 格式整理" >> a.ts\n');
+    chmodSync(join(dir, '.git/hooks/pre-commit'), 0o755);
+    writeFileSync(join(dir, 'b.ts'), 'b2\n');
+    writeFileSync(join(dir, 'new.ts'), 'new\n');
+    writeFileSync(join(dir, 'src/environments/environment.ts'), 'uat\n'); // 測試時切到 UAT
+    const result = await commitAll(dir, 'feat(ALL-1) change');
+    expect(git(dir, 'show', '--name-only', '--format=', 'HEAD').trim().split('\n').sort()).toEqual(['b.ts', 'new.ts']);
+    expect(result.restored).toEqual(['a.ts']);
+    expect(readFileSync(join(dir, 'a.ts'), 'utf8')).toBe('a\n'); // 回到原樣
+    expect(git(dir, 'status', '--porcelain').trim()).toBe('M src/environments/environment.ts'); // 只剩測試用的
+    await expect(commitAll(dir, 'x')).rejects.toThrow('沒有要提交的改動');
   });
 });

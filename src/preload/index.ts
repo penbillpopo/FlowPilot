@@ -39,7 +39,7 @@ const api: FlowPilotApi = {
   approve: (id, accept) => ipcRenderer.invoke('item:approve', id, accept),
   decide: (id, optionId) => ipcRenderer.invoke('item:decide', id, optionId),
   stop: (id) => ipcRenderer.invoke('item:stop', id),
-  remove: (id, deleteBranch) => ipcRenderer.invoke('item:remove', id, deleteBranch),
+  remove: (id) => ipcRenderer.invoke('item:remove', id),
   branchInfo: (id) => ipcRenderer.invoke('item:branchInfo', id),
   finish: (id, restoreEnvironment) => ipcRenderer.invoke('item:finish', id, restoreEnvironment),
   interrupt: (id) => ipcRenderer.invoke('item:interrupt', id),
@@ -58,6 +58,7 @@ const api: FlowPilotApi = {
     unstage: (id, paths) => ipcRenderer.invoke('git:unstage', id, paths),
     discard: (id, paths) => ipcRenderer.invoke('git:discard', id, paths),
     commit: (id, message, identity) => ipcRenderer.invoke('git:commit', id, message, identity),
+    commitAll: (id, message, identity) => ipcRenderer.invoke('git:commitAll', id, message, identity),
     push: (id) => ipcRenderer.invoke('git:push', id),
   },
   folderTerminal: {

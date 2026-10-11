@@ -4,7 +4,7 @@ import { execFileSync } from 'node:child_process';
 import { appendFileSync, mkdirSync, writeFileSync } from 'node:fs';
 import { randomUUID } from 'node:crypto';
 import { join } from 'node:path';
-import type { Env, JiraTicket, Judgement, PlanOptions, Review, ReviewChecks, ReviewIssue, TicketPlan, TicketSnapshot } from '../shared/types';
+import type { Env, JiraTicket, Judgement, PlanOptions, Review, ReviewChecks, ReviewIssue, TicketMark, TicketPlan, TicketSnapshot } from '../shared/types';
 import { CodexRpc } from './codex/rpc';
 import { listSkills, runStructured } from './codex/structured';
 import { checkExisting, runGit } from './git';
@@ -13,7 +13,7 @@ import { applyDiscussion, buildCodeCheckPrompt, buildDiscussionPrompt, buildFigm
 import { deriveBranches, planProblem } from './planner/rules';
 import { loadHistory } from './chat';
 import { FolderTerminals } from './folderterminals';
-import { commitStaged, discard, fileDiff, gitState, pushBranch, stage, unstage } from './gitpanel';
+import { commitAll, commitStaged, discard, fileDiff, gitState, pushBranch, stage, unstage } from './gitpanel';
 import { diffSnapshots, updateMessage } from './requirements';
 import { HEADLESS_BROWSER_NAME, Runner, threadConfig } from './runner/runner';
 import { VSCode } from './vscode';
@@ -295,7 +295,7 @@ function writeGuardPath() {
 }
 
 /** 單列表上每張單的標記：在工作台上（不能再選）、本機已經有這張單的分支 */
-async function ticketMarks(keys: string[]): Promise<Record<string, { active: boolean; branch: boolean }>> {
+async function ticketMarks(keys: string[]): Promise<Record<string, TicketMark>> {
   const settings = loadSettings(settingsFile);
   // 每個資料夾的本機分支名稱讀一次就好；分支名稱結尾是單號就算有（例如 ban/ALL-1、ban/m8/ALL-1）
   const branches: string[] = [];
@@ -303,9 +303,10 @@ async function ticketMarks(keys: string[]): Promise<Record<string, { active: boo
     const r = await runGit(f.path, ['for-each-ref', '--format=%(refname:short)', 'refs/heads']).catch(() => null);
     if (r?.code === 0) branches.push(...r.stdout.split('\n').filter(Boolean));
   }
-  const marks: Record<string, { active: boolean; branch: boolean }> = {};
+  const marks: Record<string, TicketMark> = {};
   for (const key of keys) {
-    marks[key] = { active: store.hasActiveTicket(key), branch: branches.some((b) => b.toUpperCase().endsWith(`/${key.toUpperCase()}`)) };
+    const work = store.ticketWorkState(key);
+    marks[key] = { active: !!work, done: work === 'done', branch: branches.some((b) => b.toUpperCase().endsWith(`/${key.toUpperCase()}`)) };
   }
   return marks;
 }
@@ -434,7 +435,7 @@ function registerIpc() {
   ipcMain.handle('item:approve', (_event, id: number, accept: boolean) => runner.approve(id, accept));
   ipcMain.handle('item:decide', (_event, id: number, optionId: string) => runner.decide(id, optionId));
   ipcMain.handle('item:stop', (_event, id: number) => runner.stop(id));
-  ipcMain.handle('item:remove', (_event, id: number, deleteBranch?: boolean) => runner.remove(id, !!deleteBranch));
+  ipcMain.handle('item:remove', (_event, id: number) => runner.remove(id));
   ipcMain.handle('item:branchInfo', (_event, id: number) => runner.branchInfo(id));
   ipcMain.handle('item:finish', (_event, id: number, restoreEnvironment: boolean) => runner.finish(id, restoreEnvironment));
   ipcMain.handle('item:interrupt', (_event, id: number) => runner.interrupt(id));
@@ -458,6 +459,11 @@ function registerIpc() {
   ipcMain.handle('git:stage', (_event, id: number, paths: string[]) => stage(folderOf(id).folder.path, paths));
   ipcMain.handle('git:unstage', (_event, id: number, paths: string[]) => unstage(folderOf(id).folder.path, paths));
   ipcMain.handle('git:discard', (_event, id: number, paths: string[]) => discard(folderOf(id).folder.path, paths));
+  ipcMain.handle('git:commitAll', (_event, id: number, message: string, email?: string) => {
+    const identity = email ? loadSettings(settingsFile).gitIdentities.find((i) => i.email === email) : undefined;
+    if (email && !identity) throw new Error(`設定檔的 gitIdentities 裡沒有 ${email}`);
+    return commitAll(folderOf(id).folder.path, message, identity);
+  });
   ipcMain.handle('git:commit', (_event, id: number, message: string, email?: string) => {
     // 只能用設定檔裡列出的身分
     const identity = email ? loadSettings(settingsFile).gitIdentities.find((i) => i.email === email) : undefined;

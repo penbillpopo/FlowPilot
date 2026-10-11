@@ -203,7 +203,7 @@ ul.files .code { font-family: ui-monospace, Menlo, monospace; font-size: 11px; c
 .workbench > * { min-height: 0; }
 .sidebar { border-right: 1px solid var(--line); padding: 12px; overflow: auto; display: flex; flex-direction: column; gap: 6px; }
 .side-section { font-size: 12px; font-weight: 600; color: var(--muted); margin-top: 10px; cursor: default; }
-details.finished-list > summary { cursor: pointer; }
+.chat > .notice-ok { padding: 4px 16px; }
 ul.tickets { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 4px; }
 li.ticket { padding: 8px 10px; border-radius: 6px; cursor: pointer; border-left: 3px solid transparent; }
 li.ticket:hover { background: var(--hover); }
@@ -290,7 +290,7 @@ ul.resources a { color: var(--accent); text-decoration: none; margin: 0 6px; wor
 details.more { position: relative; }
 details.more > summary { list-style: none; cursor: pointer; font-size: 13px; padding: 6px 14px; border: 1px solid var(--line); border-radius: 6px; }
 details.more > summary::-webkit-details-marker { display: none; }
-.more-menu { position: absolute; z-index: 10; top: calc(100% + 4px); left: 0; min-width: 160px; background: var(--bg); border: 1px solid var(--line); border-radius: 8px; padding: 4px; display: flex; flex-direction: column; box-shadow: 0 6px 20px rgba(0,0,0,0.25); }
+.more-menu { position: absolute; z-index: 10; top: calc(100% + 4px); right: 0; min-width: 160px; background: var(--bg); border: 1px solid var(--line); border-radius: 8px; padding: 4px; display: flex; flex-direction: column; box-shadow: 0 6px 20px rgba(0,0,0,0.25); }
 .more-menu button { border: none; text-align: left; padding: 6px 10px; }
 .more-menu button.danger { color: var(--blocked); }
 
@@ -402,6 +402,7 @@ header .actions button { white-space: nowrap; }
 .marks { display: flex; gap: 4px; flex-wrap: wrap; margin-top: 2px; }
 .mark { font-size: 11px; padding: 0 6px; border-radius: 8px; background: var(--hover); color: var(--muted); white-space: nowrap; }
 .mark.active { background: var(--selected); color: var(--accent); font-weight: 600; }
+.mark.done { background: var(--ok-bg); color: var(--ok-fg); font-weight: 600; }
 /* 標題列的按鈕：空間不夠時換行，不擠出中間欄 */
 .head-actions { flex-shrink: 1; flex-wrap: wrap; min-width: 0; }
 .center { min-width: 0; overflow-x: hidden; }
@@ -422,3 +423,11 @@ header .actions button { white-space: nowrap; }
 .trial-row { align-items: center; gap: 8px; flex-wrap: wrap; }
 .ok-text { color: var(--ok-fg); }
 tr.locked { opacity: 0.5; cursor: not-allowed; }
+/* 右邊：本機網站的狀態 */
+.site-status { display: flex; align-items: center; gap: 8px; font-size: 13px; }
+.site-dot { width: 8px; height: 8px; border-radius: 50%; background: var(--line); flex-shrink: 0; }
+.site-dot.on { background: var(--review); }
+/* 改動：檔案列與差異 */
+.git-files li { flex-wrap: wrap; }
+.git-files li .diff-row { flex-basis: 100%; }
+.git-commit > button.primary { width: 100%; }

@@ -12,6 +12,8 @@ describe('寫入防護', () => {
     expect(decide('POST', u('/api/auth/verifyotp'))).toBe('login');
     expect(decide('POST', u('/api/resource/popup/getpopuplist'))).toBe('read');
     expect(decide('POST', u('/api/member/exportlist'))).toBe('read');
+    expect(decide('POST', u('/api/resource/upload/uploadimage'))).toBe('upload'); // 上傳檔案放行
+    expect(decide('PUT', u('/api/resource/uploadimage'))).toBe('block'); // 但 PUT 還是擋
   });
 
   it('會改資料的擋下：先看有沒有改資料的字，再看查詢的字；看不出來的也擋', () => {

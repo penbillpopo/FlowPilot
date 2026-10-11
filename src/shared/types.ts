@@ -371,6 +371,16 @@ export interface GitState {
   identities: GitIdentity[];
 }
 
+/** 單列表上的標記 */
+export interface TicketMark {
+  /** 在工作台上（進行中或已完成），不能再選 */
+  active: boolean;
+  /** 在工作台上而且已完成 */
+  done: boolean;
+  /** 本機已經有這張單的分支 */
+  branch: boolean;
+}
+
 export interface CommitResult {
   sha: string;
   /** 提交過程中被專案的提交前檢查改到、跟這次無關的檔案（沒有被提交，留在資料夾裡） */
@@ -424,8 +434,8 @@ export interface FlowPilotApi {
   /** 回答 FlowPilot 要你決定的事 */
   decide(itemId: number, optionId: string): Promise<void>;
   stop(itemId: number): Promise<void>;
-  /** 從看板移除；deleteBranch 為 true 時順便刪掉本機分支（不動遠端） */
-  remove(itemId: number, deleteBranch?: boolean): Promise<RemoveResult>;
+  /** 從工作台移除：刪掉本機分支（遠端不動）、審閱紀錄，回到從沒做過的樣子 */
+  remove(itemId: number): Promise<RemoveResult>;
   /** 移除前查分支的狀況：刪掉會失去什麼 */
   branchInfo(itemId: number): Promise<BranchInfo | null>;
   /** 這張單做完了：資料夾要乾淨（environment.ts 可選擇還原），讓出資料夾給下一張 */
@@ -445,6 +455,8 @@ export interface FlowPilotApi {
     stage(itemId: number, paths: string[]): Promise<void>;
     unstage(itemId: number, paths: string[]): Promise<void>;
     discard(itemId: number, paths: string[]): Promise<void>;
+    /** 提交全部改動（不用管暫存）：測試用的 environment.ts 不提交，提交前檢查改到的無關檔案自動還原 */
+    commitAll(itemId: number, message: string, identity?: string): Promise<CommitResult & { restored: string[] }>;
     /** 提交；identity 是這一次要用的身分的信箱，不填就用資料夾設定的 */
     commit(itemId: number, message: string, identity?: string): Promise<CommitResult>;
     push(itemId: number): Promise<string>;
@@ -471,7 +483,7 @@ export interface FlowPilotApi {
   /** 重跑自動測試（無頭）：上次沒測成時用 */
   rerunAutotest(itemId: number): Promise<void>;
   /** 單列表的標記：在工作台上（不能再選）、分支已經存在 */
-  ticketMarks(keys: string[]): Promise<Record<string, { active: boolean; branch: boolean }>>;
+  ticketMarks(keys: string[]): Promise<Record<string, TicketMark>>;
   /** 在計畫表返回、沒有確認的單：審閱紀錄不留 */
   discardReviews(keys: string[]): Promise<void>;
   test: {

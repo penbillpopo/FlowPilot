@@ -1,7 +1,7 @@
 // 執行器：把確認好的計畫變成工作項目，分配資料夾、建立並切換分支、啟動 Codex 執行技能，
 // 並追蹤每段對話的進度、提問與同意請求。
 import { execFile } from 'node:child_process';
-import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { homedir } from 'node:os';
 import { dirname, join } from 'node:path';
 import type { BoardState, BranchInfo, ChatEvent, Env, RemoveResult, Review, TestReport, TestResult, PendingRequest, SkillInfo, TestState, TicketPlan, WorkStage } from '../../shared/types';
@@ -1001,7 +1001,6 @@ export class Runner {
         '已完成' +
         (item.targetMerchants.length ? `；之後要移植到 ${item.targetMerchants.map((m) => `m${m}`).join('、')}（移植功能還在開發中）` : ''),
     });
-    this.forgetReview(item.ticketKey);
     await this.schedule();
   }
 
@@ -1033,35 +1032,40 @@ export class Runner {
   private async deleteLocalBranch(item: StoredWorkItem): Promise<RemoveResult> {
     const info = await this.branchInfo(item.id);
     if (!info?.exists) return { branchDeleted: false, reason: '本機沒有這條分支' };
-    if (info.dirty.length) {
-      return { branchDeleted: false, reason: `資料夾還有 ${info.dirty.length} 個沒提交的修改（${info.dirty.slice(0, 3).join('、')}${info.dirty.length > 3 ? ' 等' : ''}），為了不丟掉它們，分支沒有刪` };
-    }
     const cwd = this.folderPath(item.folder!);
+    // 資料夾停在這條分支上：還原成原本的樣子（丟掉沒提交的改動、切回基底）；
+    // 資料夾已經換到別的分支（在做別張單）：只刪分支，不碰資料夾裡的檔案
     if ((await currentBranch(cwd)) === item.branch) {
-      for (const file of (await dirtyFiles(cwd)).filter(isEnvironmentFile)) await runGit(cwd, ['restore', '--staged', '--worktree', '--', file]);
+      await runGit(cwd, ['reset', '-q', '--', '.']);
+      await runGit(cwd, ['checkout', '--', '.']);
+      for (const path of (await runGit(cwd, ['ls-files', '--others', '--exclude-standard'])).stdout.split('\n').filter(Boolean)) {
+        rmSync(join(cwd, path), { force: true });
+      }
       if (await localBranchExists(cwd, item.baseBranch)) await switchBranch(cwd, item.baseBranch);
       else await switchToRemoteBranch(cwd, item.baseBranch);
     }
     const result = await runGit(cwd, ['branch', '-D', item.branch]);
     if (result.code !== 0) return { branchDeleted: false, reason: `刪除失敗：${result.stderr.trim()}` };
-    this.deps.log(`${item.ticketKey}：刪除 ${item.folder} 的本機分支 ${item.branch}（${info.unpushed} 個只在本機的提交一起刪除）`);
+    this.deps.log(`${item.ticketKey}：移除時刪除 ${item.folder} 的本機分支 ${item.branch}（丟掉 ${info.dirty.length} 個沒提交的改動、${info.unpushed ?? '?'} 個沒推送的提交）`);
     return { branchDeleted: true };
   }
 
   /**
-   * 從看板移除。執行中的會先中斷 AI 這一輪；準備中的，準備流程會在啟動 AI 前自己停下來。
-   * 預設不動資料夾裡的檔案或分支；deleteBranch 為 true 時順便刪掉本機分支（不動遠端）。
+   * 從工作台移除（進行中、已完成都可以）：回到從沒做過的樣子。
+   * 刪掉本機分支（資料夾停在這條分支上時，先丟掉沒提交的改動、切回基底）；遠端分支絕對不動，由你自己刪。
+   * 也刪掉審閱紀錄，單列表上的標籤跟著消失。
    */
-  async remove(id: number, deleteBranch = false): Promise<RemoveResult> {
+  async remove(id: number): Promise<RemoveResult> {
     const item = this.deps.store.getWorkItem(id)!;
-    // AI 還在改檔案時刪分支會亂掉，要等它停下來
-    if (deleteBranch && ['running', 'preparing'].includes(item.status)) throw new Error('AI 還在執行，請先中斷這一輪再移除並刪除分支');
+    // 移除會刪本機分支、還原資料夾；AI 還在改檔案時會亂掉，要等它停下來
+    if (['running', 'preparing'].includes(item.status)) throw new Error('AI 還在執行，請先中斷這一輪再移除');
     const turnId = item.threadId ? this.turns.get(item.threadId) : undefined;
     if (item.threadId && turnId) await this.deps.codex.request('turn/interrupt', { threadId: item.threadId, turnId }).catch(() => {});
     this.streaming.delete(id);
     this.allowed.delete(id);
     let result: RemoveResult = { branchDeleted: false };
-    if (deleteBranch && item.folder) {
+    // 移除一律刪本機分支（遠端不動）；還沒分到資料夾的（排隊中）沒有分支要刪
+    if (item.folder) {
       try {
         result = await this.deleteLocalBranch(item);
       } catch (error) {

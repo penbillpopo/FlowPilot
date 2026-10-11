@@ -25,18 +25,38 @@ function setup() {
 }
 
 describe('移除', () => {
-  it('執行中、準備中、排隊中的單都可以移除，移除後讓下一張接上', async () => {
+  it('排隊中、等你測試、已完成的單都可以移除；AI 執行中、準備中的不行（要先中斷）', async () => {
     const { store, runner, make } = setup();
     const a = make('ALL-1');
     const b = make('ALL-2');
     const c = make('ALL-3');
+    const d = make('ALL-4');
     store.updateWorkItem(a.id, { lane: 'development', status: 'running', folder: 'PlatformAdmin', threadId: 't1' });
     store.updateWorkItem(b.id, { lane: 'development', status: 'preparing', folder: 'PlatformWeb' });
-    await runner.remove(a.id);
-    await runner.remove(b.id);
+    store.updateWorkItem(d.id, { lane: 'done', status: 'committed' });
+    await expect(runner.remove(a.id)).rejects.toThrow('AI 還在執行');
+    await expect(runner.remove(b.id)).rejects.toThrow('AI 還在執行');
     await runner.remove(c.id);
-    for (const id of [a.id, b.id, c.id]) expect(store.getWorkItem(id)).toMatchObject({ status: 'removed', lane: 'done' });
-    expect(store.listWorkItems()).toEqual([]);
+    await runner.remove(d.id);
+    for (const id of [c.id, d.id]) expect(store.getWorkItem(id)).toMatchObject({ status: 'removed', lane: 'done' });
+    // 已完成的單在移除前還留在工作台上
+    expect(store.listWorkItems().map((i) => i.ticketKey)).toEqual(['ALL-1', 'ALL-2']);
+  });
+});
+
+describe('單列表的標記', () => {
+  it('還在做的是進行中（含失敗、停止）、都按過完成的是已完成、移除後不在工作台上', () => {
+    const { store, make } = setup();
+    const a = make('ALL-1');
+    const b = make('ALL-2');
+    const c = make('ALL-3');
+    store.updateWorkItem(a.id, { status: 'failed' });
+    store.updateWorkItem(b.id, { status: 'committed' });
+    store.updateWorkItem(c.id, { status: 'removed' });
+    expect(store.ticketWorkState('ALL-1')).toBe('active');
+    expect(store.ticketWorkState('ALL-2')).toBe('done');
+    expect(store.ticketWorkState('ALL-3')).toBeNull();
+    expect(store.ticketWorkState('ALL-9')).toBeNull();
   });
 });
 

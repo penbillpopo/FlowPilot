@@ -1,7 +1,7 @@
 // 主畫面：上方切換「工作台」與「單列表」。
 // 單列表：列出 Jira 上進行中的單，由你勾選這次要做哪幾張；確認後進入計畫表，計畫確認後跳到執行看板。
 import { useEffect, useState } from 'react';
-import type { JiraTicket, RunSummary } from '../../shared/types';
+import type { JiraTicket, RunSummary, TicketMark } from '../../shared/types';
 import { Workbench } from './Workbench';
 import { PlanView } from './PlanView';
 
@@ -57,7 +57,7 @@ export function App() {
 function TicketList({ onConfirmed }: { onConfirmed(): void }) {
   const [tickets, setTickets] = useState<JiraTicket[] | null>(null);
   const [selected, setSelected] = useState<Set<string>>(new Set());
-  const [marks, setMarks] = useState<Record<string, { active: boolean; branch: boolean }>>({});
+  const [marks, setMarks] = useState<Record<string, TicketMark>>({});
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [planning, setPlanning] = useState<{ run: RunSummary; tickets: JiraTicket[] } | null>(null);
@@ -205,7 +205,7 @@ function TicketList({ onConfirmed }: { onConfirmed(): void }) {
                 key={t.key}
                 className={`${selected.has(t.key) ? 'selected' : ''} ${marks[t.key]?.active ? 'locked' : ''}`}
                 onClick={() => toggle(t.key)}
-                title={marks[t.key]?.active ? '這張單正在工作台上，要等它在工作台結束（完成或移除）才能再選' : undefined}
+                title={marks[t.key]?.active ? '這張單在工作台上，要在工作台移除後才能再選' : undefined}
               >
                 <td className="check">
                   <input type="checkbox" checked={selected.has(t.key)} disabled={!!marks[t.key]?.active} onChange={() => toggle(t.key)} onClick={(e) => e.stopPropagation()} />
@@ -214,8 +214,10 @@ function TicketList({ onConfirmed }: { onConfirmed(): void }) {
                   <a href={t.url} onClick={(e) => { e.preventDefault(); e.stopPropagation(); api.openExternal(t.url); }}>{t.key}</a>
                   <span className="tag">{t.issueType}</span>
                   <span className="marks">
-                    {marks[t.key]?.active && <span className="mark active" title="這張單正在工作台上">工作台上</span>}
-                    {marks[t.key]?.branch && <span className="mark" title="本機已經有這張單的分支，確認後會切換過去繼續開發">有分支</span>}
+                    {marks[t.key]?.active && (marks[t.key].done
+                      ? <span className="mark done" title="這張單在工作台上已完成；在工作台移除後才能再選">已完成</span>
+                      : <span className="mark active" title="這張單正在工作台上進行">進行中</span>)}
+                    {marks[t.key]?.branch && !marks[t.key]?.active && <span className="mark" title="本機已經有這張單的分支，確認後會切換過去繼續開發">有分支</span>}
                   </span>
                 </td>
                 <td>{t.summary}</td>

@@ -49,36 +49,41 @@ function setup() {
   return { folder, store, runner, id: item.id, branches };
 }
 
-describe('移除時刪除本機分支', () => {
-  it('有還沒推送的提交也照樣刪：先還原 environment.ts、切回基底，再刪；遠端不動', async () => {
+describe('移除：刪本機分支、還原資料夾，遠端不動', () => {
+  it('有還沒推送的提交也照樣刪：先還原 environment.ts、切回基底，再刪', async () => {
     const t = setup();
     writeFileSync(join(t.folder, 'src/environments/environment.ts'), "/** SIT */\n// apiUrl: 'sit',\n/** UAT */\napiUrl: 'uat',\n");
-    expect(await t.runner.branchInfo(t.id)).toMatchObject({ exists: true, hasRemote: false, unpushed: 1, dirty: [] });
-    expect(await t.runner.remove(t.id, true)).toEqual({ branchDeleted: true });
+    expect(await t.runner.branchInfo(t.id)).toMatchObject({ exists: true, hasRemote: false, unpushed: 1 });
+    expect(await t.runner.remove(t.id)).toEqual({ branchDeleted: true });
     expect(t.branches()).toEqual(['version/0.0.1']);
     expect(git(t.folder, 'branch', '--show-current')).toBe('version/0.0.1');
     expect(git(t.folder, 'status', '--porcelain')).toBe('');
     expect(t.store.getWorkItem(t.id)?.status).toBe('removed');
   });
 
-  it('有沒提交的修改就不刪分支，只移除，並說明原因', async () => {
+  it('有沒提交的改動：丟掉改動（包括新檔案）再刪，資料夾回到乾淨的基底', async () => {
     const t = setup();
     writeFileSync(join(t.folder, 'a.ts'), 'a3\n');
-    const result = await t.runner.remove(t.id, true);
-    expect(result.branchDeleted).toBe(false);
-    expect(result.reason).toContain('沒提交的修改');
-    expect(t.branches()).toContain('ban/ALL-1');
-    expect(git(t.folder, 'branch', '--show-current')).toBe('ban/ALL-1');
-    expect(t.store.getWorkItem(t.id)?.status).toBe('removed');
+    writeFileSync(join(t.folder, 'new.ts'), 'new\n');
+    expect((await t.runner.branchInfo(t.id))?.dirty.sort()).toEqual(['a.ts', 'new.ts']);
+    expect(await t.runner.remove(t.id)).toEqual({ branchDeleted: true });
+    expect(t.branches()).toEqual(['version/0.0.1']);
+    expect(git(t.folder, 'status', '--porcelain')).toBe('');
   });
 
-  it('不勾刪分支就跟以前一樣不動分支；AI 執行中不能刪', async () => {
+  it('資料夾已經換到別的分支（在做別張單）：只刪分支，不碰資料夾裡的改動', async () => {
+    const t = setup();
+    git(t.folder, 'switch', '-q', '-c', 'ban/ALL-2', 'version/0.0.1');
+    writeFileSync(join(t.folder, 'a.ts'), 'other ticket\n');
+    expect(await t.runner.remove(t.id)).toEqual({ branchDeleted: true });
+    expect(t.branches()).toEqual(['ban/ALL-2', 'version/0.0.1']);
+    expect(git(t.folder, 'status', '--porcelain')).toBe('M a.ts');
+  });
+
+  it('AI 執行中不能移除', async () => {
     const t = setup();
     t.store.updateWorkItem(t.id, { status: 'running' });
-    await expect(t.runner.remove(t.id, true)).rejects.toThrow('AI 還在執行');
-    expect(t.store.getWorkItem(t.id)?.status).toBe('running');
-    t.store.updateWorkItem(t.id, { status: 'review' });
-    expect(await t.runner.remove(t.id)).toEqual({ branchDeleted: false });
+    await expect(t.runner.remove(t.id)).rejects.toThrow('AI 還在執行');
     expect(t.branches()).toContain('ban/ALL-1');
   });
 });

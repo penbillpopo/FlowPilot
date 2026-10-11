@@ -4,7 +4,7 @@
 const fs = require('fs');
 
 const LOGIN = /(login|logout|signin|signout|captcha|otp|token)/i;
-const WRITE = /(add|create|insert|update|edit|modify|save|delete|remove|del|set|submit|approve|reject|cancel|enable|disable|import|upload|transfer|bind|reset|change|audit|confirm|send|apply|batch|sync|withdraw|deposit|pay|refund|freeze|lock|recharge|adjust|grant|revoke|publish|close|open|move|copy|sort)/i;
+const WRITE = /(add|create|insert|update|edit|modify|save|delete|remove|del|set|submit|approve|reject|cancel|enable|disable|import|transfer|bind|reset|change|audit|confirm|send|apply|batch|sync|withdraw|deposit|pay|refund|freeze|lock|recharge|adjust|grant|revoke|publish|close|open|move|copy|sort)/i;
 const READ = /(list|search|query|get|detail|info|page|count|summary|export|check|find|options|select|tree|report|stat)/i;
 
 function decide(method, url) {
@@ -14,6 +14,8 @@ function decide(method, url) {
     last = new URL(url).pathname.split('/').filter(Boolean).pop() || '';
   } catch {}
   if (LOGIN.test(last) && !WRITE.test(last.replace(LOGIN, ''))) return 'login';
+  // 上傳檔案（例如 Banner 圖片）放行：只是傳到檔案伺服器，不會改到業務資料；擋下的話表單拿不到圖片網址，存檔流程測不完
+  if (method === 'POST' && /upload/i.test(last)) return 'upload';
   // PUT、PATCH、DELETE 本身就是改資料，一律擋；只有 POST 可能是查詢
   if (method !== 'POST') return 'block';
   if (WRITE.test(last)) return 'block';
@@ -56,6 +58,10 @@ module.exports.default = async ({ page }) => {
     } catch {}
     if (action === 'login') {
       record({ action: '放行（登入）', method, url: request.url() }); // 登入的內容有密碼，不記
+      return route.continue();
+    }
+    if (action === 'upload') {
+      record({ action: '放行（上傳檔案）', method, url: request.url() });
       return route.continue();
     }
     if (action === 'read') {

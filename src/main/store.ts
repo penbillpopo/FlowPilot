@@ -302,9 +302,8 @@ export class Store {
   listWorkItems(): StoredWorkItem[] {
     const rows = this.db
       .prepare(
-        `SELECT * FROM work_items WHERE status NOT IN ('failed', 'stopped', 'removed', 'committed')
-         UNION SELECT * FROM (SELECT * FROM work_items WHERE status IN ('failed', 'stopped', 'committed') ORDER BY id DESC LIMIT 30)
-         ORDER BY id`,
+        // 工作台上的單：還沒被移除的都算（已完成的也留著，等你移除）
+        "SELECT * FROM work_items WHERE status != 'removed' ORDER BY id",
       )
       .all() as unknown as WorkItemRow[];
     return rows.map(toWorkItem);
@@ -340,9 +339,16 @@ export class Store {
     return this.getWorkItem(id)!;
   }
 
-  /** 這張單（單號）還有沒有在工作台上的工作（多專案的單可能有好幾列） */
+  /** 這張單（單號）在不在工作台上：還沒被移除的都算，包括已完成的（多專案的單可能有好幾列） */
   hasActiveTicket(ticketKey: string): boolean {
-    return !!this.db.prepare("SELECT 1 FROM work_items WHERE ticket_key = ? AND status NOT IN ('failed', 'stopped', 'removed', 'committed') LIMIT 1").get(ticketKey);
+    return !!this.db.prepare("SELECT 1 FROM work_items WHERE ticket_key = ? AND status != 'removed' LIMIT 1").get(ticketKey);
+  }
+
+  /** 這張單在工作台上的狀態：每一列都已完成才算「已完成」，其他（含失敗、停止、排隊）都算「進行中」；不在工作台上回 null */
+  ticketWorkState(ticketKey: string): 'active' | 'done' | null {
+    const rows = this.db.prepare("SELECT status FROM work_items WHERE ticket_key = ? AND status != 'removed'").all(ticketKey) as { status: string }[];
+    if (!rows.length) return null;
+    return rows.every((r) => r.status === 'committed') ? 'done' : 'active';
   }
 
   /** 同一個專案、同一條分支還沒結束的工作項目（避免重複建立） */
@@ -370,7 +376,7 @@ export class Store {
   /** 審閱紀錄跟著工作台走：不在工作台上的單，審閱紀錄全部清掉；回傳清掉幾筆 */
   purgeOrphanReviews(): number {
     const result = this.db
-      .prepare("DELETE FROM reviews WHERE ticket_key NOT IN (SELECT ticket_key FROM work_items WHERE status NOT IN ('failed', 'stopped', 'removed', 'committed'))")
+      .prepare("DELETE FROM reviews WHERE ticket_key NOT IN (SELECT ticket_key FROM work_items WHERE status != 'removed')")
       .run();
     return Number(result.changes);
   }

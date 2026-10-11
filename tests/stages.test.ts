@@ -58,9 +58,12 @@ function setup({ account = true } = {}) {
   }])[0];
   store.updateWorkItem(item.id, { lane: 'development', status: 'running', stage: 'develop', folder: 'PlatformAdmin', threadId: 'th' });
   const sites: string[] = [];
+  const reached: string[] = [];
+  let backendUp = true;
   const runner = new Runner({
     dataDir: join(root, 'data'),
     ensureSite: async (name) => (sites.push(name), 'http://localhost:4300/'),
+    canReach: async (url) => (reached.push(url), backendUp),
     store, settings: () => settings, codex, vscode: {} as VSCode,
     notify: () => {}, onChange: () => {}, onStream: () => {}, log: () => {},
   });
@@ -69,7 +72,7 @@ function setup({ account = true } = {}) {
     await new Promise((r) => setTimeout(r, 20));
   };
   const lastTurn = () => requests.filter((r) => r.method === 'turn/start').at(-1)!.params;
-  return { root, folder, store, runner, id: item.id, requests, sites, complete, lastTurn, get: () => store.getWorkItem(item.id)! };
+  return { root, folder, store, runner, id: item.id, requests, sites, reached, setBackendUp: (v: boolean) => (backendUp = v), complete, lastTurn, get: () => store.getWorkItem(item.id)! };
 }
 
 describe('流程階段', () => {
@@ -86,8 +89,9 @@ describe('流程階段', () => {
     expect(text).toContain('http://localhost:4300/');
     expect(text).toContain('SIT');
     expect(text).not.toContain('sit-pass'); // 密碼不寫進指示
+    expect(text).toContain('先用終端機指令讀');
     // 登入資料寫在 FlowPilot 的資料夾，不在專案裡
-    const file = text.match(/讀 (\S+\.json) 裡的帳號密碼/)![1];
+    const file = text.match(/讀 (\S+\.json)（例如 cat）/)![1];
     expect(file.startsWith(join(t.root, 'data'))).toBe(true);
     expect(JSON.parse(readFileSync(file, 'utf8'))).toMatchObject({ environment: 'SIT', username: 'sit-user', password: 'sit-pass', otp: '123456' });
 
@@ -120,7 +124,7 @@ describe('流程階段', () => {
     expect(text).toContain('只能用 flowpilot_browser 這個瀏覽器工具');
     expect(text).toContain('等我確認後才開始');
     expect(text).toContain('UAT');
-    const file = text.match(/讀 (\S+\.json) 裡的帳號密碼/)![1];
+    const file = text.match(/讀 (\S+\.json)（例如 cat）/)![1];
     expect(JSON.parse(readFileSync(file, 'utf8'))).toMatchObject({ environment: 'UAT', username: 'uat-user', password: 'uat-pass' });
     // 畫面拿不到密碼
     expect(JSON.stringify(t.runner.testState(t.id))).not.toContain('uat-pass');
@@ -147,6 +151,16 @@ describe('流程階段', () => {
     await t.complete();
     expect(t.get()).toMatchObject({ stage: 'manual', status: 'waiting' });
     expect(t.get().activity).toContain('還沒有密碼');
+    expect(t.sites).toEqual([]);
+  });
+
+  it('連不到後端（沒開 VPN）就不開始測試，直接提醒', async () => {
+    const t = setup();
+    t.setBackendUp(false);
+    await t.complete();
+    expect(t.reached).toEqual(['http://sit/api']);
+    expect(t.get()).toMatchObject({ stage: 'manual', status: 'waiting' });
+    expect(t.get().activity).toContain('VPN 有開嗎');
     expect(t.sites).toEqual([]);
   });
 });

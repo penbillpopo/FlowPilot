@@ -178,6 +178,8 @@ export function GitPanel({ item, onCount }: { item: WorkItem; onCount?(changes: 
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [notice, setNotice] = useState<string | null>(null);
+  /** 上次提交時，被專案的提交前檢查順手改到的無關檔案 */
+  const [hookChanged, setHookChanged] = useState<string[]>([]);
 
   async function refresh() {
     if (!item.folder) return;
@@ -195,6 +197,7 @@ export function GitPanel({ item, onCount }: { item: WorkItem; onCount?(changes: 
     setDiff(null);
     setError(null);
     setNotice(null);
+    setHookChanged([]);
     setMessage(item.prTitle);
     setWho(null);
     refresh();
@@ -202,6 +205,11 @@ export function GitPanel({ item, onCount }: { item: WorkItem; onCount?(changes: 
     const timer = setInterval(refresh, 3000);
     return () => clearInterval(timer);
   }, [item.id, item.folder]);
+
+  // AI 一輪做完（狀態改變）就馬上更新，不用等下一次的 3 秒
+  useEffect(() => {
+    refresh();
+  }, [item.status]);
 
   async function act(action: () => Promise<unknown>, done?: string) {
     setBusy(true);
@@ -238,6 +246,9 @@ export function GitPanel({ item, onCount }: { item: WorkItem; onCount?(changes: 
     ...state.identities,
   ];
   const chosen = who ?? state.identity.email;
+  // 還留在資料夾裡的（你自己捨棄或提交了就不再提示）
+  const dirtyPaths = new Set([...state.staged, ...state.unstaged].map((f) => f.path));
+  const pendingHook = hookChanged.filter((p) => dirtyPaths.has(p));
   const canPush = state.hasRemote ? (state.unpushed ?? 0) > 0 : state.ahead > 0;
   const diffBlock = (path: string, staged: boolean) => diff?.path === path && diff.staged === staged && <li className="diff-row"><DiffView diff={diff.text} /></li>;
 
@@ -314,8 +325,9 @@ export function GitPanel({ item, onCount }: { item: WorkItem; onCount?(changes: 
             className="primary"
             disabled={busy || !onBranch || state.staged.length === 0 || !message.trim()}
             onClick={() => act(async () => {
-              await api.git.commit(item.id, message, who ?? undefined);
+              const result = await api.git.commit(item.id, message, who ?? undefined);
               setWho(null); // 下次提交回到資料夾預設
+              setHookChanged(result.hookChanged);
             }, '已提交')}
           >
             {state.staged.length === 0 ? '先把要提交的檔案暫存（＋）' : `提交 ${state.staged.length} 個檔案`}
@@ -333,6 +345,25 @@ export function GitPanel({ item, onCount }: { item: WorkItem; onCount?(changes: 
         >
           {state.hasRemote ? `推送 ${state.unpushed} 個提交` : `推送（建立遠端分支，${state.ahead} 個提交）`}
         </button>
+      )}
+      {pendingHook.length > 0 && (
+        <div className="hook-notice warn small">
+          提交前的檢查（專案設定的 lint 等）順手改了 {pendingHook.length} 個跟這次無關的檔案，它們沒有被提交，還留在資料夾裡：
+          <ul>{pendingHook.slice(0, 5).map((p) => <li key={p}><code>{p}</code></li>)}{pendingHook.length > 5 && <li>…等 {pendingHook.length} 個</li>}</ul>
+          <div className="row">
+            <button
+              className="danger"
+              disabled={busy}
+              onClick={() => window.confirm(`捨棄這 ${pendingHook.length} 個檔案的修改？只會還原這些被檢查改到的檔案。`) && act(async () => {
+                await api.git.discard(item.id, pendingHook);
+                setHookChanged([]);
+              }, '已捨棄')}
+            >
+              全部捨棄
+            </button>
+            <button disabled={busy} onClick={() => setHookChanged([])}>先不管</button>
+          </div>
+        </div>
       )}
       {notice && <div className="notice-ok">{notice}</div>}
       {error && <div className="error">{error}</div>}

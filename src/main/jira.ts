@@ -101,6 +101,8 @@ export interface IssueContext {
   subtasks: { key: string; summary: string }[];
   /** 內文、留言、附件裡的參考資料 */
   resources: Resource[];
+  /** 文字附件（.md、.txt…）的內容：單上常把 API 規格寫成附件 */
+  textAttachments: { filename: string; text: string }[];
   /** 這個時間點的內容（用來比對 PM 有沒有改單） */
   snapshot: TicketSnapshot;
 }
@@ -212,7 +214,7 @@ export async function getIssueContext(credentials: JiraCredentials, key: string,
       description: unknown;
       comment?: { comments: { id: string; body: unknown; updated?: string; author?: { displayName?: string } }[] };
       subtasks?: { key: string; fields: { summary: string } }[];
-      attachment?: { filename: string; content: string }[];
+      attachment?: JiraAttachment[];
     };
   };
   const description = stripMerchantSection(fields.description);
@@ -235,7 +237,45 @@ export async function getIssueContext(credentials: JiraCredentials, key: string,
     comments: (fields.comment?.comments ?? []).slice(-5).map((c) => adfToText(c.body).trim().slice(0, 1500)),
     subtasks: (fields.subtasks ?? []).map((s) => ({ key: s.key, summary: s.fields.summary })),
     resources: extractResources(key.toUpperCase(), [description, ...(fields.comment?.comments ?? []).map((c) => c.body)], fields.attachment ?? []),
+    textAttachments: await readTextAttachments(fields.attachment ?? [], auth, fetchImpl),
   };
+}
+
+interface JiraAttachment {
+  filename: string;
+  /** 下載網址 */
+  content: string;
+  mimeType?: string;
+  size?: number;
+}
+
+const TEXT_FILE = /\.(md|markdown|txt)$/i;
+/** 超過這個大小的附件不下載 */
+const MAX_ATTACHMENT_BYTES = 200_000;
+/** 每個附件、所有附件加起來最多給 AI 看多少字 */
+const MAX_ATTACHMENT_TEXT = 8000;
+const MAX_ATTACHMENTS_TEXT = 20000;
+
+/** 讀文字附件（.md、.txt 或 Jira 標成文字的）；圖片、PDF 不讀，單一個讀不到就略過 */
+export async function readTextAttachments(attachments: JiraAttachment[], auth: string, fetchImpl: typeof fetch = fetch): Promise<{ filename: string; text: string }[]> {
+  const result: { filename: string; text: string }[] = [];
+  let total = 0;
+  for (const a of attachments) {
+    if (!TEXT_FILE.test(a.filename) && !/^text\//.test(a.mimeType ?? '')) continue;
+    if ((a.size ?? 0) > MAX_ATTACHMENT_BYTES || total >= MAX_ATTACHMENTS_TEXT) continue;
+    try {
+      const response = await fetchImpl(a.content, { headers: { Authorization: `Basic ${auth}` } });
+      if (!response.ok) continue;
+      let text = (await response.text()).trim();
+      const limit = Math.min(MAX_ATTACHMENT_TEXT, MAX_ATTACHMENTS_TEXT - total);
+      if (text.length > limit) text = `${text.slice(0, limit)}\n…（後面省略）`;
+      total += text.length;
+      if (text) result.push({ filename: a.filename, text });
+    } catch {
+      // 讀不到就略過，不影響審閱
+    }
+  }
+  return result;
 }
 
 /** 狀態名稱（Jira 上顯示的，可能是翻譯過的）→ 狀態編號。同一個名稱可能對到好幾個編號 */

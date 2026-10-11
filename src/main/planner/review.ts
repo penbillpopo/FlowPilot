@@ -30,7 +30,7 @@ export function reviewSchema(settings: Settings) {
     properties: {
       ...base.properties,
       pages: { type: 'array', items: { type: 'string' }, description: '牽涉頁面：路由、選單、頁面或元件（看過程式碼就寫實際的路徑或元件名稱）' },
-      apis: { type: 'array', items: { type: 'string' }, description: '後端 API 規格：單上寫的方法、路徑、參數、回傳欄位；單上沒寫就給空陣列，不要自己編' },
+      apis: { type: 'array', items: { type: 'string' }, description: '後端 API 規格：單上（含內文、留言、文字附件）寫的方法、路徑、參數、回傳欄位；都沒寫就給空陣列，不要自己編' },
       steps: { type: 'array', items: { type: 'string' }, description: '預計執行內容：要改哪些地方、怎麼改，一項一句' },
       level: { type: 'string', enum: ['小', '一般', '複雜'], description: '小：單純的樣式、文字、顯示小修正；一般：一個畫面或功能的修改；複雜：多個畫面、新功能、牽涉 API 或權限' },
       codeChecked: { type: 'boolean', description: '這次有沒有實際看程式碼' },
@@ -54,7 +54,7 @@ export const REVIEW_INSTRUCTIONS = `${JUDGE_INSTRUCTIONS}
   - 只能讀，不能修改任何檔案。
 - 審閱結果會整理成開發用的需求分析交給開發的 AI，所以也要填：
   - pages（牽涉頁面）：路由、選單、頁面或元件；看過程式碼就寫實際的路徑或元件名稱。
-  - apis（後端 API 規格）：單上寫的方法、路徑、參數、回傳欄位；單上沒寫就給空陣列，不要自己編。
+  - apis（後端 API 規格）：單上寫的方法、路徑、參數、回傳欄位。API 規格常寫在附件（.md、.txt）裡，資料中有「附件…的內容」時一定要看；都沒寫就給空陣列，不要自己編。
   - steps（預計執行內容）：要改哪些地方、怎麼改，一項一句。`;
 
 export function buildReviewPrompt(

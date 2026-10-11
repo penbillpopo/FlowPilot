@@ -11,7 +11,7 @@
     "typecheck": "tsc --noEmit -p tsconfig.node.json && tsc --noEmit -p tsconfig.web.json",
     "test": "NODE_OPTIONS=--experimental-sqlite vitest run",
     "postinstall": "electron-rebuild -f -w node-pty",
-    "dist": "electron-vite build && electron-builder --mac --dir"
+    "dist": "electron-vite build && electron-builder --mac --dir && node scripts/sign-mac.mjs release/mac-arm64/FlowPilot.app"
   },
   "dependencies": {
     "@xterm/addon-fit": "^0.11.0",
@@ -57,7 +57,7 @@
     "npmRebuild": true,
     "mac": {
       "target": "dir",
-      "identity": "-",
+      "identity": null,
       "category": "public.app-category.developer-tools",
       "hardenedRuntime": false
     },

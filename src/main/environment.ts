@@ -69,6 +69,26 @@ export function switchEnvironment(text: string, target: Env): string {
   return lines.join('\n');
 }
 
+/** 目前開著的那組設定裡，某個名稱的值（例如 apiUrl）；找不到就是 null */
+export function activeValue(text: string, key: string): string | null {
+  const lines = text.split('\n');
+  const b = blocks(lines);
+  if (!b) return null;
+  for (const env of ['sit', 'uat'] as Env[]) {
+    for (const i of b[env]) {
+      if (isCommented(lines[i]) || keyOf(lines[i]) !== key) continue;
+      return lines[i].match(/[:=]\s*['"`]([^'"`]+)['"`]/)?.[1] ?? null;
+    }
+  }
+  return null;
+}
+
+/** 讀資料夾目前開著的後端網址；讀不到就是 null */
+export function readApiUrl(folder: string): string | null {
+  const file = join(folder, ENVIRONMENT_FILE);
+  return existsSync(file) ? activeValue(readFileSync(file, 'utf8'), 'apiUrl') : null;
+}
+
 /** 讀資料夾目前的環境；沒有這個檔案就是 null */
 export function readEnvironment(folder: string): Env | 'mixed' | null {
   const file = join(folder, ENVIRONMENT_FILE);

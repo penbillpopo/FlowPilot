@@ -61,6 +61,8 @@ describe('分支展開', () => {
 describe('計畫檢查', () => {
   it('填完整才通過', () => {
     expect(planProblem(plan([{ merchants: [8] }]), settings)).toBeNull();
+    // 技能由設定檔決定，計畫表不再選技能：沒有技能也不算問題
+    expect(planProblem({ ...plan([{ merchants: [8] }]), skill: undefined }, settings)).toBeNull();
     expect(planProblem(plan([]), settings)).toBe('還沒選專案');
     expect(planProblem(plan([{ merchants: [] }]), settings)).toBe('PlatformWeb 還沒選商戶');
     expect(planProblem(plan([{ merchants: [8] }, { merchants: [1] }]), settings)).toBe('同一個專案出現兩次');

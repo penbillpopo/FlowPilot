@@ -29,7 +29,7 @@ describe('審閱', () => {
   });
 
   it('提示內容附上各專案的程式碼資料夾', () => {
-    const issue = { key: 'ALL-14324', summary: '', issueType: '', description: '', comments: [], subtasks: [], resources: [], snapshot: { key: 'ALL-14575', summary: '', description: '', comments: [], attachments: [], takenAt: '' } };
+    const issue = { key: 'ALL-14324', summary: '', issueType: '', description: '', comments: [], subtasks: [], resources: [], textAttachments: [], snapshot: { key: 'ALL-14575', summary: '', description: '', comments: [], attachments: [], takenAt: '' } };
     expect(buildReviewPrompt(ticket, issue, null, settings, [])).toContain('PlatformAdmin：');
   });
 

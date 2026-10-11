@@ -2,7 +2,7 @@ import { mkdtempSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { describe, expect, it } from 'vitest';
-import { loadCredentials, parseEnv, searchTickets } from '../src/main/jira';
+import { loadCredentials, parseEnv, readTextAttachments, searchTickets } from '../src/main/jira';
 import { mainTicketKey } from '../src/shared/types';
 
 const credentials = { baseUrl: 'https://example.atlassian.net', email: 'me@example.com', token: 'secret' };
@@ -176,5 +176,36 @@ describe('拿掉原始需求', () => {
     const { adfToText, stripMerchantSection } = await import('../src/main/jira');
     const plain = { type: 'doc', content: [heading('Background / 背景'), para('內容')] };
     expect(adfToText(stripMerchantSection(plain))).toBe(adfToText(plain));
+  });
+});
+
+describe('文字附件', () => {
+  it('只讀 .md、.txt 或文字類型；太大的、圖片不讀；讀不到的略過；太長的截斷', async () => {
+    const asked: string[] = [];
+    const fetchImpl = async (url: string, init: RequestInit) => {
+      asked.push(url);
+      expect((init.headers as Record<string, string>).Authorization).toBe('Basic abc');
+      if (url.endsWith('/broken')) return new Response('', { status: 404 });
+      if (url.endsWith('/long')) return new Response('x'.repeat(9000));
+      return new Response(`  ${url} 的內容  `);
+    };
+    const result = await readTextAttachments(
+      [
+        { filename: 'API.md', content: 'https://j/api' },
+        { filename: '說明.TXT', content: 'https://j/txt' },
+        { filename: 'notes', content: 'https://j/plain', mimeType: 'text/plain' },
+        { filename: 'image.png', content: 'https://j/png', mimeType: 'image/png' },
+        { filename: 'big.md', content: 'https://j/big', size: 300_000 },
+        { filename: 'broken.md', content: 'https://j/broken' },
+        { filename: 'long.md', content: 'https://j/long' },
+      ],
+      'abc',
+      fetchImpl as unknown as typeof fetch,
+    );
+    expect(asked).toEqual(['https://j/api', 'https://j/txt', 'https://j/plain', 'https://j/broken', 'https://j/long']);
+    expect(result.map((r) => r.filename)).toEqual(['API.md', '說明.TXT', 'notes', 'long.md']);
+    expect(result[0].text).toBe('https://j/api 的內容');
+    expect(result[3].text.endsWith('…（後面省略）')).toBe(true);
+    expect(result[3].text.length).toBeLessThan(8100);
   });
 });

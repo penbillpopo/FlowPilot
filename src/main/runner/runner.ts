@@ -6,7 +6,7 @@ import { homedir } from 'node:os';
 import { join } from 'node:path';
 import type { BoardState, BranchInfo, ChatEvent, Env, RemoveResult, PendingRequest, SkillInfo, TestState, TicketPlan, WorkStage } from '../../shared/types';
 import { toEntry } from '../chat';
-import { ENVIRONMENT_FILE, readEnvironment, setEnvironment } from '../environment';
+import { ENVIRONMENT_FILE, readApiUrl, readEnvironment, setEnvironment } from '../environment';
 import { reviewBrief } from '../planner/review';
 import { configFile, resolveAccount, writeAccountFile } from '../testaccounts';
 import type { CodexRpc, RpcMessage } from '../codex/rpc';
@@ -52,6 +52,18 @@ export interface RunnerDeps {
   dataDir: string;
   /** 確保資料夾的本機網站有在跑（沒在跑就在資料夾終端機啟動），回傳網址 */
   ensureSite: (folder: string) => Promise<string>;
+  /** 連不連得到這個網址（瀏覽器測試前先確認後端，沒開 VPN 時馬上知道）；不給就用真的連線 */
+  canReach?: (url: string) => Promise<boolean>;
+}
+
+/** 有任何回應就算連得到（後端回 404、401 也是連上了）；5 秒沒回應或連線失敗就是連不到 */
+async function reachable(url: string): Promise<boolean> {
+  try {
+    await fetch(url, { signal: AbortSignal.timeout(5000) });
+    return true;
+  } catch {
+    return false;
+  }
 }
 
 const APPROVAL_METHODS = /requestApproval$|^execCommandApproval$|^applyPatchApproval$/;
@@ -484,13 +496,19 @@ export class Runner {
       const account = resolveAccount(settings.testConfigDir, item.project, item.merchant, env);
       const where = `${item.project}${item.merchant ? ` m${item.merchant}` : ''} 的 ${env.toUpperCase()}`;
       if (!account) throw new Error(`帳號檔裡沒有 ${where} 的測試帳號，請在 ${configFile(settings.testConfigDir, item.project)} 補上`);
+      // 先確認連得到後端：沒開 VPN 時馬上告訴你，不用等 AI 試好幾分鐘
+      const apiUrl = readApiUrl(cwd);
+      if (apiUrl && !(await (this.deps.canReach ?? reachable)(apiUrl))) {
+        throw new Error(`連不到 ${env.toUpperCase()} 的後端（${apiUrl}），VPN 有開嗎？開了之後按「開瀏覽器測給我看」再測`);
+      }
       if (!account.password) throw new Error(`${where} 的測試帳號 ${account.username} 還沒有密碼，請在 ${configFile(settings.testConfigDir, item.project)} 補上`);
       const url = await this.deps.ensureSite(item.folder);
       const accountFile = writeAccountFile(join(this.deps.dataDir, '測試帳號'), id, { project: item.project, merchant: item.merchant, environment: env, url, account });
       const common = [
         `- 本機網站已經由 FlowPilot 啟動：${url}，直接用；不要自己啟動、重啟或關掉網站。`,
         `- 環境：FlowPilot 已經切到 ${env.toUpperCase()}，不要修改 ${ENVIRONMENT_FILE}。`,
-        `- 登入：讀 ${accountFile} 裡的帳號密碼自動登入（登入畫面要 OTP 時，填檔案裡的 otp）。不要停下來等我登入，也不要把密碼印出來或寫進任何檔案、回覆。`,
+        // 實測：AI 曾試著在瀏覽器裡讀這個檔案（讀不到）就放棄登入，所以寫清楚用終端機讀
+        `- 登入：先用終端機指令讀 ${accountFile}（例如 cat）取得帳號密碼，再用瀏覽器工具填進登入表單自動登入（登入畫面要 OTP 時，填檔案裡的 otp）。這個檔案在電腦上，瀏覽器裡讀不到，不要在瀏覽器裡讀。不要停下來等我登入，也不要把密碼印出來或寫進任何檔案、回覆。`,
         '- 失敗時先判斷原因：是前端程式的問題就直接修正，然後重測失敗的部分，最多 3 輪；不是前端的問題（後端、資料、權限、環境）就記下來，不要修。',
         '- 不要提交、不要推送。',
       ];

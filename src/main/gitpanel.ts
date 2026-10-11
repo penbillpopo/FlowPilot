@@ -3,7 +3,7 @@ import { execFile } from 'node:child_process';
 import { mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join, resolve, sep } from 'node:path';
-import type { GitFile, GitIdentity, GitState } from '../shared/types';
+import type { CommitResult, GitFile, GitIdentity, GitState } from '../shared/types';
 import { currentBranch, remoteBranchExists, runGit } from './git';
 
 /** 解析 git status --porcelain=v1 -z：X 是暫存區、Y 是工作區 */
@@ -103,10 +103,11 @@ export function loginShell(cwd: string, command: string, timeoutMs: number): Pro
 const shellQuote = (text: string) => `'${text.replace(/'/g, `'\\''`)}'`;
 
 /** 提交暫存的變更；指定身分時只用在這一次，不改資料夾的設定 */
-export async function commitStaged(cwd: string, message: string, identity?: GitIdentity): Promise<string> {
+export async function commitStaged(cwd: string, message: string, identity?: GitIdentity): Promise<CommitResult> {
   if (!message.trim()) throw new Error('請輸入提交訊息');
-  const { staged } = await gitState(cwd);
-  if (staged.length === 0) throw new Error('沒有暫存的變更可以提交');
+  const before = await gitState(cwd);
+  if (before.staged.length === 0) throw new Error('沒有暫存的變更可以提交');
+  const touched = new Set([...before.staged, ...before.unstaged].map((f) => f.path));
   const dir = mkdtempSync(join(tmpdir(), 'flowpilot-commit-'));
   const file = join(dir, 'message.txt');
   writeFileSync(file, `${message.trim()}\n`);
@@ -116,7 +117,12 @@ export async function commitStaged(cwd: string, message: string, identity?: GitI
   } finally {
     rmSync(dir, { recursive: true, force: true });
   }
-  return (await git(cwd, ['rev-parse', '--short', 'HEAD'])).trim();
+  const after = await gitState(cwd);
+  return {
+    sha: (await git(cwd, ['rev-parse', '--short', 'HEAD'])).trim(),
+    // 提交前本來沒動、提交完卻變了的檔案：專案的提交前檢查（例如 ng lint --fix）順手改的
+    hookChanged: [...after.staged, ...after.unstaged].map((f) => f.path).filter((p) => !touched.has(p)),
+  };
 }
 
 /** 推送目前分支（只有你按「推送」才會執行） */

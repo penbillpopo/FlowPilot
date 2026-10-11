@@ -321,6 +321,12 @@ export interface GitState {
   identities: GitIdentity[];
 }
 
+export interface CommitResult {
+  sha: string;
+  /** 提交過程中被專案的提交前檢查改到、跟這次無關的檔案（沒有被提交，留在資料夾裡） */
+  hookChanged: string[];
+}
+
 /** 提交上寫的名字與信箱（只管提交者，推送登入用的帳號另外存在 Git 的登入資料裡） */
 export interface GitIdentity {
   name: string;
@@ -388,7 +394,7 @@ export interface FlowPilotApi {
     unstage(itemId: number, paths: string[]): Promise<void>;
     discard(itemId: number, paths: string[]): Promise<void>;
     /** 提交；identity 是這一次要用的身分的信箱，不填就用資料夾設定的 */
-    commit(itemId: number, message: string, identity?: string): Promise<string>;
+    commit(itemId: number, message: string, identity?: string): Promise<CommitResult>;
     push(itemId: number): Promise<string>;
   };
   /** 資料夾終端機：每個資料夾一個互動式 shell */

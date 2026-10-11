@@ -69,6 +69,7 @@ function describeIssue(label: string, issue: IssueContext): string {
     issue.subtasks.length ? `子單：${issue.subtasks.map((s) => `${s.key} ${s.summary}`).join('；')}` : '',
     `內文：\n${issue.description || '（沒有內文）'}`,
     issue.comments.length ? `最近的留言：\n${issue.comments.map((c) => `- ${c}`).join('\n')}` : '',
+    ...(issue.textAttachments ?? []).map((a) => `附件「${a.filename}」的內容：\n${a.text}`),
   ]
     .filter(Boolean)
     .join('\n');
@@ -85,7 +86,9 @@ export const JUDGE_INSTRUCTIONS = `你是前端工程師的助理，負責判斷
 - 「要做什麼」要具體：寫出要改的畫面或功能、要加的欄位或行為、有沒有串接 API、有什麼限制；不要只重複標題。
 - 特別注意前台（玩家端）與後台（管理端）的區別：需求在後台設定、玩家端只是顯示結果的，開發專案通常是後台。`;
 
-export function buildJudgePrompt(ticket: JiraTicket, sub: IssueContext, main: IssueContext | null, settings: Settings, history: PastDecision[]): string {
+export function buildJudgePrompt(ticket: JiraTicket, sub: IssueContext, main: IssueContext | null, settings: Settings, allHistory: PastDecision[]): string {
+  // 不給這張單自己的舊紀錄：那是給「類似的單」參考的，給自己看會照抄，判錯一次就一直錯（ALL-14324 實際發生過）
+  const history = allHistory.filter((h) => h.ticketKey !== ticket.key);
   const parts = [
     '## 專案',
     describeProjects(settings),

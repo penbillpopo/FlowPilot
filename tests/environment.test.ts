@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { detectEnvironment, switchEnvironment } from '../src/main/environment';
+import { activeValue, detectEnvironment, switchEnvironment } from '../src/main/environment';
 
 const WEB = `import { commonEnvironment } from './environment.common';
 
@@ -68,5 +68,12 @@ describe('environment.ts 切換', () => {
     expect(uat).toContain("  // apiUrl: 'http://sit/api',");
     expect(uat).toContain("  apiUrl: 'http://uat/api',\n  wsHeartbeatTime: 5_000,\n};");
     expect(switchEnvironment(uat, 'sit')).toBe(tight);
+  });
+
+  it('讀出目前開著的 apiUrl（兩種寫法）', () => {
+    expect(activeValue(WEB, 'apiUrl')).toBe('https://sit8-newplatform.mxsyl.com');
+    expect(activeValue(switchEnvironment(WEB, 'uat'), 'apiUrl')).toBe('https://uat8-newplatform.mxsyl.com');
+    expect(activeValue(ADMIN, 'apiUrl')).toBe('http://20.198.251.181/api/v1');
+    expect(activeValue('const a = 1;\n', 'apiUrl')).toBeNull();
   });
 });

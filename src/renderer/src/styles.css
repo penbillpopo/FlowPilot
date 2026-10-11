@@ -379,3 +379,5 @@ details.more > summary::-webkit-details-marker { display: none; }
 .modal-actions { justify-content: flex-end; }
 .danger-text { color: var(--blocked); font-weight: 600; }
 button.danger-solid { background: var(--blocked); border-color: var(--blocked); color: #fff; }
+.hook-notice { border: 1px solid var(--warn); border-radius: 6px; padding: 8px 10px; display: flex; flex-direction: column; gap: 6px; }
+.hook-notice ul { margin: 0; padding-left: 18px; }

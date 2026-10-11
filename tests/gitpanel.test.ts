@@ -1,5 +1,5 @@
 import { execFileSync } from 'node:child_process';
-import { existsSync, mkdtempSync, readFileSync, writeFileSync } from 'node:fs';
+import { chmodSync, existsSync, mkdtempSync, readFileSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { describe, expect, it } from 'vitest';
@@ -55,7 +55,8 @@ describe('Git 改動面板', () => {
     writeFileSync(join(dir, 'b.ts'), 'b2\n');
     await stage(dir, ['b.ts']);
     await expect(commitStaged(dir, '  ')).rejects.toThrow('提交訊息');
-    const sha = await commitStaged(dir, 'feat(ALL-1) change b');
+    const { sha, hookChanged } = await commitStaged(dir, 'feat(ALL-1) change b');
+    expect(hookChanged).toEqual([]);
     expect(git(dir, 'log', '-1', '--format=%h %s').trim()).toBe(`${sha} feat(ALL-1) change b`);
     await expect(commitStaged(dir, 'x')).rejects.toThrow('沒有暫存的變更');
 
@@ -86,5 +87,17 @@ describe('Git 改動面板', () => {
     await stage(dir, ['b.ts']);
     await commitStaged(dir, 'feat(ALL-1) default');
     expect(git(dir, 'log', '-1', '--format=%an <%ae>').trim()).toBe('t <t@t>');
+  });
+
+  it('提交前檢查順手改了別的檔案：回報出來（這些檔案沒被提交，留在資料夾裡）', async () => {
+    const dir = repo();
+    // 模擬專案的 ng lint --fix：提交前整理了一個這次沒動的檔案
+    writeFileSync(join(dir, '.git/hooks/pre-commit'), '#!/bin/sh\necho "// 格式整理" >> a.ts\n');
+    chmodSync(join(dir, '.git/hooks/pre-commit'), 0o755);
+    writeFileSync(join(dir, 'b.ts'), 'b2\n');
+    await stage(dir, ['b.ts']);
+    const { hookChanged } = await commitStaged(dir, 'feat(ALL-1) change b');
+    expect(hookChanged).toEqual(['a.ts']);
+    expect(git(dir, 'show', '--name-only', '--format=', 'HEAD').trim()).toBe('b.ts');
   });
 });

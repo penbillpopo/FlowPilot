@@ -28,8 +28,16 @@ export function commandPolicy(command: string): PolicyResult {
 
 const QUESTION_HINTS = /請確認|請回覆|請選擇|請提供|請問|是否|要不要|需要你|等你|等待你的|再繼續|which|should I|confirm/i;
 
-/** 一輪結束時，最後的回覆看起來是在問你問題，還是已經做完了 */
+/** 講的是要 PM、後端確認的事（報告裡的「風險、待確認」），不是在問你 */
+const ABOUT_OTHERS = /PM|BE|後端|產品|待.{0,6}確認|仍需|仍待/;
+
+/**
+ * 一輪結束時，最後的回覆看起來是在問你問題，還是已經做完了。
+ * 只看最後一行：做完的報告常在「未完成或風險」裡寫「PM 需確認是否…」，那不是在問你（實際誤判過，害自動測試沒有接著跑）。
+ */
 export function looksLikeQuestion(message: string): boolean {
-  const tail = message.trim().slice(-400);
-  return /[?？]\s*$/.test(tail) || QUESTION_HINTS.test(tail);
+  const text = message.trim();
+  if (/[?？]\s*$/.test(text)) return true;
+  const lastLines = text.split('\n').map((l) => l.trim()).filter(Boolean).slice(-1);
+  return lastLines.some((line) => QUESTION_HINTS.test(line) && !ABOUT_OTHERS.test(line));
 }

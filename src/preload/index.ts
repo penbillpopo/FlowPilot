@@ -88,6 +88,7 @@ const api: FlowPilotApi = {
   retest: (id) => ipcRenderer.invoke('item:retest', id),
   rerunAutotest: (id) => ipcRenderer.invoke('item:rerunAutotest', id),
   ticketMarks: (keys) => ipcRenderer.invoke('tickets:marks', keys),
+  discardReviews: (keys) => ipcRenderer.invoke('review:discard', keys),
   test: {
     state: (id) => ipcRenderer.invoke('test:state', id),
     setEnvironment: (id, env) => ipcRenderer.invoke('test:setEnvironment', id, env),

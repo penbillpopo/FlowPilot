@@ -181,6 +181,11 @@ export class Runner {
   /** 每段對話目前那一輪的編號（補充指示、停止時要用） */
   private turns = new Map<string, string>();
   private skills: SkillInfo[] | null = null;
+  /**
+   * 子 AI 的對話編號 → 屬於哪張單。Codex 的多 AI 協作沒辦法從設定關掉，AI 有時會自己開子 AI；
+   * 子 AI 要求同意時用的是自己的對話編號，FlowPilot 不認得就不會回，兩邊互等卡住（實際卡過 20 分鐘）
+   */
+  private childThreads = new Map<string, number>();
   /** AI 正在寫、還沒寫完的回覆（只放記憶體；寫完才存進資料庫） */
   private streaming = new Map<number, string>();
   /** 你在準備階段已經同意的事（接著未提交的修改做、用本機版本繼續） */
@@ -489,21 +494,9 @@ export class Runner {
     const cwd = this.folderPath(item.folder!);
     await codex.start();
     this.update(id, { activity: '啟動 Codex' });
-    // 這條分支在同一個資料夾以前做過：接回原本的對話（AI 記得之前跟你討論過的決定）；接不回來就開新的
+    // 一律開新的對話：單離開工作台就不留紀錄，不接回以前的對話（舊對話裡的舊指示會干擾）
     const config = threadConfig(this.deps.dataDir, this.deps.writeGuard, id, apiHosts(cwd));
-    const previous = this.deps.store.previousThread(item.project, item.branch, item.folder!, id);
-    let resumed = false;
-    let thread: { id: string } | null = null;
-    if (previous) {
-      try {
-        await codex.request('thread/resume', { threadId: previous, excludeTurns: true, approvalPolicy: 'untrusted', sandbox: 'danger-full-access', config }, 180_000);
-        thread = { id: previous };
-        resumed = true;
-      } catch (error) {
-        this.deps.log(`${item.ticketKey} 接回之前的對話失敗，開新的：${(error as Error).message}`);
-      }
-    }
-    thread ??= (
+    const thread = (
       await codex.request<{ thread: { id: string } }>(
         'thread/start',
         {
@@ -535,7 +528,6 @@ export class Runner {
         : `- FlowPilot 已經把分支 rebase 到最新的 origin/${item.baseBranch}（基底有 ${state.rebase.behind} 個新提交），沒有衝突。`;
     const instructions = [
       `請使用 $${skill} 處理這張 Jira：${item.mainUrl}`,
-      resumed ? '- 這是接續之前的對話：之前跟我討論過、確認過的決定都還算數，接著做就好。' : '',
       rebaseLine,
       '',
       `- 指派給我的子任務是 ${item.ticketKey}（${item.ticketSummary}）；需求內容寫在主單 ${item.mainKey}。`,
@@ -547,6 +539,7 @@ export class Runner {
       '- 開發完跑一次跟提交時一樣的 lint，但只檢查這次改到的檔案，不要加 --fix 去動到其他檔案；有問題就修。',
       `- 不要修改 ${ENVIRONMENT_FILE}（SIT／UAT 由 FlowPilot 切換）。`,
       '- 不要提交、不要推送；完成後由我審查並提交。',
+      '- 自己做，不要開子 AI（spawn_agent）分工。',
       item.targetMerchants.length ? `- 這張單之後還要移植到商戶 ${item.targetMerchants.join('、')}，那是下一階段的事，這次只做目前這個商戶。` : '',
       brief,
     ]
@@ -608,7 +601,7 @@ export class Runner {
         `- 登入：先用終端機指令讀 ${accountFile}（例如 cat）取得帳號密碼，再用瀏覽器工具填進登入表單自動登入（登入畫面要 OTP 時，填檔案裡的 otp）。這個檔案在電腦上，瀏覽器裡讀不到，不要在瀏覽器裡讀。不要停下來等我登入，也不要把密碼印出來或寫進任何檔案、回覆。`,
         '- 第一步先登入：登入失敗（帳號密碼錯、OTP、被擋）就立刻停止，不要再試別的，直接回報「測試結果：沒測成（登入失敗：原因）」。',
         '- 失敗時先判斷原因：是前端程式的問題就直接修正，然後重測失敗的部分，最多 3 輪；不是前端的問題（後端、資料、權限、環境）就記下來，不要修。API 回 404 通常是後端還沒部署這支 API，不是前端的錯。',
-        '- 不要提交、不要推送。',
+        '- 不要提交、不要推送。自己做，不要開子 AI（spawn_agent）分工。',
         ...designCompareLines(this.deps.store.getReview(item.ticketKey)?.review ?? null),
         ...reportLines(this.deps.store.getReview(item.ticketKey)?.review ?? null),
         '- 回覆的最後一行一定要照這個格式寫結果（FlowPilot 會讀這一行）：「測試結果：通過」、「測試結果：部分通過（原因）」或「測試結果：沒測成（原因）」。主要功能一個都沒測到（例如登入失敗、網站打不開）就是「沒測成」；有測到但有些項目沒測或沒過是「部分通過」。',
@@ -667,7 +660,7 @@ export class Runner {
         '- 對照上面需求分析的「預期結果」：每一條都有做到嗎？有沒有做了需求沒要的東西？',
         '- 團隊慣例：多語系的文字有沒有都加到翻譯檔、有沒有重複的程式、命名和既有的寫法一不一致、錯誤處理和型別有沒有漏。',
         '- 跑跟提交時一樣的 lint，但只檢查這次改到的檔案，而且不要加 --fix 去動到其他檔案。',
-        `- 不要提交、不要推送，不要修改 ${ENVIRONMENT_FILE}。`,
+        `- 不要提交、不要推送，不要修改 ${ENVIRONMENT_FILE}。自己做，不要開子 AI（spawn_agent）分工。`,
         '最後簡短列出：審查了什麼、修正了什麼、還有什麼風險。',
       ].join('\n');
       await this.deps.codex.start();
@@ -749,9 +742,14 @@ export class Runner {
   private async handle(message: RpcMessage): Promise<void> {
     const threadId: string | undefined = message.params?.threadId;
     if (!threadId) return;
-    const item = this.deps.store.findWorkItemByThread(threadId);
+    const own = this.deps.store.findWorkItemByThread(threadId);
+    // AI 開的子 AI：用另一個對話編號，只處理它要我們回答的事（同意、提問），其他事件不算這張單的進度
+    const parentId = own ? null : this.childThreads.get(threadId);
+    const item = own ?? (parentId !== undefined && parentId !== null ? this.deps.store.getWorkItem(parentId) : null);
     if (!item || item.status === 'removed') return;
+    if (!own && message.id === undefined) return;
     const method = message.method!;
+    if (own) this.rememberChildThreads(item.id, threadId, message.params);
 
     // Codex 問我們的事
     if (message.id !== undefined) {
@@ -851,6 +849,21 @@ export class Runner {
         break;
       }
     }
+  }
+
+  /** 主對話的事件裡出現別的對話編號（開子 AI 時會帶），記下來屬於這張單 */
+  private rememberChildThreads(itemId: number, ownThread: string, params: unknown) {
+    const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+    const visit = (value: unknown, key: string, depth: number) => {
+      if (depth > 6 || value === null || value === undefined) return;
+      if (typeof value === 'string') {
+        if (/thread/i.test(key) && UUID.test(value) && value !== ownThread) this.childThreads.set(value, itemId);
+        return;
+      }
+      if (Array.isArray(value)) return value.forEach((v) => visit(v, key, depth + 1));
+      if (typeof value === 'object') for (const [k, v] of Object.entries(value)) visit(v, k, depth + 1);
+    };
+    visit((params as { item?: unknown })?.item, '', 0);
   }
 
   /**
@@ -988,7 +1001,13 @@ export class Runner {
         '已完成' +
         (item.targetMerchants.length ? `；之後要移植到 ${item.targetMerchants.map((m) => `m${m}`).join('、')}（移植功能還在開發中）` : ''),
     });
+    this.forgetReview(item.ticketKey);
     await this.schedule();
+  }
+
+  /** 審閱紀錄跟著工作台走：這張單沒有別的列還在工作台上，就刪掉審閱紀錄 */
+  private forgetReview(ticketKey: string) {
+    if (!this.deps.store.hasActiveTicket(ticketKey)) this.deps.store.deleteReview(ticketKey);
   }
 
   /** 移除前查分支的狀況，讓你決定要不要一起刪；還沒分到資料夾的回傳 null */
@@ -1050,6 +1069,7 @@ export class Runner {
       }
     }
     this.update(id, { status: 'removed', lane: 'done', activity: result.branchDeleted ? '你從看板移除了，也刪掉了本機分支' : '你從看板移除了', pending: null });
+    this.forgetReview(item.ticketKey);
     void this.schedule();
     return result;
   }

@@ -94,9 +94,8 @@ describe('開發前 rebase 到最新的基底', () => {
     expect(existsSync(join(t.folder, '.git', 'rebase-merge')) || existsSync(join(t.folder, '.git', 'rebase-apply'))).toBe(true);
   }, 30_000);
 
-  it('同一條分支、同一個資料夾以前做過：接回原本的對話', async () => {
+  it('同一條分支以前做過（已經移除）：不接回舊對話，一律開新的', async () => {
     const t = setup(false);
-    // 以前做過、後來移除的那一筆
     const [old] = t.store.createWorkItems([{
       runId: t.run.id, ticketKey: 'ALL-1', ticketSummary: '', mainKey: 'ALL-1', mainUrl: '', project: 'PlatformAdmin', merchant: null,
       targetMerchants: [], branch: 'ban/ALL-1', baseBranch: 'version/0.0.1', skill: 'x', prTitle: 'feat(ALL-1) x', preferredFolder: null,
@@ -104,9 +103,8 @@ describe('開發前 rebase 到最新的基底', () => {
     t.store.updateWorkItem(old.id, { status: 'removed', lane: 'done', folder: 'PlatformAdmin', threadId: 'old-thread' });
     await t.runner.schedule();
     await t.waitStarted();
-    expect(t.requests.some((r) => r.method === 'thread/resume' && r.params.threadId === 'old-thread')).toBe(true);
-    expect(t.requests.some((r) => r.method === 'thread/start')).toBe(false);
-    expect(t.requests.filter((r) => r.method === 'turn/start').at(-1)?.params.threadId).toBe('old-thread');
-    expect(t.instructions()).toContain('這是接續之前的對話');
+    expect(t.requests.some((r) => r.method === 'thread/resume')).toBe(false);
+    expect(t.requests.some((r) => r.method === 'thread/start')).toBe(true);
+    expect(t.instructions()).not.toContain('接續之前的對話');
   }, 30_000);
 });

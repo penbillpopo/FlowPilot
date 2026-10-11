@@ -57,7 +57,7 @@ export function App() {
 function TicketList({ onConfirmed }: { onConfirmed(): void }) {
   const [tickets, setTickets] = useState<JiraTicket[] | null>(null);
   const [selected, setSelected] = useState<Set<string>>(new Set());
-  const [marks, setMarks] = useState<Record<string, { reviewed: boolean; active: boolean; branch: boolean }>>({});
+  const [marks, setMarks] = useState<Record<string, { active: boolean; branch: boolean }>>({});
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [planning, setPlanning] = useState<{ run: RunSummary; tickets: JiraTicket[] } | null>(null);
@@ -71,7 +71,7 @@ function TicketList({ onConfirmed }: { onConfirmed(): void }) {
     try {
       const list = await api.listTickets(chosen);
       setTickets(list);
-      // 標記：審閱過了沒、在工作台上、分支已經存在（讀不到就不顯示，不影響列表）
+      // 標記：在工作台上（不能再選）、分支已經存在（讀不到就不顯示，不影響列表）
       api.ticketMarks(list.map((t) => t.key)).then(setMarks).catch(() => setMarks({}));
       // 重新整理後，已經不在清單上的單取消勾選
       setSelected((prev) => new Set([...prev].filter((key) => list.some((t) => t.key === key))));
@@ -100,7 +100,24 @@ function TicketList({ onConfirmed }: { onConfirmed(): void }) {
     else setTickets([]);
   }
 
+  // 工作台有變動（單進來、結束、移除）時，標記跟著更新；在工作台上的單取消勾選
+  useEffect(() => {
+    let timer: ReturnType<typeof setTimeout> | null = null;
+    return api.onBoardChanged(() => {
+      if (timer) clearTimeout(timer);
+      timer = setTimeout(() => {
+        const keys = tickets?.map((t) => t.key) ?? [];
+        if (!keys.length) return;
+        api.ticketMarks(keys).then((next) => {
+          setMarks(next);
+          setSelected((prev) => new Set([...prev].filter((key) => !next[key]?.active)));
+        }).catch(() => {});
+      }, 500);
+    });
+  }, [tickets]);
+
   function toggle(key: string) {
+    if (marks[key]?.active) return; // 在工作台上的單不能再選
     setSelected((prev) => {
       const next = new Set(prev);
       next.has(key) ? next.delete(key) : next.add(key);
@@ -119,7 +136,11 @@ function TicketList({ onConfirmed }: { onConfirmed(): void }) {
       <PlanView
         run={planning.run}
         tickets={planning.tickets}
-        onBack={() => setPlanning(null)}
+        onBack={() => {
+          // 返回沒有確認：這些單的審閱紀錄不留（審閱紀錄跟著工作台走）
+          api.discardReviews(planning.tickets.map((t) => t.key)).catch(() => {});
+          setPlanning(null);
+        }}
         onConfirmed={() => {
           setPlanning(null);
           setSelected(new Set());
@@ -129,7 +150,8 @@ function TicketList({ onConfirmed }: { onConfirmed(): void }) {
     );
   }
 
-  const allChecked = !!tickets?.length && tickets.every((t) => selected.has(t.key));
+  const selectable = tickets?.filter((t) => !marks[t.key]?.active) ?? [];
+  const allChecked = selectable.length > 0 && selectable.every((t) => selected.has(t.key));
 
   return (
     <main>
@@ -167,7 +189,7 @@ function TicketList({ onConfirmed }: { onConfirmed(): void }) {
                   type="checkbox"
                   aria-label="全選"
                   checked={allChecked}
-                  onChange={() => setSelected(allChecked ? new Set() : new Set(tickets.map((t) => t.key)))}
+                  onChange={() => setSelected(allChecked ? new Set() : new Set(selectable.map((t) => t.key)))}
                 />
               </th>
               <th>單號</th>
@@ -179,9 +201,14 @@ function TicketList({ onConfirmed }: { onConfirmed(): void }) {
           </thead>
           <tbody>
             {tickets.map((t) => (
-              <tr key={t.key} className={selected.has(t.key) ? 'selected' : ''} onClick={() => toggle(t.key)}>
+              <tr
+                key={t.key}
+                className={`${selected.has(t.key) ? 'selected' : ''} ${marks[t.key]?.active ? 'locked' : ''}`}
+                onClick={() => toggle(t.key)}
+                title={marks[t.key]?.active ? '這張單正在工作台上，要等它在工作台結束（完成或移除）才能再選' : undefined}
+              >
                 <td className="check">
-                  <input type="checkbox" checked={selected.has(t.key)} onChange={() => toggle(t.key)} onClick={(e) => e.stopPropagation()} />
+                  <input type="checkbox" checked={selected.has(t.key)} disabled={!!marks[t.key]?.active} onChange={() => toggle(t.key)} onClick={(e) => e.stopPropagation()} />
                 </td>
                 <td className="key">
                   <a href={t.url} onClick={(e) => { e.preventDefault(); e.stopPropagation(); api.openExternal(t.url); }}>{t.key}</a>
@@ -189,7 +216,6 @@ function TicketList({ onConfirmed }: { onConfirmed(): void }) {
                   <span className="marks">
                     {marks[t.key]?.active && <span className="mark active" title="這張單正在工作台上">工作台上</span>}
                     {marks[t.key]?.branch && <span className="mark" title="本機已經有這張單的分支，確認後會切換過去繼續開發">有分支</span>}
-                    {marks[t.key]?.reviewed && <span className="mark" title="已經審閱過，確認後直接沿用上次的結果">已審閱</span>}
                   </span>
                 </td>
                 <td>{t.summary}</td>

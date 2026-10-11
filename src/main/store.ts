@@ -340,12 +340,9 @@ export class Store {
     return this.getWorkItem(id)!;
   }
 
-  /** 同一條分支、同一個資料夾以前做過的 AI 對話（重新開始時接回去，AI 才記得之前討論過的事） */
-  previousThread(project: string, branch: string, folder: string, excludeId: number): string | null {
-    const row = this.db
-      .prepare('SELECT thread_id FROM work_items WHERE project = ? AND branch = ? AND folder = ? AND id != ? AND thread_id IS NOT NULL ORDER BY id DESC LIMIT 1')
-      .get(project, branch, folder, excludeId) as { thread_id: string } | undefined;
-    return row?.thread_id ?? null;
+  /** 這張單（單號）還有沒有在工作台上的工作（多專案的單可能有好幾列） */
+  hasActiveTicket(ticketKey: string): boolean {
+    return !!this.db.prepare("SELECT 1 FROM work_items WHERE ticket_key = ? AND status NOT IN ('failed', 'stopped', 'removed', 'committed') LIMIT 1").get(ticketKey);
   }
 
   /** 同一個專案、同一條分支還沒結束的工作項目（避免重複建立） */
@@ -363,6 +360,19 @@ export class Store {
       | { review_json: string; thread_id: string | null }
       | undefined;
     return row ? { review: JSON.parse(row.review_json), threadId: row.thread_id } : null;
+  }
+
+  /** 刪掉一張單的審閱紀錄（單離開工作台、或在計畫表返回沒確認時） */
+  deleteReview(ticketKey: string) {
+    this.db.prepare('DELETE FROM reviews WHERE ticket_key = ?').run(ticketKey);
+  }
+
+  /** 審閱紀錄跟著工作台走：不在工作台上的單，審閱紀錄全部清掉；回傳清掉幾筆 */
+  purgeOrphanReviews(): number {
+    const result = this.db
+      .prepare("DELETE FROM reviews WHERE ticket_key NOT IN (SELECT ticket_key FROM work_items WHERE status NOT IN ('failed', 'stopped', 'removed', 'committed'))")
+      .run();
+    return Number(result.changes);
   }
 
   saveReview(review: Review, threadId: string | null, now = new Date()) {

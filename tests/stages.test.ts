@@ -37,12 +37,13 @@ function setup({ account = true } = {}) {
 
   let listener: (m: RpcMessage) => void = () => {};
   const requests: { method: string; params: any }[] = [];
+  const replies: { id: number; result: unknown }[] = [];
   let turn = 0;
   const codex = {
     on: (l: (m: RpcMessage) => void) => ((listener = l), () => {}),
     setDisconnectHandler: () => {},
     start: async () => {},
-    reply: () => {},
+    reply: (id: number, result: unknown) => replies.push({ id, result }),
     request: async (method: string, params: any) => {
       requests.push({ method, params });
       if (method === 'skills/list') return { data: [{ skills: ['frontend-development', 'frontend-playwright-test'].map((name) => ({ name, description: '', path: `/skills/${name}/SKILL.md`, enabled: true })) }] };
@@ -77,7 +78,7 @@ function setup({ account = true } = {}) {
     await new Promise((r) => setTimeout(r, 20));
   };
   const lastTurn = () => requests.filter((r) => r.method === 'turn/start').at(-1)!.params;
-  return { root, folder, store, runner, id: item.id, requests, sites, reached, stopped, setBackendUp: (v: boolean) => (backendUp = v), complete, lastTurn, get: () => store.getWorkItem(item.id)! };
+  return { root, folder, store, runner, id: item.id, requests, replies, emit: (m: RpcMessage) => listener(m), sites, reached, stopped, setBackendUp: (v: boolean) => (backendUp = v), complete, lastTurn, get: () => store.getWorkItem(item.id)! };
 }
 
 describe('流程階段', () => {
@@ -260,5 +261,52 @@ describe('流程階段', () => {
     expect(t.get().testReport).toEqual({ acceptance: [{ no: 1, text: '預設選 All', result: '通過', note: '' }], manual: [{ text: '存檔後列表多一筆', done: false }] });
     t.runner.setManualDone(t.id, 0, true);
     expect(t.get().testReport?.manual[0].done).toBe(true);
+  });
+
+  it('AI 開的子 AI 要求同意：認得是這張單的，照同一套規則處理，不會互等卡住', async () => {
+    const t = setup();
+    // 主對話裡出現開子 AI 的事件（帶著子 AI 的對話編號）
+    t.emit({ method: 'item/started', params: { threadId: 'th', item: { type: 'subAgentActivity', kind: 'started', agentThreadId: '01a12bdf-f9b1-7f30-acaa-eb7f28cbf76c' } } });
+    // 子 AI 要執行安全的指令：自動同意
+    t.emit({ id: 77, method: 'item/commandExecution/requestApproval', params: { threadId: '01a12bdf-f9b1-7f30-acaa-eb7f28cbf76c', command: 'ls -la' } });
+    await new Promise((r) => setTimeout(r, 20));
+    expect(t.replies).toContainEqual({ id: 77, result: { decision: 'accept' } });
+    // 子 AI 要推送：轉給你
+    t.emit({ id: 78, method: 'item/commandExecution/requestApproval', params: { threadId: '01a12bdf-f9b1-7f30-acaa-eb7f28cbf76c', command: 'git push origin x' } });
+    await new Promise((r) => setTimeout(r, 20));
+    expect(t.get().pending).toMatchObject({ kind: 'approval', requestId: 78 });
+    // 子 AI 做完不算這張單的進度
+    t.store.updateWorkItem(t.id, { status: 'running', pending: null });
+    t.emit({ method: 'turn/completed', params: { threadId: '01a12bdf-f9b1-7f30-acaa-eb7f28cbf76c', turn: { status: 'completed' } } });
+    await new Promise((r) => setTimeout(r, 20));
+    expect(t.get()).toMatchObject({ status: 'running', stage: 'develop' });
+  });
+
+  it('審閱紀錄跟著工作台走：移除或完成時刪掉；同一張單還有別的列在工作台上就先留著', async () => {
+    const t = setup();
+    const review = { ticketKey: 'ALL-1', entries: [], prTitle: '', reason: '', summary: [], resources: [], level: '小' as const, codeChecked: false, issues: [], discussion: [], reviewedAt: '' };
+    t.store.saveReview(review, null);
+    // 同一張單在另一個專案還有一列
+    const run = t.store.createRun([{ key: 'ALL-1', summary: '', status: '', issueType: '', updated: '', url: '', parent: null }]);
+    const [other] = t.store.createWorkItems([{
+      runId: run.id, ticketKey: 'ALL-1', ticketSummary: '', mainKey: 'ALL-1', mainUrl: '', project: 'PlatformWeb', merchant: 1,
+      targetMerchants: [], branch: 'ban/m1/ALL-1', baseBranch: 'master-1', skill: 'x', prTitle: 'x', preferredFolder: null,
+    }]);
+    t.store.updateWorkItem(t.id, { status: 'review' });
+    await t.runner.remove(t.id);
+    expect(t.store.getReview('ALL-1')).not.toBeNull(); // 另一列還在
+    await t.runner.remove(other.id);
+    expect(t.store.getReview('ALL-1')).toBeNull();
+    expect(t.store.hasActiveTicket('ALL-1')).toBe(false);
+  });
+
+  it('打開時清掉不在工作台上的單的審閱紀錄', () => {
+    const t = setup(); // ALL-1 在工作台上
+    const base = { entries: [], prTitle: '', reason: '', summary: [], resources: [], level: '小' as const, codeChecked: false, issues: [], discussion: [], reviewedAt: '' };
+    t.store.saveReview({ ...base, ticketKey: 'ALL-1' }, null);
+    t.store.saveReview({ ...base, ticketKey: 'ALL-9' }, null);
+    expect(t.store.purgeOrphanReviews()).toBe(1);
+    expect(t.store.getReview('ALL-1')).not.toBeNull();
+    expect(t.store.getReview('ALL-9')).toBeNull();
   });
 });

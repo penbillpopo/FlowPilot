@@ -7,7 +7,7 @@ import { join } from 'node:path';
 import type { Env, JiraTicket, Judgement, PlanOptions, Review, ReviewChecks, ReviewIssue, TicketPlan, TicketSnapshot } from '../shared/types';
 import { CodexRpc } from './codex/rpc';
 import { listSkills, runStructured } from './codex/structured';
-import { checkExisting, localBranchExists } from './git';
+import { checkExisting, runGit } from './git';
 import { buildJql, downloadAttachment, getIssueContext, loadCredentials, searchTickets, statusIdsByName } from './jira';
 import { applyDiscussion, buildCodeCheckPrompt, buildDiscussionPrompt, buildFigmaPrompt, buildReviewPrompt, discussionSchema, REVIEW_INSTRUCTIONS, reviewSchema, sanitizeReview } from './planner/review';
 import { deriveBranches, planProblem } from './planner/rules';
@@ -294,25 +294,18 @@ function writeGuardPath() {
   return join(app.getAppPath(), 'resources/write-guard.cjs').replace(/app\.asar([/\\])/, 'app.asar.unpacked$1');
 }
 
-/** 單列表上每張單的標記：審閱過了沒、在工作台上、分支已經存在 */
-async function ticketMarks(keys: string[]): Promise<Record<string, { reviewed: boolean; active: boolean; branch: boolean }>> {
+/** 單列表上每張單的標記：在工作台上（不能再選）、本機已經有這張單的分支 */
+async function ticketMarks(keys: string[]): Promise<Record<string, { active: boolean; branch: boolean }>> {
   const settings = loadSettings(settingsFile);
-  const items = store.listWorkItems().filter((i) => !['failed', 'stopped', 'removed', 'committed'].includes(i.status));
-  const marks: Record<string, { reviewed: boolean; active: boolean; branch: boolean }> = {};
+  // 每個資料夾的本機分支名稱讀一次就好；分支名稱結尾是單號就算有（例如 ban/ALL-1、ban/m8/ALL-1）
+  const branches: string[] = [];
+  for (const f of settings.folders) {
+    const r = await runGit(f.path, ['for-each-ref', '--format=%(refname:short)', 'refs/heads']).catch(() => null);
+    if (r?.code === 0) branches.push(...r.stdout.split('\n').filter(Boolean));
+  }
+  const marks: Record<string, { active: boolean; branch: boolean }> = {};
   for (const key of keys) {
-    const review = store.getReview(key)?.review;
-    let branch = false;
-    if (review) {
-      // 用審閱判斷的專案推出分支名稱，看本機資料夾有沒有
-      const plan = { ticket: { key, summary: '', status: '', issueType: '', updated: '', url: '', parent: null }, entries: review.entries, prTitle: review.prTitle, reason: '' };
-      const names = deriveBranches(plan, settings).filter((b) => b.role !== 'target');
-      for (const b of names) {
-        for (const f of settings.folders.filter((x) => x.project === b.project)) {
-          if (await localBranchExists(f.path, b.branch).catch(() => false)) branch = true;
-        }
-      }
-    }
-    marks[key] = { reviewed: !!review, active: items.some((i) => i.ticketKey === key), branch };
+    marks[key] = { active: store.hasActiveTicket(key), branch: branches.some((b) => b.toUpperCase().endsWith(`/${key.toUpperCase()}`)) };
   }
   return marks;
 }
@@ -373,7 +366,16 @@ function registerIpc() {
     const { statuses, defaultStatuses } = loadSettings(settingsFile).jira;
     return { statuses, defaultStatuses };
   });
-  ipcMain.handle('run:create', (_event, tickets: JiraTicket[]) => store.createRun(tickets));
+  ipcMain.handle('run:create', (_event, tickets: JiraTicket[]) => {
+    // 已經在工作台上的單不能再進一次（要等它在工作台結束）
+    const active = tickets.filter((t) => store.hasActiveTicket(t.key)).map((t) => t.key);
+    if (active.length) throw new Error(`${active.join('、')} 已經在工作台上，要等它結束（完成或移除）才能再選`);
+    return store.createRun(tickets);
+  });
+  // 在計畫表返回、沒有確認的單：審閱紀錄不留（審閱紀錄跟著工作台走）
+  ipcMain.handle('review:discard', (_event, keys: string[]) => {
+    for (const key of keys) if (!store.hasActiveTicket(key)) store.deleteReview(key);
+  });
   ipcMain.handle('run:latest', () => store.latestRun());
   ipcMain.handle('shell:openExternal', (_event, url: string) => {
     if (!/^https:\/\//.test(url)) throw new Error('只能打開 https 網址');
@@ -420,6 +422,8 @@ function registerIpc() {
         }
       }
     }
+    const already = plans.filter((p) => store.hasActiveTicket(p.ticket.key)).map((p) => p.ticket.key);
+    if (already.length) throw new Error(`${already.join('、')} 已經在工作台上，要等它結束（完成或移除）才能再選`);
     const run = store.confirmPlan(runId, plans, judgements);
     runner.startRun(runId); // 確認計畫後直接開始：建立分支、分配資料夾、啟動 AI
     return run;
@@ -495,6 +499,9 @@ app.whenReady().then(() => {
   log(`啟動 FlowPilot ${app.getVersion()}（${app.isPackaged ? '打包版' : '開發版'}）`);
   loadSettings(settingsFile); // 第一次啟動時寫入預設設定，設定有錯也能及早發現
   store = new Store(join(dataDir, 'flowpilot.db'));
+  // 審閱紀錄跟著工作台走：不在工作台上的單，審閱紀錄清掉
+  const purged = store.purgeOrphanReviews();
+  if (purged) log(`清掉 ${purged} 張不在工作台上的單的審閱紀錄`);
   runner = new Runner({
     store,
     settings: () => loadSettings(settingsFile),

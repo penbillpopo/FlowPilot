@@ -470,8 +470,10 @@ export interface FlowPilotApi {
   retest(itemId: number): Promise<void>;
   /** 重跑自動測試（無頭）：上次沒測成時用 */
   rerunAutotest(itemId: number): Promise<void>;
-  /** 單列表的標記：審閱過了沒、在工作台上、分支已經存在 */
-  ticketMarks(keys: string[]): Promise<Record<string, { reviewed: boolean; active: boolean; branch: boolean }>>;
+  /** 單列表的標記：在工作台上（不能再選）、分支已經存在 */
+  ticketMarks(keys: string[]): Promise<Record<string, { active: boolean; branch: boolean }>>;
+  /** 在計畫表返回、沒有確認的單：審閱紀錄不留 */
+  discardReviews(keys: string[]): Promise<void>;
   test: {
     state(itemId: number): Promise<TestState>;
     /** 切換 SIT／UAT（只切換 environment.ts 裡的註解） */

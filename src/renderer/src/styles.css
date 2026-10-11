@@ -421,3 +421,4 @@ header .actions button { white-space: nowrap; }
 .pm-draft textarea { width: 100%; box-sizing: border-box; font: inherit; color: var(--fg); background: var(--bg); border: 1px solid var(--line); border-radius: 6px; padding: 6px 8px; }
 .trial-row { align-items: center; gap: 8px; flex-wrap: wrap; }
 .ok-text { color: var(--ok-fg); }
+tr.locked { opacity: 0.5; cursor: not-allowed; }

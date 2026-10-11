@@ -20,6 +20,8 @@ async function reachable(url: string): Promise<boolean> {
 
 interface Session {
   pty: pty.IPty;
+  /** 取消監聽（結束 FlowPilot 時先取消，再關終端機） */
+  listeners: { dispose(): void }[];
   buffer: string;
   url: string | null;
 }
@@ -46,8 +48,9 @@ export class FolderTerminals {
       pty: pty.spawn(process.env.SHELL || '/bin/zsh', ['-l'], { name: 'xterm-256color', cols: Math.max(cols, 20), rows: Math.max(rows, 5), cwd, env }),
       buffer: '',
       url: null,
+      listeners: [],
     };
-    session.pty.onData((data) => {
+    const onData = session.pty.onData((data) => {
       session.buffer = (session.buffer + data).slice(-MAX_BUFFER);
       this.send('folderTerm:data', folder, data);
       const found = stripAnsi(data).match(URL_PATTERN)?.[0]?.replace('0.0.0.0', 'localhost');
@@ -56,11 +59,12 @@ export class FolderTerminals {
         this.send('folderTerm:url', folder, found);
       }
     });
-    session.pty.onExit(({ exitCode }) => {
+    const onExit = session.pty.onExit(({ exitCode }) => {
       this.log(`${folder} 的終端機結束（${exitCode}）`);
       this.sessions.delete(folder);
       this.send('folderTerm:exit', folder);
     });
+    session.listeners.push(onData, onExit);
     this.sessions.set(folder, session);
     return { buffer: '', url: null };
   }
@@ -109,8 +113,15 @@ export class FolderTerminals {
     this.send('folderTerm:url', folder, null);
   }
 
+  /**
+   * 結束 FlowPilot 時關掉所有終端機：先取消監聽再關。
+   * 不然終端機在 FlowPilot 關閉途中回報「結束了」，會讓整個程式當掉（實際發生過）。
+   */
   closeAll() {
-    for (const session of this.sessions.values()) session.pty.kill();
+    for (const session of this.sessions.values()) {
+      for (const listener of session.listeners) listener.dispose();
+      session.pty.kill();
+    }
     this.sessions.clear();
   }
 }

@@ -325,7 +325,8 @@ function registerIpc() {
   ipcMain.handle('item:approve', (_event, id: number, accept: boolean) => runner.approve(id, accept));
   ipcMain.handle('item:decide', (_event, id: number, optionId: string) => runner.decide(id, optionId));
   ipcMain.handle('item:stop', (_event, id: number) => runner.stop(id));
-  ipcMain.handle('item:remove', (_event, id: number) => runner.remove(id));
+  ipcMain.handle('item:remove', (_event, id: number, deleteBranch?: boolean) => runner.remove(id, !!deleteBranch));
+  ipcMain.handle('item:branchInfo', (_event, id: number) => runner.branchInfo(id));
   ipcMain.handle('item:finish', (_event, id: number, restoreEnvironment: boolean) => runner.finish(id, restoreEnvironment));
   ipcMain.handle('item:interrupt', (_event, id: number) => runner.interrupt(id));
   ipcMain.handle('item:send', (_event, id: number, text: string, images: string[]) => runner.reply(id, text, images));
@@ -340,15 +341,20 @@ function registerIpc() {
     const item = store.getWorkItem(id);
     return item?.threadId ? loadHistory(daemon, item.threadId) : [];
   });
-  ipcMain.handle('git:state', (_event, id: number) => {
+  ipcMain.handle('git:state', async (_event, id: number) => {
     const { item, folder } = folderOf(id);
-    return gitState(folder.path, item.baseBranch);
+    return { ...(await gitState(folder.path, item.baseBranch)), identities: loadSettings(settingsFile).gitIdentities };
   });
   ipcMain.handle('git:diff', (_event, id: number, path: string, staged: boolean) => fileDiff(folderOf(id).folder.path, path, staged));
   ipcMain.handle('git:stage', (_event, id: number, paths: string[]) => stage(folderOf(id).folder.path, paths));
   ipcMain.handle('git:unstage', (_event, id: number, paths: string[]) => unstage(folderOf(id).folder.path, paths));
   ipcMain.handle('git:discard', (_event, id: number, paths: string[]) => discard(folderOf(id).folder.path, paths));
-  ipcMain.handle('git:commit', (_event, id: number, message: string) => commitStaged(folderOf(id).folder.path, message));
+  ipcMain.handle('git:commit', (_event, id: number, message: string, email?: string) => {
+    // 只能用設定檔裡列出的身分
+    const identity = email ? loadSettings(settingsFile).gitIdentities.find((i) => i.email === email) : undefined;
+    if (email && !identity) throw new Error(`設定檔的 gitIdentities 裡沒有 ${email}`);
+    return commitStaged(folderOf(id).folder.path, message, identity);
+  });
   ipcMain.handle('git:push', (_event, id: number) => pushBranch(folderOf(id).folder.path));
   ipcMain.handle('folderTerm:open', (_event, id: number, cols: number, rows: number) => {
     const { folder } = folderOf(id);
@@ -372,11 +378,11 @@ function registerIpc() {
     if (env !== 'sit' && env !== 'uat') throw new Error('環境只能是 SIT 或 UAT');
     return runner.switchEnvironment(id, env);
   });
-  ipcMain.handle('test:setAccount', (_event, id: number, account: { username: string; password: string } | null) => runner.setTestAccount(id, account));
   ipcMain.handle('item:openInVSCode', (_event, id: number) => runner.openInVSCode(id));
 }
 
 app.whenReady().then(() => {
+  log(`啟動 FlowPilot ${app.getVersion()}（${app.isPackaged ? '打包版' : '開發版'}）`);
   loadSettings(settingsFile); // 第一次啟動時寫入預設設定，設定有錯也能及早發現
   store = new Store(join(dataDir, 'flowpilot.db'));
   runner = new Runner({
@@ -407,12 +413,15 @@ app.whenReady().then(() => {
 });
 
 app.on('before-quit', () => {
+  log('結束 FlowPilot');
   quitting = true;
   folderTerminals.closeAll();
   codex.stop();
   daemon.stop(); // 只斷開連線；常駐服務繼續跑，進行中的 AI 不受影響
-  store?.close();
 });
+
+// 資料庫在程式真的要結束時才關：結束途中可能還有幾則 Codex 訊息在處理
+process.on('exit', () => store?.close());
 
 // 視窗全部關掉也不結束（背景繼續跑）
 app.on('window-all-closed', () => {});

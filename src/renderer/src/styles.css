@@ -268,7 +268,7 @@ ul.git-files li.diff-row { display: block; background: none; padding: 4px 0 8px;
 .notice-ok { color: var(--review); font-size: 12px; }
 
 /* 資料夾終端機：固定顯示 */
-.folder-term { height: 300px; border-radius: 6px; overflow: hidden; background: #161618; padding: 4px; }
+.folder-term { flex: 1; min-height: 240px; border-radius: 6px; overflow: hidden; background: #161618; padding: 4px; }
 @media (prefers-color-scheme: light) { .folder-term { background: #ffffff; border: 1px solid var(--line); } }
 
 /* 計畫表：要做什麼、參考資料、專案判斷 */
@@ -315,12 +315,32 @@ details.more > summary::-webkit-details-marker { display: none; }
 
 
 /* 對話標題列：流程階段 */
-.stages { display: flex; gap: 4px; margin: 0; padding: 0; list-style: none; font-size: 12px; flex-wrap: wrap; }
-.stages li { padding: 2px 8px; border-radius: 10px; background: var(--hover); color: var(--muted); }
-.stages li + li::before { content: '→ '; color: var(--muted); }
+.stages { display: flex; align-items: center; margin: 0; padding: 0; list-style: none; font-size: 12px; flex-wrap: wrap; row-gap: 4px; }
+.stages li { padding: 2px 8px; border-radius: 10px; background: var(--hover); color: var(--muted); white-space: nowrap; }
+/* 格子之間的連接線 */
+.stages li + li { margin-left: 14px; position: relative; }
+.stages li + li::before { content: ''; position: absolute; left: -12px; top: 50%; width: 10px; border-top: 1px solid var(--line); }
 .stages li.done { color: var(--ok-fg); background: var(--ok-bg); }
-.stages li.now { color: var(--bg); background: var(--accent); font-weight: 600; }
-.stages li.now::before { color: var(--bg); }
+.stages li.skipped { color: var(--muted); background: none; border: 1px dashed var(--line); }
+.stages li.now { color: #fff; background: var(--accent); font-weight: 600; }
+.stages li.now.attn { background: var(--warn); }
+.stages li.now.bad { background: var(--blocked); }
+.step-note { font-weight: 400; }
+
+/* 標題區：第一行標題＋按鈕，第二行說明＋階段 */
+.chat-head-top { display: flex; align-items: center; gap: 12px; flex-wrap: wrap; }
+.chat-head-top .chat-title { flex: 1; min-width: 240px; flex-wrap: nowrap; }
+.chat-head-top .item-title { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.head-actions { flex-shrink: 0; }
+.chat-head-sub { display: flex; align-items: center; justify-content: space-between; gap: 6px 12px; flex-wrap: wrap; }
+.head-meta { min-width: 0; }
+
+/* FlowPilot 自動交給 AI 的訊息：收合、跟你打的字分開 */
+.fold.flowpilot { border: 1px dashed var(--line); padding: 2px 8px; }
+.fp-tag { font-size: 11px; font-weight: 600; padding: 0 6px; border-radius: 8px; background: var(--hover); color: var(--accent); }
+
+/* AI 在等你回話 */
+.composer.attention textarea { border-color: var(--warn); box-shadow: 0 0 0 2px color-mix(in srgb, var(--warn) 25%, transparent); }
 
 /* 右邊：測試（環境、帳號） */
 .test-panel { gap: 6px; }
@@ -330,5 +350,32 @@ details.more > summary::-webkit-details-marker { display: none; }
 .segmented button { border: none; border-radius: 0; padding: 3px 14px; background: none; }
 .segmented button + button { border-left: 1px solid var(--line); }
 .segmented button.on { background: var(--accent); color: #fff; opacity: 1; }
-.account-form { display: flex; flex-direction: column; gap: 6px; }
-.account-form input { width: 100%; box-sizing: border-box; }
+
+/* 右邊：Git 改動｜終端機 分頁 */
+.right-tabs { display: flex; gap: 2px; border-bottom: 1px solid var(--line); margin-bottom: -8px; }
+.right-tabs button { border: none; border-bottom: 2px solid transparent; border-radius: 0; background: none; padding: 6px 12px; color: var(--muted); display: inline-flex; align-items: center; gap: 6px; }
+.right-tabs button.on { color: var(--fg); border-bottom-color: var(--accent); font-weight: 600; }
+.tab-count { font-size: 11px; padding: 0 6px; border-radius: 8px; background: var(--hover); color: var(--fg); font-weight: 600; }
+.tab-dot { width: 7px; height: 7px; border-radius: 50%; background: var(--review); }
+.tab-body { display: flex; flex-direction: column; flex: 1; min-height: 0; }
+.tab-body[hidden] { display: none; }
+.tab-body > .panel { flex: 1; min-height: 0; }
+.push-right { margin-left: auto; align-self: center; }
+.ticket-tag { margin: 3px 0 2px; }
+.ticket-tag .side { font-size: 11px; font-weight: 600; }
+.ticket-line .status { margin-left: auto; }
+.stages { flex-shrink: 0; flex-wrap: nowrap; }
+.git-commit .identity { display: flex; flex-direction: column; gap: 2px; }
+.git-commit .identity select { width: 100%; }
+
+/* 移除的確認視窗 */
+.modal-backdrop { position: fixed; inset: 0; background: rgba(0, 0, 0, 0.45); display: flex; align-items: center; justify-content: center; z-index: 50; }
+.modal { background: var(--bg); border: 1px solid var(--line); border-radius: 10px; padding: 18px 20px; width: min(520px, calc(100vw - 32px)); display: flex; flex-direction: column; gap: 10px; box-shadow: 0 12px 40px rgba(0, 0, 0, 0.35); }
+.modal h3 { margin: 0; font-size: 16px; }
+.modal p { margin: 0; }
+.modal-notes { margin: 0; padding-left: 18px; display: flex; flex-direction: column; gap: 4px; }
+.modal-check { display: flex; align-items: center; gap: 6px; flex-wrap: wrap; padding: 8px 10px; border: 1px solid var(--line); border-radius: 6px; cursor: pointer; }
+.modal-check.disabled { opacity: 0.6; cursor: default; }
+.modal-actions { justify-content: flex-end; }
+.danger-text { color: var(--blocked); font-weight: 600; }
+button.danger-solid { background: var(--blocked); border-color: var(--blocked); color: #fff; }

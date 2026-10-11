@@ -1,5 +1,5 @@
 // 工作台：左邊是你手上的單，中間跟 AI 對話，右邊是測試環境與帳號、本機網站與 Git 改動。
-import { useEffect, useState } from 'react';
+import { createContext, useContext, useEffect, useState } from 'react';
 import type { BoardState, WorkItem, WorkStatus } from '../../shared/types';
 import { ChatPanel, errorText, STATUS_LABEL } from './ChatPanel';
 import { FolderTerminalPanel, GitPanel, TestPanel } from './SidePanels';
@@ -8,18 +8,57 @@ const api = window.flowpilot;
 
 const FINISHED: WorkStatus[] = ['failed', 'stopped', 'removed', 'committed'];
 
+/** 專案的前台／後台（來自設定檔），用來標示這一列做在哪裡 */
+const SideContext = createContext<Record<string, string>>({});
+
+function ProjectTag({ item }: { item: WorkItem }) {
+  const side = useContext(SideContext)[item.project] ?? '';
+  const short = side.split('（')[0];
+  return (
+    <span className={`side ${short.startsWith('前台') ? 'front' : 'back'}`}>
+      {short && `${short} · `}{item.project}{item.merchant ? ` m${item.merchant}` : ''}
+    </span>
+  );
+}
+
 function Row({ item, selected, onSelect, extra }: { item: WorkItem; selected: boolean; onSelect(): void; extra?: React.ReactNode }) {
   return (
     <li className={`ticket ${selected ? 'selected' : ''} status-${item.status}`} onClick={onSelect}>
       <div className="ticket-line">
         <strong>{item.ticketKey}</strong>
-        <span className="muted small">{item.project}{item.merchant ? ` m${item.merchant}` : ''}</span>
         {item.status !== 'queued' && <span className={`status ${item.status}`}>{STATUS_LABEL[item.status]}</span>}
         {extra}
       </div>
+      <div className="ticket-tag"><ProjectTag item={item} /></div>
       <div className="muted small ticket-summary">{item.ticketSummary}</div>
       {item.status === 'queued' && item.activity && <div className="muted small">{item.activity}</div>}
     </li>
+  );
+}
+
+/** 右邊：測試固定在上面；Git 改動和終端機用分頁切換（兩個都一直開著，切換不會中斷終端機） */
+function RightPanels({ item }: { item: WorkItem }) {
+  const [tab, setTab] = useState<'git' | 'term'>('git');
+  const [changes, setChanges] = useState(0);
+  const [siteUrl, setSiteUrl] = useState<string | null>(null);
+  return (
+    <>
+      <TestPanel item={item} />
+      <div className="right-tabs" role="tablist">
+        <button role="tab" className={tab === 'git' ? 'on' : ''} onClick={() => setTab('git')}>
+          Git 改動{changes > 0 && <span className="tab-count">{changes}</span>}
+        </button>
+        <button role="tab" className={tab === 'term' ? 'on' : ''} onClick={() => setTab('term')} title={siteUrl ? `本機網站在跑：${siteUrl}` : undefined}>
+          終端機{siteUrl && <span className="tab-dot" />}
+        </button>
+      </div>
+      <div className="tab-body" hidden={tab !== 'git'}>
+        <GitPanel item={item} onCount={setChanges} />
+      </div>
+      <div className="tab-body" hidden={tab !== 'term'}>
+        <FolderTerminalPanel item={item} onSiteUrl={setSiteUrl} />
+      </div>
+    </>
   );
 }
 
@@ -27,9 +66,11 @@ export function Workbench() {
   const [board, setBoard] = useState<BoardState | null>(null);
   const [selected, setSelected] = useState<number | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const [sides, setSides] = useState<Record<string, string>>({});
 
   useEffect(() => {
     api.board().then(setBoard).catch((e) => setError(errorText(e)));
+    api.planOptions().then((o) => setSides(Object.fromEntries(o.projects.map((p) => [p.name, p.side])))).catch(() => {});
     const offBoard = api.onBoardChanged(setBoard);
     const offFocus = api.onFocusItem(setSelected);
     return () => {
@@ -54,6 +95,7 @@ export function Workbench() {
   const current = items.find((i) => i.id === selected) ?? null;
 
   return (
+    <SideContext.Provider value={sides}>
     <div className="workbench">
       <aside className="sidebar">
         {board?.pendingRun && (
@@ -124,15 +166,12 @@ export function Workbench() {
 
       <aside className="right">
         {current?.folder ? (
-          <>
-            <TestPanel item={current} />
-            <FolderTerminalPanel item={current} />
-            <GitPanel item={current} />
-          </>
+          <RightPanels key={current.id} item={current} />
         ) : (
           <p className="muted small">這張單分配到資料夾之後，這裡會顯示終端機與 Git 改動。</p>
         )}
       </aside>
     </div>
+    </SideContext.Provider>
   );
 }

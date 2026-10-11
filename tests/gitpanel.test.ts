@@ -73,4 +73,18 @@ describe('Git 改動面板', () => {
     await expect(stage(dir, ['../outside.ts'])).rejects.toThrow('路徑不在資料夾裡');
     await expect(discard(dir, ['../../etc/passwd'])).rejects.toThrow('路徑不在資料夾裡');
   });
+
+  it('提交身分：預設用資料夾設定的；指定身分只用在這一次，不改資料夾設定', async () => {
+    const dir = repo();
+    expect((await gitState(dir)).identity).toEqual({ name: 't', email: 't@t' });
+    writeFileSync(join(dir, 'a.ts'), 'a2\n');
+    await stage(dir, ['a.ts']);
+    await commitStaged(dir, "feat(ALL-1) it's mine", { name: "o'neil", email: 'me@example.com' });
+    expect(git(dir, 'log', '-1', '--format=%an <%ae>|%cn <%ce>|%s').trim()).toBe("o'neil <me@example.com>|o'neil <me@example.com>|feat(ALL-1) it's mine");
+    expect(git(dir, 'config', 'user.email').trim()).toBe('t@t');
+    writeFileSync(join(dir, 'b.ts'), 'b2\n');
+    await stage(dir, ['b.ts']);
+    await commitStaged(dir, 'feat(ALL-1) default');
+    expect(git(dir, 'log', '-1', '--format=%an <%ae>').trim()).toBe('t <t@t>');
+  });
 });

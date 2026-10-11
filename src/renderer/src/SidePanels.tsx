@@ -11,36 +11,30 @@ const api = window.flowpilot;
 
 /**
  * 測試：資料夾目前連 SIT 還是 UAT（只切換 environment.ts 的註解）、這次測試會用哪個帳號。
- * 指定的帳號只限這張單，沒指定就用帳號檔（~/.codex/local-test-configs）。畫面上只顯示帳號，不顯示密碼。
+ * 帳號一律用帳號檔（~/.codex/local-test-configs）；畫面上只顯示帳號，不顯示密碼。
  */
 export function TestPanel({ item }: { item: WorkItem }) {
   const [state, setState] = useState<TestState | null>(null);
-  const [editing, setEditing] = useState(false);
-  const [username, setUsername] = useState('');
-  const [password, setPassword] = useState('');
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
   useEffect(() => {
     setState(null);
-    setEditing(false);
     setError(null);
     const refresh = () => api.test.state(item.id).then(setState).catch((e) => setError(errorText(e)));
     refresh();
-    // 你也可能在別的地方改了 environment.ts
+    // 你也可能在別的地方改了 environment.ts 或帳號檔
     const timer = setInterval(refresh, 5000);
     return () => clearInterval(timer);
   }, [item.id, item.folder]);
 
-  async function act(action: () => Promise<TestState>) {
+  async function switchTo(env: Env) {
     setBusy(true);
     setError(null);
     try {
-      setState(await action());
-      return true;
+      setState(await api.test.setEnvironment(item.id, env));
     } catch (e) {
       setError(errorText(e));
-      return false;
     } finally {
       setBusy(false);
     }
@@ -59,7 +53,7 @@ export function TestPanel({ item }: { item: WorkItem }) {
         <span className="test-label">環境</span>
         <div className="segmented">
           {(['sit', 'uat'] as Env[]).map((e) => (
-            <button key={e} className={env === e ? 'on' : ''} disabled={busy || env === e || env === null} onClick={() => act(() => api.test.setEnvironment(item.id, e))}>
+            <button key={e} className={env === e ? 'on' : ''} disabled={busy || env === e || env === null} onClick={() => switchTo(e)}>
               {e.toUpperCase()}
             </button>
           ))}
@@ -71,42 +65,15 @@ export function TestPanel({ item }: { item: WorkItem }) {
         <span className="test-label">帳號</span>
         {state?.account ? (
           <span>
-            {state.account.username} <span className="muted small">（{state.account.source}）</span>
+            {state.account.username}
+            {!state.account.hasPassword && <span className="warn small">（還沒有密碼）</span>}
           </span>
         ) : (
-          <span className="warn small">{env === 'sit' || env === 'uat' ? `帳號檔裡沒有 ${env.toUpperCase()} 的帳號，請指定` : '—'}</span>
+          <span className="warn small">{env === 'sit' || env === 'uat' ? `帳號檔裡沒有 ${env.toUpperCase()} 的帳號` : '—'}</span>
         )}
       </div>
-      {!editing && (
-        <div className="row">
-          <button className="link" onClick={() => { setUsername(state?.override ?? ''); setPassword(''); setEditing(true); }}>
-            {state?.override ? '改這張單的帳號' : '這張單改用別的帳號'}
-          </button>
-          {state?.override && (
-            <button className="link" disabled={busy} onClick={() => act(() => api.test.setAccount(item.id, null))}>
-              改回用帳號檔
-            </button>
-          )}
-        </div>
-      )}
-      {editing && (
-        <form
-          className="account-form"
-          onSubmit={async (e) => {
-            e.preventDefault();
-            if (await act(() => api.test.setAccount(item.id, { username, password }))) {
-              setEditing(false);
-              setPassword('');
-            }
-          }}
-        >
-          <input placeholder="帳號" value={username} onChange={(e) => setUsername(e.target.value)} autoFocus />
-          <input placeholder="密碼" type="password" value={password} onChange={(e) => setPassword(e.target.value)} />
-          <div className="row">
-            <button className="primary" type="submit" disabled={busy || !username.trim() || !password}>只用在這張單</button>
-            <button type="button" onClick={() => setEditing(false)}>取消</button>
-          </div>
-        </form>
+      {state && (!state.account || !state.account.hasPassword) && (env === 'sit' || env === 'uat') && (
+        <p className="muted small">請在 {state.accountFile} 補上{state.account ? '密碼（passwordSource）' : ''}。</p>
       )}
       {error && <div className="error small">{error}</div>}
     </div>
@@ -114,7 +81,7 @@ export function TestPanel({ item }: { item: WorkItem }) {
 }
 
 /** 資料夾終端機：固定顯示、可以直接輸入；「在本機啟動」會在這裡執行啟動指令，抓到網址後可以打開網頁 */
-export function FolderTerminalPanel({ item }: { item: WorkItem }) {
+export function FolderTerminalPanel({ item, onSiteUrl }: { item: WorkItem; onSiteUrl?(url: string | null): void }) {
   const host = useRef<HTMLDivElement>(null);
   const [folder, setFolder] = useState<string | null>(null);
   const [url, setUrl] = useState<string | null>(null);
@@ -153,6 +120,8 @@ export function FolderTerminalPanel({ item }: { item: WorkItem }) {
       .catch((e) => setError(errorText(e)));
     const input = term.onData((data) => current && api.folderTerminal.write(current, data));
     const observer = new ResizeObserver(() => {
+      // 切到別的分頁時是隱藏的（寬度 0），不要把終端機縮成一小條
+      if (!host.current?.clientWidth) return;
       fit.fit();
       if (current) api.folderTerminal.resize(current, term.cols, term.rows);
     });
@@ -167,18 +136,17 @@ export function FolderTerminalPanel({ item }: { item: WorkItem }) {
     };
   }, [item.id, item.folder]);
 
+  useEffect(() => onSiteUrl?.(url), [url]);
+
   if (!item.folder) return null;
 
   return (
     <div className="panel term">
-      <div className="panel-head">
-        <strong>終端機</strong>
-        <span className="muted small">{folder ?? item.folder}</span>
-      </div>
       <div className="row">
         <button className="primary" onClick={() => api.folderTerminal.startSite(item.id).catch((e) => setError(errorText(e)))}>在本機啟動</button>
         <button onClick={() => folder && api.folderTerminal.interrupt(folder)}>停止</button>
         {url && <button className="primary" onClick={() => api.openUrl(url).catch((e) => setError(errorText(e)))}>打開網頁</button>}
+        <span className="muted small push-right">{folder ?? item.folder}</span>
       </div>
       {url && <div className="muted small">{url}</div>}
       <div ref={host} className="folder-term" />
@@ -201,9 +169,11 @@ function FileRow({ file, actions, onOpen, open }: { file: GitFile; actions: Reac
   );
 }
 
-export function GitPanel({ item }: { item: WorkItem }) {
+export function GitPanel({ item, onCount }: { item: WorkItem; onCount?(changes: number): void }) {
   const [state, setState] = useState<GitState | null>(null);
   const [message, setMessage] = useState(item.prTitle);
+  /** 這一次提交改用的身分（信箱）；null 代表用資料夾設定的 */
+  const [who, setWho] = useState<string | null>(null);
   const [diff, setDiff] = useState<{ path: string; staged: boolean; text: string } | null>(null);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -212,7 +182,9 @@ export function GitPanel({ item }: { item: WorkItem }) {
   async function refresh() {
     if (!item.folder) return;
     try {
-      setState(await api.git.state(item.id));
+      const next = await api.git.state(item.id);
+      setState(next);
+      onCount?.(next.staged.length + next.unstaged.length);
     } catch (e) {
       setError(errorText(e));
     }
@@ -224,6 +196,7 @@ export function GitPanel({ item }: { item: WorkItem }) {
     setError(null);
     setNotice(null);
     setMessage(item.prTitle);
+    setWho(null);
     refresh();
     // AI 在改檔案時，每 3 秒更新一次
     const timer = setInterval(refresh, 3000);
@@ -259,13 +232,19 @@ export function GitPanel({ item }: { item: WorkItem }) {
 
   const onBranch = state.branch === item.branch;
   // 有新的提交才能推送：遠端已有分支時看還沒推送的數量；還沒有時看比基底多幾個提交
+  // 可以選的身分：設定檔列的，加上資料夾目前設定的（如果不在清單裡）
+  const identityOptions = [
+    ...(state.identity.email && !state.identities.some((i) => i.email === state.identity.email) ? [state.identity] : []),
+    ...state.identities,
+  ];
+  const chosen = who ?? state.identity.email;
   const canPush = state.hasRemote ? (state.unpushed ?? 0) > 0 : state.ahead > 0;
   const diffBlock = (path: string, staged: boolean) => diff?.path === path && diff.staged === staged && <li className="diff-row"><DiffView diff={diff.text} /></li>;
 
   return (
     <div className="panel git">
       <div className="panel-head">
-        <strong>Git 改動</strong>
+        <span className="muted small">目前分支</span>
         <code className="small">{state.branch || '（不在分支上）'}</code>
       </div>
       {!onBranch && <p className="warn">資料夾目前在 {state.branch}，不是這張單的 {item.branch}。</p>}
@@ -318,7 +297,27 @@ export function GitPanel({ item }: { item: WorkItem }) {
       {(state.staged.length > 0 || state.unstaged.length > 0) && (
         <div className="git-commit">
           <input value={message} onChange={(e) => setMessage(e.target.value)} placeholder="提交訊息" />
-          <button className="primary" disabled={busy || !onBranch || state.staged.length === 0 || !message.trim()} onClick={() => act(() => api.git.commit(item.id, message), '已提交')}>
+          {identityOptions.length > 1 && (
+            <label className="identity">
+              <span className="muted small">提交身分</span>
+              <select value={chosen} onChange={(e) => setWho(e.target.value === state.identity.email ? null : e.target.value)}>
+                {identityOptions.map((i) => (
+                  <option key={i.email} value={i.email}>
+                    {i.name} &lt;{i.email}&gt;{i.email === state.identity.email ? '（資料夾預設）' : ''}
+                  </option>
+                ))}
+              </select>
+            </label>
+          )}
+          {who && <p className="warn small">這一次提交會用 {who}，不是資料夾預設的 {state.identity.email || '（沒有設定）'}；只套用在這一次。</p>}
+          <button
+            className="primary"
+            disabled={busy || !onBranch || state.staged.length === 0 || !message.trim()}
+            onClick={() => act(async () => {
+              await api.git.commit(item.id, message, who ?? undefined);
+              setWho(null); // 下次提交回到資料夾預設
+            }, '已提交')}
+          >
             {state.staged.length === 0 ? '先把要提交的檔案暫存（＋）' : `提交 ${state.staged.length} 個檔案`}
           </button>
         </div>

@@ -199,10 +199,10 @@ export type Env = 'sit' | 'uat';
 export interface TestState {
   /** 資料夾目前連哪個環境；mixed 是兩組都開著或都註解掉，null 是找不到標記 */
   environment: Env | 'mixed' | null;
-  /** 這次測試會用的帳號（只有帳號，不含密碼） */
-  account: { username: string; source: '這張單指定' | '帳號檔' } | null;
-  /** 你為這張單指定的帳號 */
-  override: string | null;
+  /** 這次測試會用的帳號（只有帳號，不含密碼）；帳號檔裡沒有就是 null */
+  account: { username: string; hasPassword: boolean } | null;
+  /** 帳號檔的位置（沒有帳號時提示你去補） */
+  accountFile: string;
 }
 
 /** 審查用：這張單改了哪些檔案 */
@@ -248,6 +248,8 @@ export interface WorkItem {
   lastMessage: string;
   pending: PendingRequest | null;
   stage: WorkStage;
+  /** 自動測試有沒有真的跑過（沒跑過的顯示「略過」） */
+  autotested: boolean;
   updatedAt: string;
 }
 
@@ -313,6 +315,16 @@ export interface GitState {
   hasRemote: boolean;
   /** 比基底分支多幾個提交 */
   ahead: number;
+  /** 資料夾目前設定的提交身分（提交時預設用這個） */
+  identity: GitIdentity;
+  /** 提交時可以選的身分（設定檔的 gitIdentities） */
+  identities: GitIdentity[];
+}
+
+/** 提交上寫的名字與信箱（只管提交者，推送登入用的帳號另外存在 Git 的登入資料裡） */
+export interface GitIdentity {
+  name: string;
+  email: string;
 }
 
 
@@ -354,8 +366,10 @@ export interface FlowPilotApi {
   /** 回答 FlowPilot 要你決定的事 */
   decide(itemId: number, optionId: string): Promise<void>;
   stop(itemId: number): Promise<void>;
-  /** 從看板移除（不會動到檔案或分支） */
-  remove(itemId: number): Promise<void>;
+  /** 從看板移除；deleteBranch 為 true 時順便刪掉本機分支（不動遠端） */
+  remove(itemId: number, deleteBranch?: boolean): Promise<RemoveResult>;
+  /** 移除前查分支的狀況：刪掉會失去什麼 */
+  branchInfo(itemId: number): Promise<BranchInfo | null>;
   /** 這張單做完了：資料夾要乾淨（environment.ts 可選擇還原），讓出資料夾給下一張 */
   finish(itemId: number, restoreEnvironment: boolean): Promise<void>;
   /** 中斷 AI 這一輪（單本身不停止，可以再補充指示） */
@@ -373,7 +387,8 @@ export interface FlowPilotApi {
     stage(itemId: number, paths: string[]): Promise<void>;
     unstage(itemId: number, paths: string[]): Promise<void>;
     discard(itemId: number, paths: string[]): Promise<void>;
-    commit(itemId: number, message: string): Promise<string>;
+    /** 提交；identity 是這一次要用的身分的信箱，不填就用資料夾設定的 */
+    commit(itemId: number, message: string, identity?: string): Promise<string>;
     push(itemId: number): Promise<string>;
   };
   /** 資料夾終端機：每個資料夾一個互動式 shell */
@@ -399,9 +414,28 @@ export interface FlowPilotApi {
     state(itemId: number): Promise<TestState>;
     /** 切換 SIT／UAT（只切換 environment.ts 裡的註解） */
     setEnvironment(itemId: number, env: Env): Promise<TestState>;
-    /** 為這張單指定帳號；null 代表改回用帳號檔 */
-    setAccount(itemId: number, account: { username: string; password: string } | null): Promise<TestState>;
   };
+}
+
+/** 移除時要不要刪分支，先讓你看清楚的狀況 */
+export interface BranchInfo {
+  branch: string;
+  folder: string;
+  baseBranch: string;
+  /** 本機有沒有這條分支 */
+  exists: boolean;
+  /** 遠端有沒有（有的話刪掉本機的也拿得回來） */
+  hasRemote: boolean;
+  /** 只在這台電腦上、刪掉就沒了的提交數；null 代表算不出來（例如找不到基底分支） */
+  unpushed: number | null;
+  /** 沒提交的修改（不含 environment.ts）；有的話不刪分支 */
+  dirty: string[];
+}
+
+export interface RemoveResult {
+  branchDeleted: boolean;
+  /** 沒刪分支的原因（有勾刪分支、但沒刪成時） */
+  reason?: string;
 }
 
 export interface PlanOptions {

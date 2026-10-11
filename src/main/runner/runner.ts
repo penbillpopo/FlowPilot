@@ -4,11 +4,11 @@ import { execFile } from 'node:child_process';
 import { existsSync, readFileSync } from 'node:fs';
 import { homedir } from 'node:os';
 import { join } from 'node:path';
-import type { BoardState, ChatEvent, Env, PendingRequest, SkillInfo, TestState, TicketPlan, WorkStage } from '../../shared/types';
+import type { BoardState, BranchInfo, ChatEvent, Env, RemoveResult, PendingRequest, SkillInfo, TestState, TicketPlan, WorkStage } from '../../shared/types';
 import { toEntry } from '../chat';
 import { ENVIRONMENT_FILE, readEnvironment, setEnvironment } from '../environment';
 import { reviewBrief } from '../planner/review';
-import { resolveAccount, writeAccountFile } from '../testaccounts';
+import { configFile, resolveAccount, writeAccountFile } from '../testaccounts';
 import type { CodexRpc, RpcMessage } from '../codex/rpc';
 import { listSkills } from '../codex/structured';
 import {
@@ -144,8 +144,7 @@ export class Runner {
     const occupiedBy = new Map(items.filter((i) => i.folder && OCCUPYING.includes(i.status)).map((i) => [i.folder!, i.id]));
     return {
       folders: this.deps.settings().folders.map((f) => ({ ...f, itemId: occupiedBy.get(f.name) ?? null })),
-      // 密碼不送到畫面
-      items: items.map(({ branchCreated: _, testAccount: __, commitSha: ___, ...item }) => item),
+      items: items.map(({ branchCreated: _, commitSha: __, ...item }) => item),
       pendingRun: store.pendingPlannedRun(),
       streaming: Object.fromEntries(this.streaming),
     };
@@ -482,9 +481,10 @@ export class Runner {
       const env = readEnvironment(cwd);
       if (env === null) throw new Error(`${ENVIRONMENT_FILE} 裡找不到 SIT／UAT 的標記`);
       if (env === 'mixed') throw new Error(`${ENVIRONMENT_FILE} 的 SIT、UAT 兩組都開著或都註解掉了，請在右邊「測試」選一個環境`);
-      const account = resolveAccount(settings.testConfigDir, item.project, item.merchant, env, item.testAccount);
+      const account = resolveAccount(settings.testConfigDir, item.project, item.merchant, env);
       const where = `${item.project}${item.merchant ? ` m${item.merchant}` : ''} 的 ${env.toUpperCase()}`;
-      if (!account) throw new Error(`帳號檔裡沒有 ${where} 的測試帳號，請在右邊「測試」指定這張單要用的帳號`);
+      if (!account) throw new Error(`帳號檔裡沒有 ${where} 的測試帳號，請在 ${configFile(settings.testConfigDir, item.project)} 補上`);
+      if (!account.password) throw new Error(`${where} 的測試帳號 ${account.username} 還沒有密碼，請在 ${configFile(settings.testConfigDir, item.project)} 補上`);
       const url = await this.deps.ensureSite(item.folder);
       const accountFile = writeAccountFile(join(this.deps.dataDir, '測試帳號'), id, { project: item.project, merchant: item.merchant, environment: env, url, account });
       const common = [
@@ -521,7 +521,7 @@ export class Runner {
         ],
       });
       this.turns.set(item.threadId, turn.id);
-      this.update(id, { activity: headed ? '列測試計畫給你確認' : '自動測試中（無頭）' });
+      this.update(id, { activity: headed ? '列測試計畫給你確認' : '自動測試中（無頭）', ...(headed ? {} : { autotested: true }) });
     } catch (error) {
       if (['removed', 'stopped'].includes(this.deps.store.getWorkItem(id)!.status)) return;
       const message = `${label}沒辦法開始：${(error as Error).message}`;
@@ -545,12 +545,8 @@ export class Runner {
     if (!item.folder) throw new Error('這張單還沒有分配資料夾');
     const settings = this.deps.settings();
     const environment = readEnvironment(this.folderPath(item.folder));
-    const account = environment === 'sit' || environment === 'uat' ? resolveAccount(settings.testConfigDir, item.project, item.merchant, environment, item.testAccount) : null;
-    return {
-      environment,
-      account: account ? { username: account.username, source: account.source } : null,
-      override: item.testAccount?.username ?? null,
-    };
+    const account = environment === 'sit' || environment === 'uat' ? resolveAccount(settings.testConfigDir, item.project, item.merchant, environment) : null;
+    return { environment, account: account ? { username: account.username, hasPassword: !!account.password } : null, accountFile: configFile(settings.testConfigDir, item.project) };
   }
 
   /** 切換 SIT／UAT：只切換 environment.ts 裡的註解 */
@@ -562,14 +558,6 @@ export class Runner {
     return this.testState(id);
   }
 
-  /** 為這張單指定測試帳號（只限這張單）；null 代表改回用帳號檔 */
-  setTestAccount(id: number, account: { username: string; password: string } | null): TestState {
-    const username = account?.username.trim() ?? '';
-    if (account && (!username || !account.password)) throw new Error('帳號和密碼都要填');
-    this.deps.store.setTestAccount(id, account ? { username, password: account.password } : null);
-    this.deps.onChange();
-    return this.testState(id);
-  }
 
   // ---- Codex 訊息 ----
 
@@ -804,18 +792,67 @@ export class Runner {
     await this.schedule();
   }
 
+  /** 移除前查分支的狀況，讓你決定要不要一起刪；還沒分到資料夾的回傳 null */
+  async branchInfo(id: number): Promise<BranchInfo | null> {
+    const item = this.deps.store.getWorkItem(id)!;
+    if (!item.folder) return null;
+    const cwd = this.folderPath(item.folder);
+    const exists = await localBranchExists(cwd, item.branch);
+    const hasRemote = exists && (await remoteBranchExists(cwd, item.branch));
+    // 只在這台電腦上的提交：遠端有這條分支就跟遠端比，沒有就跟基底比
+    const against = hasRemote ? `refs/remotes/origin/${item.branch}` : `origin/${item.baseBranch}`;
+    const counted = exists ? await runGit(cwd, ['rev-list', '--count', `${against}..refs/heads/${item.branch}`]) : null;
+    const unpushed = !exists ? 0 : counted!.code === 0 ? Number(counted!.stdout.trim()) : null;
+    const onBranch = (await currentBranch(cwd)) === item.branch;
+    const dirty = onBranch ? (await dirtyFiles(cwd)).filter((f) => !isEnvironmentFile(f)) : [];
+    return { branch: item.branch, folder: item.folder, baseBranch: item.baseBranch, exists, hasRemote, unpushed, dirty };
+  }
+
+  /**
+   * 刪掉這張單的本機分支（只刪本機，絕對不動遠端）：
+   * 資料夾停在這條分支上時，先還原 environment.ts、切回基底分支再刪；有其他沒提交的修改就不刪，回傳原因。
+   */
+  private async deleteLocalBranch(item: StoredWorkItem): Promise<RemoveResult> {
+    const info = await this.branchInfo(item.id);
+    if (!info?.exists) return { branchDeleted: false, reason: '本機沒有這條分支' };
+    if (info.dirty.length) {
+      return { branchDeleted: false, reason: `資料夾還有 ${info.dirty.length} 個沒提交的修改（${info.dirty.slice(0, 3).join('、')}${info.dirty.length > 3 ? ' 等' : ''}），為了不丟掉它們，分支沒有刪` };
+    }
+    const cwd = this.folderPath(item.folder!);
+    if ((await currentBranch(cwd)) === item.branch) {
+      for (const file of (await dirtyFiles(cwd)).filter(isEnvironmentFile)) await runGit(cwd, ['restore', '--staged', '--worktree', '--', file]);
+      if (await localBranchExists(cwd, item.baseBranch)) await switchBranch(cwd, item.baseBranch);
+      else await switchToRemoteBranch(cwd, item.baseBranch);
+    }
+    const result = await runGit(cwd, ['branch', '-D', item.branch]);
+    if (result.code !== 0) return { branchDeleted: false, reason: `刪除失敗：${result.stderr.trim()}` };
+    this.deps.log(`${item.ticketKey}：刪除 ${item.folder} 的本機分支 ${item.branch}（${info.unpushed} 個只在本機的提交一起刪除）`);
+    return { branchDeleted: true };
+  }
+
   /**
    * 從看板移除。執行中的會先中斷 AI 這一輪；準備中的，準備流程會在啟動 AI 前自己停下來。
-   * 不會動到資料夾裡的檔案或分支。
+   * 預設不動資料夾裡的檔案或分支；deleteBranch 為 true 時順便刪掉本機分支（不動遠端）。
    */
-  async remove(id: number) {
+  async remove(id: number, deleteBranch = false): Promise<RemoveResult> {
     const item = this.deps.store.getWorkItem(id)!;
+    // AI 還在改檔案時刪分支會亂掉，要等它停下來
+    if (deleteBranch && ['running', 'preparing'].includes(item.status)) throw new Error('AI 還在執行，請先中斷這一輪再移除並刪除分支');
     const turnId = item.threadId ? this.turns.get(item.threadId) : undefined;
     if (item.threadId && turnId) await this.deps.codex.request('turn/interrupt', { threadId: item.threadId, turnId }).catch(() => {});
     this.streaming.delete(id);
     this.allowed.delete(id);
-    this.update(id, { status: 'removed', lane: 'done', activity: '你從看板移除了', pending: null });
+    let result: RemoveResult = { branchDeleted: false };
+    if (deleteBranch && item.folder) {
+      try {
+        result = await this.deleteLocalBranch(item);
+      } catch (error) {
+        result = { branchDeleted: false, reason: `刪除失敗：${(error as Error).message}` };
+      }
+    }
+    this.update(id, { status: 'removed', lane: 'done', activity: result.branchDeleted ? '你從看板移除了，也刪掉了本機分支' : '你從看板移除了', pending: null });
     void this.schedule();
+    return result;
   }
 
   async retry(id: number) {

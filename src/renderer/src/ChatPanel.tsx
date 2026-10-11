@@ -1,6 +1,6 @@
 // 工作台中間：跟 AI 對話。完整的對話紀錄（思考、指令、改動、工具）、即時更新、輸入框（可貼截圖）。
 import { useEffect, useRef, useState } from 'react';
-import type { ChatEntry, ChatEvent, WorkItem, WorkStage, WorkStatus } from '../../shared/types';
+import type { BranchInfo, ChatEntry, ChatEvent, WorkItem, WorkStage, WorkStatus } from '../../shared/types';
 import { DiffView } from './DiffView';
 import { Markdown } from './Markdown';
 
@@ -25,26 +25,139 @@ const REDUNDANT_ACTIVITY = /^(AI 在問你問題|執行中|執行技能|開發�
 /** 流程：審閱 ✓ → 開發 → 自動測試 → 等你測試（修改、重測都算在等你測試這一步） */
 const STEPS = ['審閱', '開發', '自動測試', '等你測試'];
 const STEP_OF: Record<WorkStage, number> = { develop: 1, autotest: 2, manual: 3, fix: 3, retest: 3 };
-const STEP_NOTE: Partial<Record<WorkStage, string>> = { fix: '修改中', retest: '重測中' };
+const RUNNING_NOTE: Record<WorkStage, string> = { develop: 'AI 開發中', autotest: 'AI 測試中', manual: 'AI 處理中', fix: 'AI 修改中', retest: 'AI 重測中' };
+
+/** 目前這一步在等什麼（合併原本的狀態標籤）；空字串代表不用多說明 */
+function stepNote(item: WorkItem): string {
+  switch (item.status) {
+    case 'running':
+      return RUNNING_NOTE[item.stage];
+    case 'waiting':
+      return item.pending?.kind === 'approval' ? '等你同意' : item.pending?.kind === 'decision' ? '等你決定' : '要你回答';
+    case 'review':
+      return '';
+    default:
+      return STATUS_LABEL[item.status];
+  }
+}
 
 function Stages({ item }: { item: WorkItem }) {
-  if (!item.threadId) return null;
   const current = STEP_OF[item.stage] ?? 1;
   const finished = item.status === 'committed';
+  const note = stepNote(item);
+  const tone = ['waiting', 'blocked'].includes(item.status) ? 'attn' : ['failed', 'stopped'].includes(item.status) ? 'bad' : '';
   return (
     <ol className="stages">
       {STEPS.map((label, i) => {
         const done = finished || i < current;
         const now = !finished && i === current;
+        // 自動測試沒有真的跑過（舊單、或缺帳號沒辦法開始）就不打勾
+        const skipped = done && i === 2 && !item.autotested;
         return (
-          <li key={label} className={done ? 'done' : now ? 'now' : ''}>
+          <li key={label} className={skipped ? 'skipped' : done ? 'done' : now ? `now ${tone}` : ''}>
             {label}
-            {done && ' ✓'}
-            {now && STEP_NOTE[item.stage] && `（${STEP_NOTE[item.stage]}）`}
+            {skipped ? '（略過）' : done ? ' ✓' : ''}
+            {now && note && <span className="step-note">・{note}</span>}
           </li>
         );
       })}
     </ol>
+  );
+}
+
+/** FlowPilot 自動交給 AI 的訊息（開發、測試指示、更新需求），不是你打的字 */
+function flowPilotLabel(text: string): string | null {
+  const skill = text.match(/^［技能：(.+?)］/)?.[1];
+  if (skill) {
+    const kind = text.includes('開瀏覽器重新測試') ? '重測指示' : text.includes('自動安排的測試') ? '自動測試指示' : '開發指示';
+    return `${kind}（${skill}）`;
+  }
+  if (text.startsWith('## 更新需求')) return '更新需求';
+  if (text.trim() === '請從剛才中斷的地方繼續。') return '請 AI 從中斷的地方繼續';
+  return null;
+}
+
+/**
+ * 移除的確認視窗：可以勾選同時刪除本機分支（預設不勾）。
+ * 勾了會列出刪掉會失去什麼：只在本機的提交、遠端有沒有、沒提交的修改（有的話不刪）。
+ */
+function RemoveDialog({ item, onClose }: { item: WorkItem; onClose(): void }) {
+  const [info, setInfo] = useState<BranchInfo | null | undefined>(undefined);
+  const [deleteBranch, setDeleteBranch] = useState(false);
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const running = ['running', 'preparing'].includes(item.status);
+
+  useEffect(() => {
+    api.branchInfo(item.id).then(setInfo).catch((e) => (setInfo(null), setError(`讀不到分支狀況：${errorText(e)}`)));
+  }, [item.id]);
+
+  async function confirm() {
+    setBusy(true);
+    setError(null);
+    try {
+      const result = await api.remove(item.id, deleteBranch);
+      if (deleteBranch && !result.branchDeleted) window.alert(`已從工作台移除 ${item.ticketKey}，但分支沒有刪：${result.reason ?? '原因不明'}`);
+      onClose();
+    } catch (e) {
+      setError(errorText(e));
+      setBusy(false);
+    }
+  }
+
+  return (
+    <div className="modal-backdrop" onClick={() => !busy && onClose()}>
+      <div className="modal" role="dialog" onClick={(e) => e.stopPropagation()}>
+        <h3>從工作台移除 {item.ticketKey}？</h3>
+        <p className="muted small">
+          {item.project}{item.merchant ? ` m${item.merchant}` : ''} · <code>{item.branch}</code>
+        </p>
+        <ul className="modal-notes small">
+          {running && <li>AI 正在執行，會先中斷它。</li>}
+          <li>移除後沒辦法從 FlowPilot 叫回來；要重新做，到「單列表」再確認一次計畫。</li>
+          {!deleteBranch && <li>不會動到 {item.folder ?? '資料夾'} 裡的檔案或分支。</li>}
+        </ul>
+
+        {info === undefined && item.folder && <p className="muted small">讀取分支狀況中…</p>}
+        {info?.exists && (
+          <label className={`modal-check ${running ? 'disabled' : ''}`}>
+            <input type="checkbox" checked={deleteBranch} disabled={running || busy} onChange={(e) => setDeleteBranch(e.target.checked)} />
+            同時刪除本機分支 <code>{info.branch}</code>
+            {running && <span className="muted small">（AI 執行中不能刪，請先中斷）</span>}
+          </label>
+        )}
+        {info && !info.exists && <p className="muted small">本機沒有 {info.branch}，不用刪。</p>}
+
+        {deleteBranch && info && (
+          <ul className="modal-notes small">
+            {info.unpushed === null ? (
+              <li className="danger-text">算不出有幾個提交只在這台電腦上；刪掉的話，這些提交可能就沒了。</li>
+            ) : info.unpushed > 0 ? (
+              <li className="danger-text">有 {info.unpushed} 個提交只在這台電腦上，刪掉就沒了。</li>
+            ) : (
+              <li>沒有只在本機的提交。</li>
+            )}
+            <li>{info.hasRemote ? '遠端有這條分支：只刪本機的，之後還能從遠端拿回來。' : '遠端沒有這條分支。'}</li>
+            {info.dirty.length > 0 ? (
+              <li className="warn">
+                資料夾還有 {info.dirty.length} 個沒提交的修改（{info.dirty.slice(0, 3).join('、')}{info.dirty.length > 3 ? ' 等' : ''}），為了不丟掉它們，<strong>分支不會刪</strong>，只會移除。
+              </li>
+            ) : (
+              <li>資料夾會先切回 {info.baseBranch}（environment.ts 會還原），再刪分支。</li>
+            )}
+            <li>只刪本機，不會動遠端。</li>
+          </ul>
+        )}
+
+        {error && <div className="error small">{error}</div>}
+        <div className="row modal-actions">
+          <button disabled={busy} onClick={onClose}>取消</button>
+          <button className="danger-solid" disabled={busy || info === undefined} onClick={confirm}>
+            {busy ? '處理中…' : deleteBranch ? '移除並刪除分支' : '移除'}
+          </button>
+        </div>
+      </div>
+    </div>
   );
 }
 
@@ -92,13 +205,21 @@ function Collapsible({ title, children, open = false, tone = '' }: { title: Reac
 
 function Entry({ entry }: { entry: ChatEntry }) {
   switch (entry.kind) {
-    case 'user':
+    case 'user': {
+      const label = flowPilotLabel(entry.text);
+      if (label)
+        return (
+          <Collapsible title={<span><span className="fp-tag">FlowPilot</span> 交給 AI 的{label}</span>} tone="soft flowpilot">
+            <Markdown text={entry.text} />
+          </Collapsible>
+        );
       return (
         <div className="msg user">
           <Markdown text={entry.text} />
           {!!entry.images?.length && <div className="muted small">附上 {entry.images.length} 張截圖</div>}
         </div>
       );
+    }
     case 'assistant':
       return (
         <div className="msg assistant">
@@ -163,6 +284,7 @@ export function ChatPanel({ item }: { item: WorkItem }) {
   const [images, setImages] = useState<string[]>([]);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [removing, setRemoving] = useState(false);
   const scroller = useRef<HTMLDivElement>(null);
   const stick = useRef(true);
 
@@ -247,22 +369,22 @@ export function ChatPanel({ item }: { item: WorkItem }) {
   }
   const active = !['committed', 'removed'].includes(item.status);
   const canRetest = active && !!item.threadId && item.stage === 'manual' && ['review', 'waiting'].includes(item.status) && !item.pending;
+  // AI 在等你回話（問問題、被中斷、或有事要你處理）：輸入框加醒目外框
+  const awaitingYou = item.status === 'waiting' && (!item.pending || item.pending.kind === 'userInput');
   const canSend = !!item.threadId && active && !['queued', 'preparing'].includes(item.status) && item.pending?.kind !== 'approval' && item.pending?.kind !== 'decision';
 
   return (
     <section className="chat">
+      {removing && <RemoveDialog item={item} onClose={() => setRemoving(false)} />}
       <div className="chat-head">
+        <div className="chat-head-top">
         <div className="chat-title">
-          <span className={`status ${item.status}`}>{STATUS_LABEL[item.status]}</span>
+          {/* 開始對話前沒有階段可看，才顯示狀態 */}
+          {!item.threadId && <span className={`status ${item.status}`}>{STATUS_LABEL[item.status]}</span>}
           <strong>{item.ticketKey}</strong>
-          <span className="item-title">{item.ticketSummary}</span>
+          <span className="item-title" title={item.ticketSummary}>{item.ticketSummary}</span>
         </div>
-        <div className="muted small">
-          {item.project}{item.merchant ? ` m${item.merchant}` : ''} · {item.folder ?? '等資料夾'} · <code>{item.branch}</code>
-          {item.activity && !REDUNDANT_ACTIVITY.test(item.activity) && <> · {item.activity}</>}
-        </div>
-        <Stages item={item} />
-        <div className="row">
+        <div className="row head-actions">
           {running && <button disabled={busy} onClick={() => act(() => api.interrupt(item.id))}>中斷這一輪</button>}
           {canRetest && (
             <button
@@ -303,9 +425,9 @@ export function ChatPanel({ item }: { item: WorkItem }) {
                 <button
                   className="danger"
                   disabled={busy}
-                  onClick={() => {
-                    const message = `從工作台移除 ${item.ticketKey}？` + (running ? '\nAI 正在執行，會先中斷它。' : '') + (item.folder ? `\n不會動到 ${item.folder} 裡的檔案或分支。` : '');
-                    if (window.confirm(message)) act(() => api.remove(item.id));
+                  onClick={(e) => {
+                    e.currentTarget.closest('details')?.removeAttribute('open'); // 收起「更多」選單
+                    setRemoving(true);
                   }}
                 >
                   移除
@@ -313,6 +435,16 @@ export function ChatPanel({ item }: { item: WorkItem }) {
               </div>
             </details>
           )}
+        </div>
+        </div>
+        <div className="chat-head-sub">
+          <div className="muted small head-meta">
+            {item.project}{item.merchant ? ` m${item.merchant}` : ''}
+            {/* 資料夾跟專案同名就不重複寫 */}
+            {item.folder !== item.project && <> · {item.folder ?? '等資料夾'}</>} · <code>{item.branch}</code>
+            {item.activity && !REDUNDANT_ACTIVITY.test(item.activity) && <> · {item.activity}</>}
+          </div>
+          {item.threadId && <Stages item={item} />}
         </div>
       </div>
 
@@ -371,7 +503,7 @@ export function ChatPanel({ item }: { item: WorkItem }) {
       {error && <div className="error">{error}</div>}
 
       {canSend && (
-        <div className="composer">
+        <div className={`composer ${awaitingYou ? 'attention' : ''}`}>
           {images.length > 0 && (
             <div className="attachments">
               {images.map((path) => (
@@ -385,7 +517,11 @@ export function ChatPanel({ item }: { item: WorkItem }) {
           <textarea
             rows={3}
             value={text}
-            placeholder={running ? '補充指示（會插進正在進行的這一輪）。可以直接貼上截圖。' : '跟 AI 說…（⌘＋Enter 送出，可以直接貼上截圖）'}
+            placeholder={
+              running ? '補充指示（會插進正在進行的這一輪）。可以直接貼上截圖。'
+              : awaitingYou ? 'AI 在等你回答…（⌘＋Enter 送出，可以直接貼上截圖）'
+              : '跟 AI 說…（⌘＋Enter 送出，可以直接貼上截圖）'
+            }
             onChange={(e) => setText(e.target.value)}
             onPaste={onPaste}
             onKeyDown={(e) => {

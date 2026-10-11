@@ -53,6 +53,8 @@ export interface Settings {
   folders: FolderSetting[];
   /** 瀏覽器測試的帳號檔放在哪裡（每個專案一個 {專案}.playwright.json） */
   testConfigDir: string;
+  /** 提交時可以選的身分 */
+  gitIdentities: { name: string; email: string }[];
 }
 
 export const DEFAULT_SETTINGS_YAML = `# FlowPilot 設定。改完存檔，重新整理就生效。
@@ -69,6 +71,13 @@ jira:
 
 # 瀏覽器測試的帳號檔（每個專案一個 {專案}.playwright.json，沿用測試技能原本讀的檔案）
 testConfigDir: ~/.codex/local-test-configs
+
+# 提交時可以選的身分（右邊「Git 改動」的選單；只套用在那一次提交，預設用資料夾的 Git 設定）
+gitIdentities:
+  - name: ban intellianalyze.com
+    email: ban@intellianalyze.com
+  - name: penbillpopo
+    email: penbillpopo@gmail.com
 
 # 分支規則：{商戶} 是商戶編號，{單號} 是子任務的單號（大寫）
 # description 是給 AI 判斷專案用的說明，寫得越清楚判斷越準
@@ -122,6 +131,11 @@ folders:
     port: 5200
 `;
 
+const DEFAULT_IDENTITIES = [
+  { name: 'ban intellianalyze.com', email: 'ban@intellianalyze.com' },
+  { name: 'penbillpopo', email: 'penbillpopo@gmail.com' },
+];
+
 export function expandHome(path: string): string {
   return path === '~' || path.startsWith('~/') ? join(homedir(), path.slice(1)) : path;
 }
@@ -144,6 +158,7 @@ export function parseSettings(text: string): Settings {
     ...raw,
     jira: { ...raw.jira, envFile: expandHome(raw.jira.envFile) },
     testConfigDir: expandHome(raw.testConfigDir || '~/.codex/local-test-configs'),
+    gitIdentities: (raw.gitIdentities?.length ? raw.gitIdentities : DEFAULT_IDENTITIES).filter((i) => i?.name && i?.email),
     folders: raw.folders.map((f) => ({ ...f, path: expandHome(f.path) })),
   };
 }

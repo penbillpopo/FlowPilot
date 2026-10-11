@@ -3,7 +3,7 @@ import { execFile } from 'node:child_process';
 import { mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join, resolve, sep } from 'node:path';
-import type { GitFile, GitState } from '../shared/types';
+import type { GitFile, GitIdentity, GitState } from '../shared/types';
 import { currentBranch, remoteBranchExists, runGit } from './git';
 
 /** 解析 git status --porcelain=v1 -z：X 是暫存區、Y 是工作區 */
@@ -49,7 +49,9 @@ export async function gitState(cwd: string, baseBranch?: string): Promise<GitSta
   let unpushed: number | null = null;
   if (hasRemote) unpushed = Number((await git(cwd, ['rev-list', '--count', `refs/remotes/origin/${branch}..HEAD`])).trim());
   const ahead = baseBranch ? Number((await runGit(cwd, ['rev-list', '--count', `origin/${baseBranch}..HEAD`])).stdout.trim() || 0) : 0;
-  return { branch, staged, unstaged, unpushed, hasRemote, ahead };
+  // 資料夾目前設定的提交身分（預設用這個）
+  const identity = { name: (await runGit(cwd, ['config', 'user.name'])).stdout.trim(), email: (await runGit(cwd, ['config', 'user.email'])).stdout.trim() };
+  return { branch, staged, unstaged, unpushed, hasRemote, ahead, identity, identities: [] };
 }
 
 /** 某個檔案的差異；新檔案（未追蹤）顯示整個檔案都是新增 */
@@ -98,7 +100,10 @@ export function loginShell(cwd: string, command: string, timeoutMs: number): Pro
 }
 
 /** 提交暫存的變更，回傳提交編號 */
-export async function commitStaged(cwd: string, message: string): Promise<string> {
+const shellQuote = (text: string) => `'${text.replace(/'/g, `'\\''`)}'`;
+
+/** 提交暫存的變更；指定身分時只用在這一次，不改資料夾的設定 */
+export async function commitStaged(cwd: string, message: string, identity?: GitIdentity): Promise<string> {
   if (!message.trim()) throw new Error('請輸入提交訊息');
   const { staged } = await gitState(cwd);
   if (staged.length === 0) throw new Error('沒有暫存的變更可以提交');
@@ -106,7 +111,8 @@ export async function commitStaged(cwd: string, message: string): Promise<string
   const file = join(dir, 'message.txt');
   writeFileSync(file, `${message.trim()}\n`);
   try {
-    await loginShell(cwd, `git commit -F '${file}'`, 10 * 60_000);
+    const who = identity ? `-c user.name=${shellQuote(identity.name)} -c user.email=${shellQuote(identity.email)} ` : '';
+    await loginShell(cwd, `git ${who}commit -F '${file}'`, 10 * 60_000);
   } finally {
     rmSync(dir, { recursive: true, force: true });
   }

@@ -76,7 +76,7 @@ describe('流程階段', () => {
   it('開發完自動接著做無頭測試：用測試技能、無頭瀏覽器、不用確認測試計畫、自動登入', async () => {
     const t = setup();
     await t.complete();
-    expect(t.get()).toMatchObject({ stage: 'autotest', status: 'running' });
+    expect(t.get()).toMatchObject({ stage: 'autotest', status: 'running', autotested: true });
     expect(t.sites).toEqual(['PlatformAdmin']);
     const turn = t.lastTurn();
     expect(turn.input[0]).toMatchObject({ type: 'skill', name: 'frontend-playwright-test' });
@@ -107,13 +107,12 @@ describe('流程階段', () => {
     expect(t.requests.filter((r) => r.method === 'turn/start').length).toBe(turns);
   });
 
-  it('開瀏覽器測給我看：有頭、先確認測試計畫；指定的帳號優先，只限這張單', async () => {
+  it('開瀏覽器測給我看：有頭、先確認測試計畫；帳號照帳號檔裡這個環境的', async () => {
     const t = setup();
     t.store.updateWorkItem(t.id, { stage: 'manual', status: 'review' });
     t.runner.switchEnvironment(t.id, 'uat');
     expect(readFileSync(join(t.folder, 'src/environments/environment.ts'), 'utf8')).toContain("  // apiUrl: 'http://sit/api',");
-    expect(t.runner.testState(t.id)).toEqual({ environment: 'uat', account: { username: 'uat-user', source: '帳號檔' }, override: null });
-    expect(t.runner.setTestAccount(t.id, { username: ' me ', password: 'secret' })).toMatchObject({ account: { username: 'me', source: '這張單指定' }, override: 'me' });
+    expect(t.runner.testState(t.id)).toMatchObject({ environment: 'uat', account: { username: 'uat-user' } });
 
     await t.runner.retest(t.id);
     expect(t.get()).toMatchObject({ stage: 'retest', status: 'running' });
@@ -122,9 +121,9 @@ describe('流程階段', () => {
     expect(text).toContain('等我確認後才開始');
     expect(text).toContain('UAT');
     const file = text.match(/讀 (\S+\.json) 裡的帳號密碼/)![1];
-    expect(JSON.parse(readFileSync(file, 'utf8'))).toMatchObject({ environment: 'UAT', username: 'me', password: 'secret' });
+    expect(JSON.parse(readFileSync(file, 'utf8'))).toMatchObject({ environment: 'UAT', username: 'uat-user', password: 'uat-pass' });
     // 畫面拿不到密碼
-    expect(JSON.stringify(t.runner.board())).not.toContain('secret');
+    expect(JSON.stringify(t.runner.testState(t.id))).not.toContain('uat-pass');
 
     await t.complete();
     expect(t.get()).toMatchObject({ stage: 'manual', status: 'review', activity: '重測完成，等你確認' });
@@ -133,11 +132,21 @@ describe('流程階段', () => {
     await expect(t.runner.retest(t.id)).rejects.toThrow('AI 還在執行');
   });
 
-  it('沒有帳號時不開始測試，停下來請你指定', async () => {
+  it('沒有帳號時不開始測試，停下來請你補帳號檔', async () => {
     const t = setup({ account: false });
     await t.complete();
+    expect(t.get()).toMatchObject({ stage: 'manual', status: 'waiting', autotested: false });
+    expect(t.get().activity).toContain('PlatformAdmin.playwright.json 補上');
+    expect(t.sites).toEqual([]);
+  });
+
+  it('有帳號但還沒填密碼：畫面顯示帳號並提醒補密碼，不開始測試', async () => {
+    const t = setup({ account: false });
+    writeFileSync(join(t.root, 'configs', 'PlatformAdmin.playwright.json'), JSON.stringify({ environments: [{ environment: 'SIT', username: 'ban@intellianalyze.com', passwordSource: '' }] }));
+    expect(t.runner.testState(t.id).account).toEqual({ username: 'ban@intellianalyze.com', hasPassword: false });
+    await t.complete();
     expect(t.get()).toMatchObject({ stage: 'manual', status: 'waiting' });
-    expect(t.get().activity).toContain('請在右邊「測試」指定這張單要用的帳號');
+    expect(t.get().activity).toContain('還沒有密碼');
     expect(t.sites).toEqual([]);
   });
 });

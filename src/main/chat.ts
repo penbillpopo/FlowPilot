@@ -1,4 +1,5 @@
 // 聊天紀錄：把 Codex 對話裡的各種項目（你的訊息、AI 回覆、思考、指令、檔案改動、工具…）整理成畫面要顯示的格式。
+import { ACCEPTANCE_NOTE } from '../shared/acceptance';
 import type { ChatEntry } from '../shared/types';
 import type { CodexRpc } from './codex/rpc';
 
@@ -14,7 +15,8 @@ function userText(content: any[]): { text: string; images: string[] } {
   const texts: string[] = [];
   const images: string[] = [];
   for (const part of content ?? []) {
-    if (part.type === 'text') texts.push(part.text);
+    // 修改時 FlowPilot 附在後面的說明不顯示，只留你說的話
+    if (part.type === 'text') texts.push(String(part.text ?? '').split(ACCEPTANCE_NOTE)[0].trimEnd());
     else if (part.type === 'skill') texts.push(`［技能：${part.name}］`);
     else if (part.type === 'localImage') images.push(part.path);
     else if (part.type === 'image' && part.url) images.push(part.url);

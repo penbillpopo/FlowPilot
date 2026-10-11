@@ -4,6 +4,7 @@ import type { BranchInfo, ChatEntry, ChatEvent, WorkItem, WorkStage, WorkStatus 
 import { DiffView } from './DiffView';
 import { commitPrefs, deliveryOf, gitChanged, useGitState } from './delivery';
 import { Markdown } from './Markdown';
+import { pendingChecks } from './SidePanels';
 
 const api = window.flowpilot;
 
@@ -85,6 +86,7 @@ function flowPilotLabel(text: string): string | null {
   }
   if (text.startsWith('## 更新需求')) return '更新需求';
   if (text.startsWith('## 自我審查')) return '自我審查指示';
+  if (text.startsWith('## 整理驗收表')) return '整理驗收表指示';
   if (text.trim() === '請從剛才中斷的地方繼續。') return '請 AI 從中斷的地方繼續';
   return null;
 }
@@ -221,7 +223,8 @@ function Entry({ entry }: { entry: ChatEntry }) {
     case 'assistant':
       return (
         <div className="msg assistant">
-          <Markdown text={entry.text} />
+          {/* 驗收表的 JSON 畫在右邊「驗收」，對話裡只留一句 */}
+          <Markdown text={entry.text.replace(/```flowpilot-test[\s\S]*?(```|$)/g, '_（驗收表已更新，看右邊「驗收」）_')} />
         </div>
       );
     case 'reasoning':
@@ -389,10 +392,10 @@ export function ChatPanel({ item }: { item: WorkItem }) {
       const git = await api.git.state(item.id);
       unpushed = git.hasRemote ? (git.unpushed ?? 0) : git.ahead;
     } catch {}
-    const pendingManual = item.testReport?.manual.filter((m) => !m.done) ?? [];
+    const pending = pendingChecks(item);
     const warning =
       (unpushed > 0 ? `\n\n⚠️ 還有 ${unpushed} 個提交沒推送。完成之後還是可以推送，但要記得。` : '') +
-      (pendingManual.length ? `\n\n⚠️ 還有 ${pendingManual.length} 個手動測試項目沒勾：\n${pendingManual.slice(0, 5).map((m) => `・${m.text}`).join('\n')}` : '');
+      (pending ? `\n\n⚠️ 驗收表還有 ${pending} 項要你測、還沒勾「我測過了」。` : '');
     const ok = window.confirm(
       `完成 ${item.ticketKey}，讓出 ${item.folder} 給下一張？${warning}\n\n資料夾要乾淨（改動都提交或捨棄了）；environment.ts（瀏覽器測試切 SIT／UAT 用的）會順便還原，本機網站也會停掉。`,
     );

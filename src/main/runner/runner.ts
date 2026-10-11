@@ -31,6 +31,7 @@ import type { Settings } from '../settings';
 import { FINISHED, OCCUPYING, type StoredWorkItem, type Store } from '../store';
 import type { VSCode } from '../vscode';
 import { pickFolder } from './allocate';
+import { ACCEPTANCE_NOTE } from '../../shared/acceptance';
 import { commandPolicy, looksLikeQuestion, parseTestReport, parseTestResult } from './policy';
 
 export interface RunnerDeps {
@@ -117,18 +118,42 @@ const STAGE_DONE: Partial<Record<WorkStage, string>> = {
   manual: '需求比對完了，等你測試',
 };
 
-/** 要 AI 在最後附上的測試報告（預期結果對照、要你手動測的項目），FlowPilot 讀這段畫成對照表和清單 */
-function reportLines(review: Review | null): string[] {
+/**
+ * 要 AI 在最後附上的驗收表：以需求為主軸，每一條寫改了什麼、為什麼、改在哪、會影響哪裡、怎麼測，加上測試結果。
+ * 由開發的 AI 寫（它最清楚為什麼這樣改）；FlowPilot 再拿實際改到的檔案核對有沒有漏講。
+ */
+export function reportLines(review: Review | null): string[] {
   const acceptance = review?.acceptance ?? [];
   return [
     acceptance.length
       ? `- 預期結果要一條一條對照：${acceptance.map((a, i) => `${i + 1}. ${a}`).join('　')}`
       : '- 預期結果要一條一條對照（照單上的「預期結果」拆成一條一句）。',
-    '- 回覆最後、在「測試結果」那一行之前，附上這段（FlowPilot 會讀它畫成對照表和手動測試清單；JSON 要合法）：',
+    '- 回覆最後、在「測試結果」那一行之前，附上驗收表（FlowPilot 會讀它畫成給我手動測試用的驗收表；JSON 要合法）。讀的人是要親自驗收的操作者，不是看程式碼的人：',
+    '  - change：改了什麼，用畫面上看得到的行為來說（例如「列表上方多一個狀態下拉選單，選了就重新查詢」），不要寫程式碼細節。',
+    '  - why：為什麼這樣改、依據哪一段（Jira 預期結果第幾條、API 文件、設計稿、或你自己的判斷）。',
+    '  - files：改到的檔案路徑（從專案根目錄開始）。',
+    '  - impact：也會影響到的頁面或功能。改到共用的元件、服務、樣式時，一定要實際搜尋（例如 rg）有哪些地方用到，寫出頁面名稱；沒有就寫空字串。',
+    '  - howToTest：我要怎麼測：在哪一頁、用哪個商戶、做什麼操作、應該看到什麼。具體到我照著做就能驗收。',
+    '  - page：要測的頁面路徑（例如 /order/list），沒有固定頁面就寫空字串。',
+    '  - needYou：要不要我親自看（畫面、操作感覺、寫入後的結果、你沒測到的）是 true；你已經確實測過、我不用再看的是 false。',
+    '  - attention：要我特別注意的地方，一條一句：Jira 沒寫清楚由你自己判斷的、跟 Jira 或設計稿不一致的（寫原因）、需求範圍以外也被改到的。沒有就給空陣列。',
+    '  - otherChanges：跟某一條預期結果無關、但也改到的東西（例如共用元件、重構、修掉的舊問題）。這張單改到的每一個檔案，都要出現在某一條的 files 或 otherChanges 裡（environment.ts 除外）。',
+    '  - manual：其他要我手動測、但不屬於任何一條預期結果的項目，一項一句。',
     '  ```flowpilot-test',
-    '  {"acceptance":[{"no":1,"text":"預期結果的內容","result":"通過、沒過或沒測","note":"證據或原因，一句話"}],"manual":["要我手動測的項目，一項一句"]}',
+    '  {"attention":["…"],"acceptance":[{"no":1,"text":"預期結果的內容","result":"通過、沒過或沒測","note":"測試的證據或原因，一句話","change":"…","why":"…","files":["src/…"],"impact":"…","howToTest":"…","page":"/…","needYou":true}],"otherChanges":[{"change":"…","why":"…","files":["src/…"],"impact":"…"}],"manual":["…"]}',
     '  ```',
   ];
+}
+
+/** 修改時附在訊息最後：請 AI 一併更新驗收表（畫面上不顯示這段） */
+function acceptanceUpdateNote(review: Review | null): string {
+  return [
+    '',
+    '',
+    ACCEPTANCE_NOTE,
+    '改完之後，在回覆最後附上更新過的完整驗收表（格式跟之前一樣，要求如下）。這次有改到的條目照實更新 change、files、howToTest；沒重新測的 result 寫「沒測」、needYou 寫 true；沒動到的條目照抄上一版。',
+    ...reportLines(review).slice(1),
+  ].join('\n');
 }
 
 /** 檢查計畫要比對設計稿、單上也有 Figma 連結時，加進測試指示的要求 */
@@ -699,6 +724,51 @@ export class Runner {
     this.update(id, { testReport: { ...item.testReport, manual } });
   }
 
+  /** 驗收表的一條勾選「我測過了」 */
+  setChecked(id: number, no: number, checked: boolean) {
+    const item = this.deps.store.getWorkItem(id)!;
+    if (!item.testReport?.acceptance.some((a) => a.no === no)) throw new Error('找不到這一條');
+    const acceptance = item.testReport.acceptance.map((a) => (a.no === no ? { ...a, checked } : a));
+    this.update(id, { testReport: { ...item.testReport, acceptance } });
+  }
+
+  /** 請 AI 整理驗收表，不重新測試（例如自動測試沒跑成、還沒有驗收表） */
+  async requestAcceptance(id: number) {
+    this.assertIdle(id, '整理驗收表');
+    const review = this.deps.store.getReview(this.deps.store.getWorkItem(id)!.ticketKey)?.review ?? null;
+    const text = [
+      '## 整理驗收表',
+      '',
+      '請整理這張單的驗收表給我手動測試用，不用重新測試、不要改程式碼。用 git diff 對照基底分支，確認每個改到的檔案都有說明。沒測過的 result 寫「沒測」、needYou 寫 true。',
+      ...reportLines(review),
+    ].join('\n');
+    await this.reply(id, text, [], { asFix: false, activity: 'AI 整理驗收表中' });
+  }
+
+  /** 這張單從基底分支到現在改到的檔案（含還沒提交、還沒追蹤的），environment.ts 不算 */
+  async changedFiles(id: number): Promise<string[]> {
+    const item = this.deps.store.getWorkItem(id)!;
+    if (!item.folder) return [];
+    const cwd = this.folderPath(item.folder);
+    const files = new Set<string>();
+    const add = (out: string) => out.split('\n').map((l) => l.trim()).filter(Boolean).forEach((f) => files.add(f));
+    const committed = await runGit(cwd, ['diff', '--name-only', `origin/${item.baseBranch}...HEAD`]);
+    if (committed.code === 0) add(committed.stdout);
+    add((await runGit(cwd, ['diff', '--name-only', 'HEAD'])).stdout);
+    add((await runGit(cwd, ['ls-files', '--others', '--exclude-standard'])).stdout);
+    return [...files].filter((f) => !isEnvironmentFile(f)).sort();
+  }
+
+  /** 本機網站某一頁的網址（網站沒開會先啟動）；只開本機網站，不開別的網址 */
+  async pageUrl(id: number, page: string): Promise<string> {
+    const item = this.deps.store.getWorkItem(id)!;
+    if (!item.folder) throw new Error('這張單還沒有資料夾');
+    if (/^[a-z]+:/i.test(page.trim())) throw new Error('只能打開本機網站的頁面');
+    const base = (await this.deps.ensureSite(item.folder)).replace(/\/$/, '');
+    const path = page.trim();
+    return base + (!path ? '/' : path.startsWith('/') || path.startsWith('#') ? path : `/${path}`);
+  }
+
   /** 試登一次要用的東西：網站網址、環境、這次的登入資料檔（沒辦法試就丟出原因） */
   async prepareTrialLogin(id: number): Promise<{ url: string; env: Env; accountFile: string; username: string; hosts: string[] }> {
     const item = this.deps.store.getWorkItem(id)!;
@@ -836,10 +906,11 @@ export class Runner {
         } else {
           let activity = STAGE_DONE[latest.stage] ?? '等你測試';
           const tested: { autotestResult?: TestResult; testReport?: TestReport } = {};
+          // 修改、整理驗收表時 AI 也會附上更新過的驗收表
+          const report = parseTestReport(latest.lastMessage, latest.testReport);
+          if (report) tested.testReport = report;
           if (latest.stage === 'autotest' || latest.stage === 'retest') {
             const result = parseTestResult(latest.lastMessage);
-            const report = parseTestReport(latest.lastMessage, latest.testReport);
-            if (report) tested.testReport = report;
             activity = testActivity(latest.stage === 'autotest' ? '自動測試' : '重測', result);
             if (latest.stage === 'autotest') tested.autotestResult = result;
           }
@@ -936,8 +1007,11 @@ export class Runner {
       this.update(id, { status: 'running', activity: '已回答，繼續執行', pending: null });
       return;
     }
+    // 等你測試時要求修改：附上請 AI 一併更新驗收表的說明
+    const asFix = !this.turns.get(item.threadId) && item.stage === 'manual' && options.asFix !== false;
+    const note = asFix && text.trim() ? acceptanceUpdateNote(this.deps.store.getReview(item.ticketKey)?.review ?? null) : '';
     const input: object[] = [
-      ...(text.trim() ? [{ type: 'text', text, text_elements: [] }] : []),
+      ...(text.trim() ? [{ type: 'text', text: text + note, text_elements: [] }] : []),
       ...images.map((path) => ({ type: 'localImage', path })),
     ];
     if (input.length === 0) throw new Error('訊息是空的');

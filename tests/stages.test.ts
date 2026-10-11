@@ -258,9 +258,20 @@ describe('流程階段', () => {
     expect(text).toContain('1. 預設選 All');
     expect(text).toContain('```flowpilot-test');
     await t.complete('```flowpilot-test\n{"acceptance":[{"no":1,"text":"預設選 All","result":"通過","note":""}],"manual":["存檔後列表多一筆"]}\n```\n測試結果：通過');
-    expect(t.get().testReport).toEqual({ acceptance: [{ no: 1, text: '預設選 All', result: '通過', note: '' }], manual: [{ text: '存檔後列表多一筆', done: false }] });
+    expect(t.get().testReport?.acceptance).toMatchObject([{ no: 1, text: '預設選 All', result: '通過', note: '' }]);
+    expect(t.get().testReport?.manual).toEqual([{ text: '存檔後列表多一筆', done: false }]);
     t.runner.setManualDone(t.id, 0, true);
     expect(t.get().testReport?.manual[0].done).toBe(true);
+    t.runner.setChecked(t.id, 1, true);
+    expect(t.get().testReport?.acceptance[0].checked).toBe(true);
+
+    // 等你測試時要求修改：訊息後面附上請 AI 更新驗收表的說明；改完附的新驗收表會存下來
+    await t.runner.reply(t.id, '按鈕顏色改成藍色');
+    const fix: string = t.lastTurn().input[0].text;
+    expect(fix.startsWith('按鈕顏色改成藍色\n\n［FlowPilot 附註］')).toBe(true);
+    expect(t.get().stage).toBe('fix');
+    await t.complete('改好了\n```flowpilot-test\n{"acceptance":[{"no":1,"text":"預設選 All","result":"沒測","change":"按鈕改藍色","needYou":true}]}\n```');
+    expect(t.get().testReport?.acceptance[0]).toMatchObject({ change: '按鈕改藍色', changed: true, checked: false });
   });
 
   it('AI 開的子 AI 要求同意：認得是這張單的，照同一套規則處理，不會互等卡住', async () => {

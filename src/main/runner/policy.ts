@@ -1,4 +1,4 @@
-import type { TestReport, TestResult } from '../../shared/types';
+import type { AcceptanceItem, TestReport, TestResult } from '../../shared/types';
 // AI 要執行的指令：哪些自動同意、哪些要你確認。
 // 開發中的 AI 用「每個指令都先問」的模式，由這裡決定；只有危險的才真的轉給你。
 
@@ -44,8 +44,9 @@ export function parseTestResult(message: string): TestResult {
 }
 
 /**
- * 讀測試報告：AI 被要求在最後附一段 ```flowpilot-test 的 JSON（預期結果對照、要你手動測的項目），取最後一段。
- * 讀不到或格式不對就回傳 null（畫面上就不顯示對照表）。
+ * 讀驗收表：AI 被要求在最後附一段 ```flowpilot-test 的 JSON，取最後一段。
+ * 跟上一版比對：內容一樣的條目保留你的勾選；內容變了的標成「有變動」並取消勾選（要重新看）。
+ * 讀不到或格式不對就回傳 null（沿用上一版）。
  */
 export function parseTestReport(message: string, previous: TestReport | null = null): TestReport | null {
   const blocks = [...message.matchAll(/```flowpilot-test\s*([\s\S]*?)```/g)];
@@ -53,17 +54,36 @@ export function parseTestReport(message: string, previous: TestReport | null = n
   if (!raw) return null;
   try {
     const data = JSON.parse(raw);
+    const text = (v: unknown) => String(v ?? '').trim();
+    const list = (v: unknown) => (Array.isArray(v) ? v.map(text).filter(Boolean) : []);
     const results = ['通過', '沒過', '沒測'];
-    const acceptance = (Array.isArray(data.acceptance) ? data.acceptance : []).map((a: any, i: number) => ({
-      no: Number(a?.no) || i + 1,
-      text: String(a?.text ?? '').trim(),
-      result: results.includes(a?.result) ? a.result : '沒測',
-      note: String(a?.note ?? '').trim(),
-    }));
+    const before = new Map((previous?.acceptance ?? []).map((a) => [a.no, a]));
+    const acceptance: AcceptanceItem[] = (Array.isArray(data.acceptance) ? data.acceptance : []).map((a: any, i: number) => {
+      const item = {
+        no: Number(a?.no) || i + 1,
+        text: text(a?.text),
+        result: results.includes(a?.result) ? a.result : '沒測',
+        note: text(a?.note),
+        change: text(a?.change),
+        why: text(a?.why),
+        files: list(a?.files),
+        impact: /^(沒有|無|none)?$/i.test(text(a?.impact)) ? '' : text(a?.impact),
+        howToTest: text(a?.howToTest),
+        page: text(a?.page),
+        needYou: a?.needYou === true,
+      };
+      const old = before.get(item.no);
+      // 改了什麼、改在哪、結果其中一個不一樣，就算這次有變動
+      const same = !!old && old.change === item.change && old.files.join() === item.files.join() && old.result === item.result;
+      return { ...item, checked: same ? old!.checked : false, changed: !!previous && !same };
+    });
+    const otherChanges = (Array.isArray(data.otherChanges) ? data.otherChanges : [])
+      .map((c: any) => ({ change: text(c?.change), why: text(c?.why), files: list(c?.files), impact: text(c?.impact) }))
+      .filter((c: { change: string }) => c.change);
     // 同樣的手動測試項目，之前勾過的保留勾選
     const done = new Set((previous?.manual ?? []).filter((m) => m.done).map((m) => m.text));
-    const manual = (Array.isArray(data.manual) ? data.manual : []).map((m: any) => String(m ?? '').trim()).filter(Boolean).map((text: string) => ({ text, done: done.has(text) }));
-    return { acceptance, manual };
+    const manual = list(data.manual).map((t) => ({ text: t, done: done.has(t) }));
+    return { attention: list(data.attention), acceptance, otherChanges, manual };
   } catch {
     return null;
   }

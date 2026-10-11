@@ -96,6 +96,10 @@ const api: FlowPilotApi = {
     closeBrowsers: () => ipcRenderer.invoke('test:closeBrowsers'),
     trialLogin: (id) => ipcRenderer.invoke('test:trialLogin', id),
     setManualDone: (id, index, done) => ipcRenderer.invoke('test:setManualDone', id, index, done),
+    setChecked: (id, no, checked) => ipcRenderer.invoke('test:setChecked', id, no, checked),
+    requestAcceptance: (id) => ipcRenderer.invoke('test:requestAcceptance', id),
+    changedFiles: (id) => ipcRenderer.invoke('test:changedFiles', id),
+    openPage: (id, page) => ipcRenderer.invoke('test:openPage', id, page),
   },
 };
 

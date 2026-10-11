@@ -416,6 +416,29 @@ header .actions button { white-space: nowrap; }
 .ac-通過 .ac-mark { color: var(--ok-fg); }
 .ac-沒過 .ac-mark { color: var(--blocked); }
 .ac-沒測 .ac-mark { color: var(--muted); }
+/* 驗收表 */
+.acceptance-panel { display: flex; flex-direction: column; gap: 8px; }
+.ac-summary { display: flex; gap: 8px; align-items: baseline; }
+.ac-attention { border: 1px solid var(--warn); border-radius: 6px; padding: 6px 8px; font-size: 13px; }
+.ac-attention ul { margin: 4px 0 0; padding-left: 18px; display: flex; flex-direction: column; gap: 3px; }
+.ac-attention li.bad { color: var(--blocked); }
+.ac-list { margin: 0; padding: 0; list-style: none; display: flex; flex-direction: column; gap: 6px; }
+.ac-item { border: 1px solid var(--line); border-radius: 6px; font-size: 13px; }
+.ac-item.mine { border-color: var(--accent); }
+.ac-item.quiet { opacity: .85; }
+.ac-head { display: flex; gap: 6px; align-items: baseline; width: 100%; text-align: left; border: none; background: none; padding: 6px 8px; color: var(--fg); cursor: pointer; }
+.ac-title { flex: 1; min-width: 0; }
+.ac-badge { flex-shrink: 0; font-size: 11px; padding: 0 6px; border-radius: 8px; white-space: nowrap; }
+.ac-badge.you { background: var(--selected); color: var(--accent); font-weight: 600; }
+.ac-badge.ok { background: var(--ok-bg); color: var(--ok-fg); }
+.ac-badge.bad { background: var(--blocked); color: #fff; }
+.ac-new { flex-shrink: 0; font-size: 11px; color: var(--warn); font-weight: 600; }
+.ac-body { padding: 0 8px 8px; display: flex; flex-direction: column; gap: 3px; }
+.ac-body p { margin: 0; word-break: break-word; }
+.ac-label { display: inline-block; min-width: 3.5em; margin-right: 6px; color: var(--muted); font-size: 12px; }
+.ac-how { background: var(--hover); border-radius: 4px; padding: 4px 6px; }
+.ac-actions { display: flex; gap: 12px; align-items: center; flex-wrap: wrap; margin-top: 4px; }
+.ac-actions label { display: inline-flex; gap: 4px; align-items: center; cursor: pointer; }
 .manual-list label { display: flex; gap: 8px; align-items: baseline; cursor: pointer; }
 .manual-list label.done { color: var(--muted); text-decoration: line-through; }
 .pm-draft { display: flex; flex-direction: column; gap: 6px; border: 1px solid var(--line); border-radius: 6px; padding: 8px 10px; }

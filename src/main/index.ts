@@ -492,6 +492,12 @@ function registerIpc() {
   ipcMain.handle('test:closeBrowsers', () => closeTestBrowsers());
   ipcMain.handle('test:trialLogin', (_event, id: number) => trialLogin(id));
   ipcMain.handle('test:setManualDone', (_event, id: number, index: number, done: boolean) => runner.setManualDone(id, index, done));
+  ipcMain.handle('test:setChecked', (_event, id: number, no: number, checked: boolean) => runner.setChecked(id, no, checked));
+  ipcMain.handle('test:requestAcceptance', (_event, id: number) => runner.requestAcceptance(id));
+  ipcMain.handle('test:changedFiles', (_event, id: number) => runner.changedFiles(id));
+  ipcMain.handle('test:openPage', async (_event, id: number, page: string) => {
+    await shell.openExternal(await runner.pageUrl(id, String(page ?? '')));
+  });
   ipcMain.handle('tickets:marks', (_event, keys: string[]) => ticketMarks(keys));
   ipcMain.handle('test:state', (_event, id: number) => runner.testState(id));
   ipcMain.handle('test:setEnvironment', (_event, id: number, env: Env) => {

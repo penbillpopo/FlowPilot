@@ -2,7 +2,7 @@
 import { createContext, useContext, useEffect, useState } from 'react';
 import type { BoardState, WorkItem, WorkStatus } from '../../shared/types';
 import { ChatPanel, errorText, STATUS_LABEL } from './ChatPanel';
-import { FolderTerminalPanel, GitPanel, TestPanel, TestReportPanel } from './SidePanels';
+import { AcceptancePanel, FolderTerminalPanel, GitPanel, pendingChecks, TestPanel } from './SidePanels';
 
 const api = window.flowpilot;
 
@@ -40,8 +40,14 @@ function Row({ item, selected, onSelect, extra }: { item: WorkItem; selected: bo
 
 /** 右邊：測試固定在上面；Git 改動和終端機用分頁切換（兩個都一直開著，切換不會中斷終端機） */
 function RightPanels({ item }: { item: WorkItem }) {
-  const [tab, setTab] = useState<'git' | 'term' | 'report'>('git');
-  const pendingManual = item.testReport?.manual.filter((m) => !m.done).length ?? 0;
+  // 等你測試時一打開就是驗收表
+  const [tab, setTab] = useState<'git' | 'term' | 'report'>(item.testReport && item.stage === 'manual' ? 'report' : 'git');
+  const pending = pendingChecks(item);
+  // 測試做完、進到等你測試：自動切到驗收
+  const readyToCheck = !!item.testReport && item.stage === 'manual';
+  useEffect(() => {
+    if (readyToCheck) setTab('report');
+  }, [readyToCheck]);
   const [changes, setChanges] = useState(0);
   const [siteUrl, setSiteUrl] = useState<string | null>(null);
   return (
@@ -51,8 +57,8 @@ function RightPanels({ item }: { item: WorkItem }) {
         <button role="tab" className={tab === 'git' ? 'on' : ''} onClick={() => setTab('git')}>
           改動{changes > 0 && <span className="tab-count">{changes}</span>}
         </button>
-        <button role="tab" className={tab === 'report' ? 'on' : ''} onClick={() => setTab('report')} title={pendingManual ? `還有 ${pendingManual} 個手動測試項目沒勾` : undefined}>
-          測試結果{pendingManual > 0 && <span className="tab-count">{pendingManual}</span>}
+        <button role="tab" className={tab === 'report' ? 'on' : ''} onClick={() => setTab('report')} title={pending ? `還有 ${pending} 項要你測、還沒勾` : '每一條需求改了什麼、怎麼測'}>
+          驗收{pending > 0 && <span className="tab-count">{pending}</span>}
         </button>
         <button role="tab" className={tab === 'term' ? 'on' : ''} onClick={() => setTab('term')} title={siteUrl ? `本機網站在跑：${siteUrl}` : undefined}>
           本機網站{siteUrl && <span className="tab-dot" />}
@@ -62,7 +68,7 @@ function RightPanels({ item }: { item: WorkItem }) {
         <GitPanel item={item} onCount={setChanges} />
       </div>
       <div className="tab-body" hidden={tab !== 'report'}>
-        <TestReportPanel item={item} />
+        <AcceptancePanel item={item} />
       </div>
       <div className="tab-body" hidden={tab !== 'term'}>
         <FolderTerminalPanel item={item} onSiteUrl={setSiteUrl} />

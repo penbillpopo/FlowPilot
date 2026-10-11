@@ -66,15 +66,33 @@ describe('測試報告', () => {
   const block = (json: object) => '報告…\n```flowpilot-test\n' + JSON.stringify(json) + '\n```\n測試結果：部分通過（有些沒測）';
   it('讀最後一段，結果不認得的當成沒測；重測後同樣的手動項目保留勾選', () => {
     const first = parseTestReport(block({ acceptance: [{ no: 1, text: '選存款次數時只顯示次數框', result: '通過', note: '畫面正確' }, { no: 2, text: 'X', result: '怪怪的' }], manual: ['存檔後列表多一筆', '中英文切換'] }));
-    expect(first).toEqual({
-      acceptance: [
-        { no: 1, text: '選存款次數時只顯示次數框', result: '通過', note: '畫面正確' },
-        { no: 2, text: 'X', result: '沒測', note: '' },
-      ],
-      manual: [{ text: '存檔後列表多一筆', done: false }, { text: '中英文切換', done: false }],
-    });
+    expect(first?.acceptance.map(({ no, text, result, note }) => ({ no, text, result, note }))).toEqual([
+      { no: 1, text: '選存款次數時只顯示次數框', result: '通過', note: '畫面正確' },
+      { no: 2, text: 'X', result: '沒測', note: '' },
+    ]);
+    expect(first?.manual).toEqual([{ text: '存檔後列表多一筆', done: false }, { text: '中英文切換', done: false }]);
+    expect(first).toMatchObject({ attention: [], otherChanges: [] });
     const checked = { ...first!, manual: [{ text: '存檔後列表多一筆', done: true }, { text: '中英文切換', done: false }] };
     expect(parseTestReport(block({ acceptance: [], manual: ['存檔後列表多一筆', '新的項目'] }), checked)?.manual).toEqual([{ text: '存檔後列表多一筆', done: true }, { text: '新的項目', done: false }]);
+  });
+
+  it('驗收表：讀出改了什麼、為什麼、改在哪；影響寫「沒有」當成空的', () => {
+    const report = parseTestReport(block({
+      attention: ['Jira 沒說要不要記住篩選，我做成不記住'],
+      acceptance: [{ no: 1, text: '新增狀態篩選', result: '通過', note: '', change: '列表上方多一個下拉選單', why: '預期結果第 1 條', files: ['src/app/order/list.component.ts'], impact: '沒有', howToTest: '商戶 8 → 訂單管理 → 選已取消', page: '/order/list', needYou: true }],
+      otherChanges: [{ change: '共用日期元件加參數', why: '要傳預設值', files: ['src/shared/date.ts'], impact: '報表' }, { change: '' }],
+    }));
+    expect(report?.attention).toEqual(['Jira 沒說要不要記住篩選，我做成不記住']);
+    expect(report?.acceptance[0]).toMatchObject({ change: '列表上方多一個下拉選單', files: ['src/app/order/list.component.ts'], impact: '', page: '/order/list', needYou: true, checked: false, changed: false });
+    expect(report?.otherChanges).toEqual([{ change: '共用日期元件加參數', why: '要傳預設值', files: ['src/shared/date.ts'], impact: '報表' }]);
+  });
+
+  it('修改後：沒變的條目保留「我測過了」，有變的標成有變動並取消勾選', () => {
+    const item = (no: number, change: string) => ({ no, text: `第 ${no} 條`, result: '通過', change, files: ['a.ts'], needYou: true });
+    const first = parseTestReport(block({ acceptance: [item(1, '原本'), item(2, '原本')] }))!;
+    const checked = { ...first, acceptance: first.acceptance.map((a) => ({ ...a, checked: true })) };
+    const next = parseTestReport(block({ acceptance: [item(1, '原本'), item(2, '改過了')] }), checked)!;
+    expect(next.acceptance.map((a) => [a.checked, a.changed])).toEqual([[true, false], [false, true]]);
   });
 
   it('沒有報告或格式不對就是 null', () => {
@@ -88,5 +106,12 @@ describe('rebase 衝突讓 AI 自己解', () => {
     expect(commandPolicy('GIT_EDITOR=true git rebase --continue').ask).toBe(false);
     expect(commandPolicy('git rebase origin/master-1').ask).toBe(true);
     expect(commandPolicy('git rebase --continue && git push -f').ask).toBe(true);
+  });
+});
+
+describe('驗收表核對', () => {
+  it('改到但沒被提到的檔案挑出來；路徑寫一部分也認得', async () => {
+    const { unexplainedFiles } = await import('../src/shared/acceptance');
+    expect(unexplainedFiles(['src/app/a.ts', 'src/app/b.html', 'src/shared/c.ts'], ['app/a.ts', './src/app/b.html'])).toEqual(['src/shared/c.ts']);
   });
 });

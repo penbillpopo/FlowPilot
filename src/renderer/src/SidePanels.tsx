@@ -6,44 +6,168 @@ import { useEffect, useRef, useState } from 'react';
 import type { Env, GitFile, TestState, WorkItem } from '../../shared/types';
 import { errorText } from './ChatPanel';
 import { DiffView } from './DiffView';
+import { needsYou, unexplainedFiles } from '../../shared/acceptance';
 import { commitPrefs, deliveryOf, isTestOnly, setCommitPrefs, useGitState } from './delivery';
 
 const api = window.flowpilot;
 
-const RESULT_MARK = { 通過: '✓', 沒過: '✗', 沒測: '—' } as const;
-
-/** 測試結果：預期結果一條一條的對照，以及要你手動測的清單（勾選會存起來，重測後同樣的項目保留勾選） */
-export function TestReportPanel({ item }: { item: WorkItem }) {
-  const [error, setError] = useState<string | null>(null);
+/** 需要你測的條目還沒勾「我測過了」的數量，加上沒勾的其他手動項目（分頁上的數字） */
+export function pendingChecks(item: WorkItem): number {
   const report = item.testReport;
-  if (!report) return <div className="panel"><p className="muted small">瀏覽器測試做完後，這裡會列出每一條預期結果有沒有通過，以及要你手動測的項目。</p></div>;
+  if (!report) return 0;
+  return report.acceptance.filter((a) => needsYou(a) && !a.checked).length + report.manual.filter((m) => !m.done).length;
+}
+
+const askAI = (text: string) => window.dispatchEvent(new CustomEvent('flowpilot:ask-ai', { detail: text }));
+const fileName = (path: string) => path.split('/').pop() ?? path;
+
+/**
+ * 驗收：以需求為主軸的驗收表（由開發的 AI 寫）。每一條：改了什麼、為什麼、改在哪、會影響哪裡、怎麼測，加上 AI 的測試結果。
+ * 要你注意的地方放最上面；實際改到、但驗收表沒提到的檔案用紅字標出來（FlowPilot 自己核對，不只信 AI 說的）。
+ */
+export function AcceptancePanel({ item }: { item: WorkItem }) {
+  const [error, setError] = useState<string | null>(null);
+  const [changed, setChanged] = useState<string[] | null>(null);
+  const [open, setOpen] = useState<Set<number>>(new Set());
+  const report = item.testReport;
+
+  // 驗收表更新、AI 一輪做完時重新核對改到的檔案
+  useEffect(() => {
+    if (!item.folder || !report) return;
+    api.test.changedFiles(item.id).then(setChanged).catch(() => setChanged(null));
+  }, [item.id, item.testReport, item.status]);
+
+  const run = (action: () => Promise<unknown>) => action().catch((e) => setError(errorText(e)));
+  const idle = !!item.threadId && ['review', 'waiting'].includes(item.status) && !item.pending;
+
+  if (!report) {
+    return (
+      <div className="panel">
+        <p className="muted small">AI 做完開發、測試完之後，這裡會列出驗收表：每一條需求改了什麼、為什麼、改在哪、會影響哪裡、你要怎麼測。</p>
+        {idle && item.stage === 'manual' && (
+          <button onClick={() => run(() => api.test.requestAcceptance(item.id))} title="不重新測試，請 AI 照目前的改動整理驗收表">請 AI 整理驗收表</button>
+        )}
+        {error && <div className="error small">{error}</div>}
+      </div>
+    );
+  }
+
+  // 舊的驗收表沒有這些欄位（只有測試結果），就不核對
+  const detailed = report.acceptance.some((a) => a.change || a.files.length);
+  const unexplained = detailed && changed ? unexplainedFiles(changed, [...report.acceptance.flatMap((a) => a.files), ...report.otherChanges.flatMap((c) => c.files)]) : [];
+  const forYou = report.acceptance.filter(needsYou);
+  const left = forYou.filter((a) => !a.checked).length;
+
   return (
-    <div className="panel test-report">
-      <div className="plan-block-title">預期結果對照</div>
-      {report.acceptance.length === 0 && <p className="muted small">這次測試沒有逐條回報。</p>}
-      <ul className="acceptance">
-        {report.acceptance.map((a) => (
-          <li key={a.no} className={`ac-${a.result}`}>
-            <span className="ac-mark">{RESULT_MARK[a.result]}</span>
-            <span>
-              {a.no}. {a.text}
-              {a.note && <span className="muted small">（{a.note}）</span>}
-            </span>
-          </li>
-        ))}
+    <div className="panel acceptance-panel">
+      <div className="ac-summary">
+        <strong>{left ? `要你測 ${left} 條` : forYou.length ? '要你測的都測過了' : '都由 AI 測過了'}</strong>
+        <span className="muted small">共 {report.acceptance.length} 條</span>
+      </div>
+
+      {(report.attention.length > 0 || unexplained.length > 0) && (
+        <div className="ac-attention">
+          <div className="plan-block-title">⚠ 要你注意</div>
+          <ul>
+            {report.attention.map((t, i) => <li key={i}>{t}</li>)}
+            {unexplained.length > 0 && (
+              <li className="bad" title={unexplained.join('\n')}>
+                有 {unexplained.length} 個檔案改了但驗收表沒說明：{unexplained.slice(0, 4).map(fileName).join('、')}{unexplained.length > 4 ? ' 等' : ''}
+                <button className="link small" onClick={() => askAI(`驗收表沒說明這些檔案為什麼改：${unexplained.join('、')}。請說明，不需要的改動請還原。`)}>問 AI</button>
+              </li>
+            )}
+          </ul>
+        </div>
+      )}
+
+      <ul className="ac-list">
+        {report.acceptance.map((a) => {
+          const mine = needsYou(a);
+          const expanded = open.has(a.no) || (mine && !a.checked && detailed);
+          const badge = a.result === '沒過' ? { text: '沒過', cls: 'bad' } : mine ? { text: a.checked ? '你測過了' : '要你測', cls: a.checked ? 'ok' : 'you' } : { text: 'AI 測過', cls: 'ok' };
+          const toggle = () => setOpen((prev) => {
+            const next = new Set(prev);
+            expanded ? next.delete(a.no) : next.add(a.no);
+            return next;
+          });
+          return (
+            <li key={a.no} className={`ac-item ${mine && !a.checked ? 'mine' : 'quiet'}`}>
+              <button className="ac-head" onClick={toggle} title={expanded ? '收起' : '展開'}>
+                <span className={`ac-badge ${badge.cls}`}>{badge.text}</span>
+                <span className="ac-title">{a.no}. {a.text}</span>
+                {a.changed && <span className="ac-new" title="這次修改或重測後內容有變，要重新看">有變動</span>}
+              </button>
+              {expanded && (
+                <div className="ac-body">
+                  {a.change && <p><span className="ac-label">改了</span>{a.change}</p>}
+                  {a.why && <p><span className="ac-label">為什麼</span>{a.why}</p>}
+                  {a.files.length > 0 && (
+                    <p title={a.files.join('\n')}><span className="ac-label">改在</span>{a.files.map(fileName).join('、')}</p>
+                  )}
+                  <p><span className="ac-label">也影響</span>{a.impact || (detailed ? '沒有' : '—')}</p>
+                  {a.howToTest && <p className="ac-how"><span className="ac-label">怎麼測</span>{a.howToTest}</p>}
+                  {a.note && <p className="muted small"><span className="ac-label">AI 測試</span>{a.result}：{a.note}</p>}
+                  <div className="ac-actions">
+                    {mine && (
+                      <label>
+                        <input type="checkbox" checked={a.checked} onChange={(e) => run(() => api.test.setChecked(item.id, a.no, e.target.checked))} />
+                        我測過了
+                      </label>
+                    )}
+                    {a.page && item.folder && (
+                      <button className="link small" title="在你的瀏覽器打開本機網站這一頁（網站沒開會先啟動）" onClick={() => run(() => api.test.openPage(item.id, a.page))}>
+                        打開這頁
+                      </button>
+                    )}
+                    <button className="link small" title="這一條有問題？在輸入框帶入，跟 AI 說要怎麼改" onClick={() => askAI(`驗收第 ${a.no} 條（${a.text}）：`)}>
+                      跟 AI 說
+                    </button>
+                  </div>
+                </div>
+              )}
+            </li>
+          );
+        })}
       </ul>
-      <div className="plan-block-title">要你手動測的項目</div>
-      {report.manual.length === 0 && <p className="muted small">沒有。</p>}
-      <ul className="manual-list">
-        {report.manual.map((m, i) => (
-          <li key={i}>
-            <label className={m.done ? 'done' : ''}>
-              <input type="checkbox" checked={m.done} onChange={(e) => api.test.setManualDone(item.id, i, e.target.checked).catch((err) => setError(errorText(err)))} />
-              {m.text}
-            </label>
-          </li>
-        ))}
-      </ul>
+
+      {report.otherChanges.length > 0 && (
+        <>
+          <div className="plan-block-title">其他也改到的</div>
+          <ul className="ac-list">
+            {report.otherChanges.map((c, i) => (
+              <li key={i} className="ac-item quiet">
+                <div className="ac-body">
+                  <p><span className="ac-label">改了</span>{c.change}</p>
+                  {c.why && <p><span className="ac-label">為什麼</span>{c.why}</p>}
+                  {c.files.length > 0 && <p title={c.files.join('\n')}><span className="ac-label">改在</span>{c.files.map(fileName).join('、')}</p>}
+                  {c.impact && <p><span className="ac-label">也影響</span>{c.impact}</p>}
+                </div>
+              </li>
+            ))}
+          </ul>
+        </>
+      )}
+
+      {report.manual.length > 0 && (
+        <>
+          <div className="plan-block-title">其他要你手動測的</div>
+          <ul className="manual-list">
+            {report.manual.map((m, i) => (
+              <li key={i}>
+                <label className={m.done ? 'done' : ''}>
+                  <input type="checkbox" checked={m.done} onChange={(e) => run(() => api.test.setManualDone(item.id, i, e.target.checked))} />
+                  {m.text}
+                </label>
+              </li>
+            ))}
+          </ul>
+        </>
+      )}
+      {idle && item.stage === 'manual' && (
+        <button className="link small" onClick={() => run(() => api.test.requestAcceptance(item.id))} title="不重新測試，請 AI 照目前的改動重新整理驗收表">
+          請 AI 重新整理驗收表
+        </button>
+      )}
       {error && <div className="error small">{error}</div>}
     </div>
   );

@@ -1,7 +1,7 @@
 // 資料庫：~/Library/Application Support/FlowPilot/flowpilot.db（SQLite，用 Node 內建的 node:sqlite）
 // 每次狀態改變先寫進來，重新啟動才接得回去。
 import { DatabaseSync } from 'node:sqlite';
-import type { JiraTicket, Judgement, PendingRequest, Review, RunSummary, TestReport, TestResult, TicketPlan, WorkItem, WorkLane, WorkStage, WorkStatus } from '../shared/types';
+import type { AcceptanceItem, JiraTicket, Judgement, PendingRequest, Review, RunSummary, TestReport, TestResult, TicketPlan, WorkItem, WorkLane, WorkStage, WorkStatus } from '../shared/types';
 import type { PastDecision } from './planner/judge';
 
 // 依序執行的資料庫結構變更；只能往後加，不能改前面的
@@ -151,7 +151,7 @@ function toWorkItem(row: WorkItemRow): WorkItem & { branchCreated: boolean; comm
     stage: row.stage,
     autotested: !!row.autotested,
     autotestResult: row.autotest_result ? (JSON.parse(row.autotest_result) as TestResult) : null,
-    testReport: row.test_report ? (JSON.parse(row.test_report) as TestReport) : null,
+    testReport: row.test_report ? normalizeReport(JSON.parse(row.test_report)) : null,
     updatedAt: row.updated_at,
     branchCreated: !!row.branch_created,
     commitSha: row.commit_sha,
@@ -414,4 +414,17 @@ export class Store {
   close() {
     this.db.close();
   }
+}
+
+/** 舊版的測試報告沒有驗收表的欄位，補上預設值 */
+function normalizeReport(data: Partial<TestReport>): TestReport {
+  return {
+    attention: data.attention ?? [],
+    otherChanges: data.otherChanges ?? [],
+    manual: data.manual ?? [],
+    acceptance: (data.acceptance ?? []).map((a: Partial<AcceptanceItem>) => ({
+      ...{ change: '', why: '', files: [], impact: '', howToTest: '', page: '', needYou: false, checked: false, changed: false },
+      ...a,
+    }) as AcceptanceItem),
+  };
 }

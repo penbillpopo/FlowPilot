@@ -224,12 +224,47 @@ export type WorkStage = 'develop' | 'selfcheck' | 'autotest' | 'manual' | 'fix' 
 
 export type Env = 'sit' | 'uat';
 
-/** 瀏覽器測試的報告（AI 回覆最後附的 flowpilot-test 區塊） */
+/**
+ * 驗收表：開發的 AI 在測試（或修改）完附的 flowpilot-test 區塊。
+ * 以需求為主軸，每一條寫改了什麼、為什麼、改在哪、會影響哪裡、怎麼測，加上測試結果。
+ */
 export interface TestReport {
-  /** 每一條預期結果的測試結果 */
-  acceptance: { no: number; text: string; result: '通過' | '沒過' | '沒測'; note: string }[];
-  /** 要你手動測的項目 */
+  /** 要你注意的地方：AI 自己判斷的、跟 Jira 或設計稿不一致的、需求範圍外也被改到的 */
+  attention: string[];
+  /** 每一條預期結果 */
+  acceptance: AcceptanceItem[];
+  /** 跟某一條需求無關、但也改到的東西（例如共用元件、重構） */
+  otherChanges: { change: string; why: string; files: string[]; impact: string }[];
+  /** 其他要你手動測的項目 */
   manual: { text: string; done: boolean }[];
+}
+
+export interface AcceptanceItem {
+  no: number;
+  /** 預期結果的內容 */
+  text: string;
+  /** AI 的測試結果 */
+  result: '通過' | '沒過' | '沒測';
+  /** 證據或原因 */
+  note: string;
+  /** 改了什麼（用畫面上看得到的行為來說） */
+  change: string;
+  /** 為什麼這樣改、依據哪一段（Jira 預期結果第幾條、API 文件、設計稿） */
+  why: string;
+  /** 改在哪些檔案 */
+  files: string[];
+  /** 也會影響到的頁面或功能（沒有就是空字串） */
+  impact: string;
+  /** 怎麼測：在哪一頁、用哪個商戶、做什麼、應該看到什麼 */
+  howToTest: string;
+  /** 要測的頁面路徑（例如 /order/list），可以直接在瀏覽器打開 */
+  page: string;
+  /** AI 認為要你親自測（例如畫面、操作感覺、寫入後的結果）；沒通過的也一律要你看 */
+  needYou: boolean;
+  /** 你勾了「我測過了」 */
+  checked: boolean;
+  /** 這次修改或重測後，內容跟上一版不一樣（要重新看） */
+  changed: boolean;
 }
 
 /** 瀏覽器測試的結果：通過、部分通過、沒測成（主要功能一個都沒測到）、看不出來 */
@@ -494,6 +529,14 @@ export interface FlowPilotApi {
     trialLogin(itemId: number): Promise<{ ok: boolean; reason: string }>;
     /** 勾選或取消手動測試清單的一項 */
     setManualDone(itemId: number, index: number, done: boolean): Promise<void>;
+    /** 驗收表的一條勾選「我測過了」 */
+    setChecked(itemId: number, no: number, checked: boolean): Promise<void>;
+    /** 請 AI 整理驗收表（不重新測試） */
+    requestAcceptance(itemId: number): Promise<void>;
+    /** 這張單從基底分支到現在改到的檔案（含還沒提交的），用來核對驗收表有沒有漏講 */
+    changedFiles(itemId: number): Promise<string[]>;
+    /** 在你的瀏覽器打開本機網站的某一頁（網站沒開會先啟動） */
+    openPage(itemId: number, page: string): Promise<void>;
     /** 關掉瀏覽器測試開出來的瀏覽器（不會關到你自己的 Chrome），回傳關掉幾個 */
     closeBrowsers(): Promise<number>;
   };

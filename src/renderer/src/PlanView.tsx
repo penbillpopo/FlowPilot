@@ -239,6 +239,12 @@ export function PlanView({ run, tickets, onBack, onConfirmed }: Props) {
 
               {plan && options && (
                 <>
+                  {judgements[ticket.key]?.complete === false && (
+                    <div className="review-incomplete">
+                      <strong>這次審閱沒有完成</strong>：{judgements[ticket.key].problem}。下面的內容可能不完整或不正確，建議
+                      <button className="link" onClick={() => window.confirm('重新審閱這張單？目前的問題、你的回答和討論都會被新的結果取代。') && judge(ticket, true)}>重新審閱</button>。
+                    </div>
+                  )}
                   <div className="plan-block">
                     <div className="plan-block-title">要做什麼</div>
                     {plan.summary?.length ? (

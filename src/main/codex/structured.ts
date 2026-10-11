@@ -22,9 +22,10 @@ export interface StructuredRequest {
 export async function runStructured<T>(rpc: CodexRpc, request: StructuredRequest): Promise<{ result: T; threadId: string }> {
   await rpc.start();
   let threadId = request.threadId;
+  const skills = await skillsOff(rpc, request.cwd);
   if (threadId) {
     // 接著問：對話可能還沒載入（例如 FlowPilot 重新啟動過）
-    await rpc.request('thread/resume', { threadId, excludeTurns: true }).catch(() => {});
+    await rpc.request('thread/resume', { threadId, excludeTurns: true, config: { skills } }).catch(() => {});
   } else {
     const { thread } = await rpc.request<{ thread: { id: string } }>('thread/start', {
       cwd: request.cwd,
@@ -32,7 +33,7 @@ export async function runStructured<T>(rpc: CodexRpc, request: StructuredRequest
       approvalPolicy: 'never',
       sandbox: 'read-only',
       developerInstructions: request.developerInstructions ?? null,
-      config: { model_reasoning_effort: request.effort ?? 'low', features: { computer_use: false, browser_use: false, browser_use_external: false } },
+      config: { model_reasoning_effort: request.effort ?? 'low', features: { computer_use: false, browser_use: false, browser_use_external: false }, skills },
     });
     threadId = thread.id;
   }
@@ -74,6 +75,20 @@ export async function runStructured<T>(rpc: CodexRpc, request: StructuredRequest
     unsubscribe();
     if (!request.keep && !request.threadId) rpc.request('thread/unsubscribe', { threadId: id }).catch(() => {});
   }
+}
+
+/**
+ * 審閱、判斷這類對話把所有技能關掉（只在這段對話生效，不改 ~/.codex/config.toml）。
+ * 為什麼：Codex 會把所有技能的說明放進每段對話，審閱 Jira 單時 AI 自己去套用了 jira-frontend-analysis，
+ * 照那個技能的規則停下來要 Jira 網址，回了不相干的內容（實際發生過）。
+ */
+let skillsCache: { at: number; paths: string[] } | null = null;
+async function skillsOff(rpc: CodexRpc, cwd: string): Promise<{ config: { path: string; enabled: false }[] }> {
+  if (!skillsCache || Date.now() - skillsCache.at > 10 * 60_000) {
+    const paths = await listSkills(rpc, cwd).then((list) => list.map((s) => s.path)).catch(() => skillsCache?.paths ?? []);
+    skillsCache = { at: Date.now(), paths };
+  }
+  return { config: skillsCache.paths.map((path) => ({ path, enabled: false as const })) };
 }
 
 /** 問一次就結束（不保留對話） */

@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { commandPolicy, looksLikeQuestion } from '../src/main/runner/policy';
+import { commandPolicy, looksLikeQuestion, parseTestResult } from '../src/main/runner/policy';
 
 describe('指令同意規則', () => {
   it.each([
@@ -49,5 +49,15 @@ describe('最後的回覆是不是在問問題', () => {
     expect(looksLikeQuestion('### 修改內容\n- 已完成\n\n### 未完成或風險\n- 暫定維持登入前也可設定；PM 需確認是否應限制為僅登入後。\n- 天數比較語意仍需 PM／BE 定義，前端目前僅限制為正整數。')).toBe(false);
     // 前面段落有「是否」但最後已經做完
     expect(looksLikeQuestion('是否要支援複選？先照單選做。\n\n已完成修改，建置通過。')).toBe(false);
+  });
+});
+
+describe('瀏覽器測試的結果', () => {
+  it('讀最後一次出現的「測試結果：…」，括號裡是原因', () => {
+    expect(parseTestResult('報告…\n測試結果：通過')).toEqual({ kind: 'passed' });
+    expect(parseTestResult('測試結果：部分通過（匯出沒測）')).toEqual({ kind: 'partial', reason: '匯出沒測' });
+    expect(parseTestResult('測試結果: 沒測成(登入失敗)')).toEqual({ kind: 'failed', reason: '登入失敗' });
+    expect(parseTestResult('格式說明：測試結果：通過\n…\n測試結果：沒測成（網站打不開）')).toEqual({ kind: 'failed', reason: '網站打不開' });
+    expect(parseTestResult('目前 Playwright 驗證通過。')).toEqual({ kind: 'unknown' });
   });
 });

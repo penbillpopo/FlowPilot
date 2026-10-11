@@ -155,7 +155,8 @@ async function reviewTicket(ticket: JiraTicket, force = false): Promise<Review> 
       const checked = await withJudgeSlot(() =>
         runStructured<any>(codex, { cwd: dataDir, keep: true, threadId, developerInstructions: REVIEW_INSTRUCTIONS, prompt: codePrompt, schema: reviewSchema(settings), timeoutMs: 300_000 }),
       );
-      review = sanitizeReview({ ...checked.result, codeChecked: true }, ticket, settings);
+      // 照 AI 實際回報的：之前寫死成「有看過程式碼」，AI 沒看也顯示有看，錯誤更難發現
+      review = sanitizeReview(checked.result, ticket, settings);
     } catch (error) {
       log(`${ticket.key} 看程式碼失敗，先用只看單的結果：${(error as Error).message}`);
     }

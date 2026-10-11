@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { applyDiscussion, buildDiscussionPrompt, buildReviewPrompt, reviewBrief, reviewSchema, sanitizeReview } from '../src/main/planner/review';
+import { applyDiscussion, buildDiscussionPrompt, buildReviewPrompt, REVIEW_INSTRUCTIONS, reviewBrief, reviewSchema, sanitizeReview } from '../src/main/planner/review';
 import { DEFAULT_SETTINGS_YAML, parseSettings } from '../src/main/settings';
 import type { JiraTicket } from '../src/shared/types';
 
@@ -79,5 +79,13 @@ describe('審閱', () => {
     expect(brief).toContain('- 單上沒有寫 API 規格');
     expect(brief).toContain('不用再跑 jira-frontend-analysis');
     expect(reviewBrief(null)).toBe('');
+  });
+
+  it('AI 回報沒完成：記下原因；舊的結果沒有這個欄位就當成完成；要求不用技能、照實回報', () => {
+    expect(sanitizeReview({ ...raw, complete: false, problem: '讀不到程式碼' }, ticket, settings)).toMatchObject({ complete: false, problem: '讀不到程式碼' });
+    expect(sanitizeReview({ ...raw, complete: false }, ticket, settings).problem).toBe('原因不明');
+    expect(sanitizeReview(raw, ticket, settings)).toMatchObject({ complete: true, problem: '' });
+    expect((reviewSchema(settings) as any).required).toEqual(expect.arrayContaining(['complete', 'problem']));
+    expect(REVIEW_INSTRUCTIONS).toContain('不要使用任何技能');
   });
 });

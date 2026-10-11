@@ -1,3 +1,4 @@
+import type { TestResult } from '../../shared/types';
 // AI 要執行的指令：哪些自動同意、哪些要你確認。
 // 開發中的 AI 用「每個指令都先問」的模式，由這裡決定；只有危險的才真的轉給你。
 
@@ -27,6 +28,18 @@ export function commandPolicy(command: string): PolicyResult {
 }
 
 const QUESTION_HINTS = /請確認|請回覆|請選擇|請提供|請問|是否|要不要|需要你|等你|等待你的|再繼續|which|should I|confirm/i;
+
+/**
+ * 讀瀏覽器測試的結果：AI 被要求在最後一行寫「測試結果：通過／部分通過／沒測成（原因）」，取最後一次出現的。
+ * 沒寫就是看不出來（unknown），不當成通過。
+ */
+export function parseTestResult(message: string): TestResult {
+  const matches = [...message.matchAll(/測試結果[:：]\s*(通過|部分通過|沒測成)\s*(?:[（(]([^）)]*)[）)])?/g)];
+  const last = matches.at(-1);
+  if (!last) return { kind: 'unknown' };
+  const kind = last[1] === '通過' ? 'passed' : last[1] === '部分通過' ? 'partial' : 'failed';
+  return last[2]?.trim() ? { kind, reason: last[2].trim() } : { kind };
+}
 
 /** 講的是要 PM、後端確認的事（報告裡的「風險、待確認」），不是在問你 */
 const ABOUT_OTHERS = /PM|BE|後端|產品|待.{0,6}確認|仍需|仍待/;

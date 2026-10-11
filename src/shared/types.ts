@@ -148,6 +148,10 @@ export interface Review extends Judgement {
   reviewedAt: string;
   /** 上次確認過的單內容（子任務、主單） */
   snapshot?: TicketSnapshot[];
+  /** AI 這次審閱有沒有照要求完成；false 時畫面提醒你重新審閱 */
+  complete?: boolean;
+  /** 沒完成的原因 */
+  problem?: string;
   /** 牽涉頁面（路由、選單、元件） */
   pages?: string[];
   /** 後端 API 規格（單上寫的；沒寫就是空的） */
@@ -194,6 +198,13 @@ export type WorkLane = 'waiting' | 'conversation' | 'development' | 'done';
 export type WorkStage = 'develop' | 'autotest' | 'manual' | 'fix' | 'retest';
 
 export type Env = 'sit' | 'uat';
+
+/** 瀏覽器測試的結果：通過、部分通過、沒測成（主要功能一個都沒測到）、看不出來 */
+export interface TestResult {
+  kind: 'passed' | 'partial' | 'failed' | 'unknown';
+  /** 沒測成或部分通過的原因 */
+  reason?: string;
+}
 
 /** 工作台右邊「測試」區塊要顯示的狀態 */
 export interface TestState {
@@ -250,6 +261,8 @@ export interface WorkItem {
   stage: WorkStage;
   /** 自動測試有沒有真的跑過（沒跑過的顯示「略過」） */
   autotested: boolean;
+  /** 自動測試的結果（AI 回覆最後一行的「測試結果：…」；沒開始成也算沒測成） */
+  autotestResult: TestResult | null;
   updatedAt: string;
 }
 

@@ -67,7 +67,9 @@ function setup({ account = true } = {}) {
     store, settings: () => settings, codex, vscode: {} as VSCode,
     notify: () => {}, onChange: () => {}, onStream: () => {}, log: () => {},
   });
-  const complete = async () => {
+  /** AI 這一輪結束；可以帶最後的回覆 */
+  const complete = async (lastMessage?: string) => {
+    if (lastMessage !== undefined) store.updateWorkItem(item.id, { lastMessage });
     listener({ method: 'turn/completed', params: { threadId: 'th', turn: { status: 'completed' } } });
     await new Promise((r) => setTimeout(r, 20));
   };
@@ -95,9 +97,27 @@ describe('流程階段', () => {
     expect(file.startsWith(join(t.root, 'data'))).toBe(true);
     expect(JSON.parse(readFileSync(file, 'utf8'))).toMatchObject({ environment: 'SIT', username: 'sit-user', password: 'sit-pass', otp: '123456' });
 
-    // 自動測試做完 → 等你測試
+    expect(text).toContain('測試結果：沒測成（原因）');
+
+    // 自動測試做完 → 等你測試，並記下結果
+    await t.complete('……\n測試結果：通過');
+    expect(t.get()).toMatchObject({ stage: 'manual', status: 'review', activity: '自動測試通過，等你手動測試', autotestResult: { kind: 'passed' } });
+  });
+
+  it('自動測試沒測成（例如登入失敗）：記下原因，不算通過', async () => {
+    const t = setup();
+    await t.complete(); // 開發完 → 自動測試
+    await t.complete('登入回 400，後面都沒測到。\n測試結果：沒測成（登入失敗，帳號或密碼錯誤）');
+    expect(t.get()).toMatchObject({ stage: 'manual', autotestResult: { kind: 'failed', reason: '登入失敗，帳號或密碼錯誤' } });
+    expect(t.get().activity).toBe('自動測試沒測成：登入失敗，帳號或密碼錯誤');
+  });
+
+  it('AI 沒寫結果：看不出來，不當成通過', async () => {
+    const t = setup();
     await t.complete();
-    expect(t.get()).toMatchObject({ stage: 'manual', status: 'review', activity: '自動測試完成，等你手動測試' });
+    await t.complete('目前 Playwright 驗證部分通過。');
+    expect(t.get().autotestResult).toEqual({ kind: 'unknown' });
+    expect(t.get().activity).toContain('看最後的結果');
   });
 
   it('等你測試時要求修改 → 修改中；改完回到等你測試，不會再自動測試', async () => {
@@ -129,8 +149,9 @@ describe('流程階段', () => {
     // 畫面拿不到密碼
     expect(JSON.stringify(t.runner.testState(t.id))).not.toContain('uat-pass');
 
-    await t.complete();
-    expect(t.get()).toMatchObject({ stage: 'manual', status: 'review', activity: '重測完成，等你確認' });
+    await t.complete('測試結果：部分通過（儲存的 payload 要你手動測）');
+    expect(t.get()).toMatchObject({ stage: 'manual', status: 'review', activity: '重測部分通過：儲存的 payload 要你手動測，等你手動測試' });
+    expect(t.get().autotestResult).toBeNull(); // 重測不改自動測試那一格
     // AI 執行中不能重測
     t.store.updateWorkItem(t.id, { status: 'running' });
     await expect(t.runner.retest(t.id)).rejects.toThrow('AI 還在執行');
@@ -139,7 +160,7 @@ describe('流程階段', () => {
   it('沒有帳號時不開始測試，停下來請你補帳號檔', async () => {
     const t = setup({ account: false });
     await t.complete();
-    expect(t.get()).toMatchObject({ stage: 'manual', status: 'waiting', autotested: false });
+    expect(t.get()).toMatchObject({ stage: 'manual', status: 'waiting', autotested: false, autotestResult: { kind: 'failed' } });
     expect(t.get().activity).toContain('PlatformAdmin.playwright.json 補上');
     expect(t.sites).toEqual([]);
   });

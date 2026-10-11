@@ -4,7 +4,7 @@ import { execFile } from 'node:child_process';
 import { existsSync, readFileSync } from 'node:fs';
 import { homedir } from 'node:os';
 import { join } from 'node:path';
-import type { BoardState, BranchInfo, ChatEvent, Env, RemoveResult, PendingRequest, SkillInfo, TestState, TicketPlan, WorkStage } from '../../shared/types';
+import type { BoardState, BranchInfo, ChatEvent, Env, RemoveResult, TestResult, PendingRequest, SkillInfo, TestState, TicketPlan, WorkStage } from '../../shared/types';
 import { toEntry } from '../chat';
 import { ENVIRONMENT_FILE, readApiUrl, readEnvironment, setEnvironment } from '../environment';
 import { reviewBrief } from '../planner/review';
@@ -31,7 +31,7 @@ import type { Settings } from '../settings';
 import { FINISHED, OCCUPYING, type StoredWorkItem, type Store } from '../store';
 import type { VSCode } from '../vscode';
 import { pickFolder } from './allocate';
-import { commandPolicy, looksLikeQuestion } from './policy';
+import { commandPolicy, looksLikeQuestion, parseTestResult } from './policy';
 
 export interface RunnerDeps {
   store: Store;
@@ -101,6 +101,21 @@ const STAGE_DONE: Partial<Record<WorkStage, string>> = {
   retest: '重測完成，等你確認',
   manual: '等你測試',
 };
+
+/** 測試做完後給人看的一句話 */
+function testActivity(label: string, result: TestResult): string {
+  const why = result.reason ? `：${result.reason}` : '';
+  switch (result.kind) {
+    case 'passed':
+      return `${label}通過，等你手動測試`;
+    case 'partial':
+      return `${label}部分通過${why}，等你手動測試`;
+    case 'failed':
+      return `${label}沒測成${why}`;
+    default:
+      return `${label}做完了，看最後的結果，等你手動測試`;
+  }
+}
 
 /** 瀏覽器測試切換 SIT／UAT 時會改的檔案 */
 function isEnvironmentFile(path: string): boolean {
@@ -511,6 +526,7 @@ export class Runner {
         `- 登入：先用終端機指令讀 ${accountFile}（例如 cat）取得帳號密碼，再用瀏覽器工具填進登入表單自動登入（登入畫面要 OTP 時，填檔案裡的 otp）。這個檔案在電腦上，瀏覽器裡讀不到，不要在瀏覽器裡讀。不要停下來等我登入，也不要把密碼印出來或寫進任何檔案、回覆。`,
         '- 失敗時先判斷原因：是前端程式的問題就直接修正，然後重測失敗的部分，最多 3 輪；不是前端的問題（後端、資料、權限、環境）就記下來，不要修。',
         '- 不要提交、不要推送。',
+        '- 回覆的最後一行一定要照這個格式寫結果（FlowPilot 會讀這一行）：「測試結果：通過」、「測試結果：部分通過（原因）」或「測試結果：沒測成（原因）」。主要功能一個都沒測到（例如登入失敗、網站打不開）就是「沒測成」；有測到但有些項目沒測或沒過是「部分通過」。',
       ];
       const text = headed
         ? [
@@ -543,7 +559,9 @@ export class Runner {
     } catch (error) {
       if (['removed', 'stopped'].includes(this.deps.store.getWorkItem(id)!.status)) return;
       const message = `${label}沒辦法開始：${(error as Error).message}`;
-      this.update(id, { stage: 'manual', status: 'waiting', activity: message });
+      // 自動測試沒開始成，也算沒測成（不會再顯示成打勾或略過）
+      const result = headed ? {} : { autotestResult: { kind: 'failed' as const, reason: (error as Error).message } };
+      this.update(id, { stage: 'manual', status: 'waiting', activity: message, ...result });
       this.notify(id, `${item.ticketKey} ${label}沒辦法開始`, (error as Error).message);
     }
   }
@@ -666,8 +684,14 @@ export class Runner {
           // 開發完自動接著做無頭測試
           void this.startTest(item.id, false);
         } else {
-          const activity = STAGE_DONE[latest.stage] ?? '等你測試';
-          this.update(item.id, { status: 'review', stage: 'manual', activity, pending: null });
+          let activity = STAGE_DONE[latest.stage] ?? '等你測試';
+          const tested: { autotestResult?: TestResult } = {};
+          if (latest.stage === 'autotest' || latest.stage === 'retest') {
+            const result = parseTestResult(latest.lastMessage);
+            activity = testActivity(latest.stage === 'autotest' ? '自動測試' : '重測', result);
+            if (latest.stage === 'autotest') tested.autotestResult = result;
+          }
+          this.update(item.id, { status: 'review', stage: 'manual', activity, pending: null, ...tested });
           this.notify(item.id, `${item.ticketKey} ${activity}`, short(latest.lastMessage.slice(-200)));
         }
         break;

@@ -26,9 +26,11 @@ export function reviewSchema(settings: Settings) {
   const base = judgementSchema(settings) as { required: string[]; properties: Record<string, unknown> };
   return {
     ...base,
-    required: [...base.required, 'level', 'codeChecked', 'pages', 'apis', 'steps', 'issues'],
+    required: [...base.required, 'level', 'codeChecked', 'pages', 'apis', 'steps', 'issues', 'complete', 'problem'],
     properties: {
       ...base.properties,
+      complete: { type: 'boolean', description: '這次審閱有沒有照要求完成（讀懂單、判斷專案；一般或複雜的單有看程式碼）' },
+      problem: { type: 'string', description: '沒完成的話，原因是什麼（繁體中文，一句話）；完成就給空字串' },
       pages: { type: 'array', items: { type: 'string' }, description: '牽涉頁面：路由、選單、頁面或元件（看過程式碼就寫實際的路徑或元件名稱）' },
       apis: { type: 'array', items: { type: 'string' }, description: '後端 API 規格：單上（含內文、留言、文字附件）寫的方法、路徑、參數、回傳欄位；都沒寫就給空陣列，不要自己編' },
       steps: { type: 'array', items: { type: 'string' }, description: '預計執行內容：要改哪些地方、怎麼改，一項一句' },
@@ -55,7 +57,9 @@ export const REVIEW_INSTRUCTIONS = `${JUDGE_INSTRUCTIONS}
 - 審閱結果會整理成開發用的需求分析交給開發的 AI，所以也要填：
   - pages（牽涉頁面）：路由、選單、頁面或元件；看過程式碼就寫實際的路徑或元件名稱。
   - apis（後端 API 規格）：單上寫的方法、路徑、參數、回傳欄位。API 規格常寫在附件（.md、.txt）裡，資料中有「附件…的內容」時一定要看；都沒寫就給空陣列，不要自己編。
-  - steps（預計執行內容）：要改哪些地方、怎麼改，一項一句。`;
+  - steps（預計執行內容）：要改哪些地方、怎麼改，一項一句。
+- 不要使用任何技能（skills），也不要去讀任何 SKILL.md；照這裡的說明做就好。
+- 照實回報：沒有看程式碼就把 codeChecked 填 false；有任何一步沒做到（例如讀不到程式碼、資料不足），complete 填 false，problem 寫原因。不要把「我還沒做、需要你提供什麼」寫進 summary 或其他欄位。`;
 
 export function buildReviewPrompt(
   ticket: JiraTicket,
@@ -79,7 +83,7 @@ export function buildCodeCheckPrompt(projects: string[], settings: Settings): st
   const folders = projects.map((p) => settings.folders.find((f) => f.project === p)).filter(Boolean);
   if (!folders.length) return null;
   return [
-    '這張單不是小單，請到下面的資料夾「大略」看一下程式碼，然後回傳完整的審閱結果（同樣的格式，codeChecked 填 true）：',
+    '這張單不是小單，請到下面的資料夾「大略」看一下程式碼，然後回傳完整的審閱結果（同樣的格式；有看程式碼 codeChecked 才填 true）：',
     ...folders.map((f) => `- ${f!.project}：${f!.path}`),
     '',
     '只做三件事：找到相關的頁面或模組、確認單上提到的欄位或 API 在程式碼裡大概有沒有、看看有沒有明顯會互相影響的地方。',
@@ -120,6 +124,9 @@ export function sanitizeReview(raw: any, ticket: JiraTicket, settings: Settings,
     ticketKey: ticket.key,
     level,
     codeChecked: !!raw?.codeChecked,
+    // 舊的結果沒有這個欄位，當成完成
+    complete: raw?.complete !== false,
+    problem: raw?.complete === false ? String(raw?.problem ?? '').trim() || '原因不明' : '',
     pages: list(raw?.pages),
     apis: list(raw?.apis),
     steps: list(raw?.steps),

@@ -1,7 +1,7 @@
 // 資料庫：~/Library/Application Support/FlowPilot/flowpilot.db（SQLite，用 Node 內建的 node:sqlite）
 // 每次狀態改變先寫進來，重新啟動才接得回去。
 import { DatabaseSync } from 'node:sqlite';
-import type { JiraTicket, Judgement, PendingRequest, Review, RunSummary, TicketPlan, WorkItem, WorkLane, WorkStage, WorkStatus } from '../shared/types';
+import type { JiraTicket, Judgement, PendingRequest, Review, RunSummary, TestResult, TicketPlan, WorkItem, WorkLane, WorkStage, WorkStatus } from '../shared/types';
 import type { PastDecision } from './planner/judge';
 
 // 依序執行的資料庫結構變更；只能往後加，不能改前面的
@@ -78,6 +78,8 @@ const MIGRATIONS: string[] = [
    ALTER TABLE work_items ADD COLUMN test_password TEXT;`,
   // 自動測試有沒有真的跑過（舊單沒跑過，畫面顯示「略過」）
   `ALTER TABLE work_items ADD COLUMN autotested INTEGER NOT NULL DEFAULT 0;`,
+  // 自動測試的結果（通過、部分通過、沒測成）：沒測成不再打勾
+  `ALTER TABLE work_items ADD COLUMN autotest_result TEXT;`,
 ];
 
 /** 還佔著資料夾的狀態 */
@@ -86,7 +88,7 @@ export const OCCUPYING: WorkStatus[] = ['preparing', 'running', 'waiting', 'revi
 /** 已經結束的狀態 */
 export const FINISHED: WorkStatus[] = ['failed', 'stopped', 'removed', 'committed'];
 
-type NewWorkItem = Omit<WorkItem, 'id' | 'folder' | 'lane' | 'status' | 'activity' | 'threadId' | 'lastMessage' | 'pending' | 'stage' | 'autotested' | 'updatedAt'>;
+type NewWorkItem = Omit<WorkItem, 'id' | 'folder' | 'lane' | 'status' | 'activity' | 'threadId' | 'lastMessage' | 'pending' | 'stage' | 'autotested' | 'autotestResult' | 'updatedAt'>;
 
 interface WorkItemRow {
   id: number;
@@ -114,6 +116,7 @@ interface WorkItemRow {
   commit_sha: string | null;
   stage: WorkStage;
   autotested: number;
+  autotest_result: string | null;
   test_username: string | null;
   test_password: string | null;
   updated_at: string;
@@ -144,6 +147,7 @@ function toWorkItem(row: WorkItemRow): WorkItem & { branchCreated: boolean; comm
     pending: row.pending_json ? (JSON.parse(row.pending_json) as PendingRequest) : null,
     stage: row.stage,
     autotested: !!row.autotested,
+    autotestResult: row.autotest_result ? (JSON.parse(row.autotest_result) as TestResult) : null,
     updatedAt: row.updated_at,
     branchCreated: !!row.branch_created,
     commitSha: row.commit_sha,
@@ -304,7 +308,7 @@ export class Store {
 
   updateWorkItem(
     id: number,
-    patch: Partial<Pick<StoredWorkItem, keyof typeof PATCH_COLUMNS>> & { pending?: PendingRequest | null },
+    patch: Partial<Pick<StoredWorkItem, keyof typeof PATCH_COLUMNS>> & { pending?: PendingRequest | null; autotestResult?: TestResult | null },
     now = new Date(),
   ): StoredWorkItem {
     const sets: string[] = ['updated_at = ?'];
@@ -315,6 +319,10 @@ export class Store {
         const v = (patch as Record<string, unknown>)[key];
         values.push(typeof v === 'boolean' ? Number(v) : (v as string | number | null));
       }
+    }
+    if ('autotestResult' in patch) {
+      sets.push('autotest_result = ?');
+      values.push(patch.autotestResult ? JSON.stringify(patch.autotestResult) : null);
     }
     if ('pending' in patch) {
       sets.push('pending_json = ?');

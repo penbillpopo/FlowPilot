@@ -381,3 +381,7 @@ details.more > summary::-webkit-details-marker { display: none; }
 button.danger-solid { background: var(--blocked); border-color: var(--blocked); color: #fff; }
 .hook-notice { border: 1px solid var(--warn); border-radius: 6px; padding: 8px 10px; display: flex; flex-direction: column; gap: 6px; }
 .hook-notice ul { margin: 0; padding-left: 18px; }
+.review-incomplete { border: 1px solid var(--blocked); background: color-mix(in srgb, var(--blocked) 12%, transparent); color: var(--fg); border-radius: 6px; padding: 8px 10px; font-size: 13px; }
+.review-incomplete strong { color: var(--blocked); }
+.stages li.partial { color: var(--warn); background: color-mix(in srgb, var(--warn) 15%, transparent); }
+.stages li.failed { color: var(--blocked); background: color-mix(in srgb, var(--blocked) 15%, transparent); font-weight: 600; }

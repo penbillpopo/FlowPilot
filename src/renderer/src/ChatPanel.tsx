@@ -51,18 +51,28 @@ function Stages({ item }: { item: WorkItem }) {
       {STEPS.map((label, i) => {
         const done = finished || i < current;
         const now = !finished && i === current;
-        // 自動測試沒有真的跑過（舊單、或缺帳號沒辦法開始）就不打勾
-        const skipped = done && i === 2 && !item.autotested;
+        // 自動測試：照結果顯示，沒測成、部分通過、看不出來都不打勾；沒跑過（舊單）顯示略過
+        const result = done && i === 2 ? autotestMark(item) : null;
         return (
-          <li key={label} className={skipped ? 'skipped' : done ? 'done' : now ? `now ${tone}` : ''}>
+          <li key={label} className={result ? result.className : done ? 'done' : now ? `now ${tone}` : ''} title={result?.title}>
             {label}
-            {skipped ? '（略過）' : done ? ' ✓' : ''}
+            {result ? result.text : done ? ' ✓' : ''}
             {now && note && <span className="step-note">・{note}</span>}
           </li>
         );
       })}
     </ol>
   );
+}
+
+/** 自動測試那一格怎麼顯示 */
+function autotestMark(item: WorkItem): { text: string; className: string; title?: string } | null {
+  const r = item.autotestResult;
+  if (!r) return item.autotested ? null : { text: '（略過）', className: 'skipped' };
+  if (r.kind === 'passed') return null; // 照一般的打勾
+  if (r.kind === 'partial') return { text: '（部分通過）', className: 'partial', title: r.reason };
+  if (r.kind === 'failed') return { text: '（沒測成）', className: 'failed', title: r.reason };
+  return { text: '（看結果）', className: 'partial', title: '測試的 AI 沒有寫出結果，請看對話裡最後的報告' };
 }
 
 /** FlowPilot 自動交給 AI 的訊息（開發、測試指示、更新需求），不是你打的字 */

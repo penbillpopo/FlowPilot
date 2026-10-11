@@ -1,6 +1,6 @@
 // 工作台中間：跟 AI 對話。完整的對話紀錄（思考、指令、改動、工具）、即時更新、輸入框（可貼截圖）。
 import { useEffect, useRef, useState } from 'react';
-import type { ChatEntry, ChatEvent, WorkItem, WorkStatus } from '../../shared/types';
+import type { ChatEntry, ChatEvent, WorkItem, WorkStage, WorkStatus } from '../../shared/types';
 import { DiffView } from './DiffView';
 import { Markdown } from './Markdown';
 
@@ -11,7 +11,7 @@ export const STATUS_LABEL: Record<WorkStatus, string> = {
   preparing: '準備中',
   running: '執行中',
   waiting: '等你回答',
-  review: '等你審查',
+  review: '等你測試',
   blocked: '卡住了',
   failed: '失敗',
   stopped: '已停止',
@@ -20,7 +20,33 @@ export const STATUS_LABEL: Record<WorkStatus, string> = {
 };
 
 /** 跟狀態標籤意思一樣的說明，不重複顯示 */
-const REDUNDANT_ACTIVITY = /^(AI 在問你問題|執行中|執行技能|AI 做完了，等你審查|已完成)$/;
+const REDUNDANT_ACTIVITY = /^(AI 在問你問題|執行中|執行技能|開發中|AI 做完了，等你審查|已完成)$/;
+
+/** 流程：審閱 ✓ → 開發 → 自動測試 → 等你測試（修改、重測都算在等你測試這一步） */
+const STEPS = ['審閱', '開發', '自動測試', '等你測試'];
+const STEP_OF: Record<WorkStage, number> = { develop: 1, autotest: 2, manual: 3, fix: 3, retest: 3 };
+const STEP_NOTE: Partial<Record<WorkStage, string>> = { fix: '修改中', retest: '重測中' };
+
+function Stages({ item }: { item: WorkItem }) {
+  if (!item.threadId) return null;
+  const current = STEP_OF[item.stage] ?? 1;
+  const finished = item.status === 'committed';
+  return (
+    <ol className="stages">
+      {STEPS.map((label, i) => {
+        const done = finished || i < current;
+        const now = !finished && i === current;
+        return (
+          <li key={label} className={done ? 'done' : now ? 'now' : ''}>
+            {label}
+            {done && ' ✓'}
+            {now && STEP_NOTE[item.stage] && `（${STEP_NOTE[item.stage]}）`}
+          </li>
+        );
+      })}
+    </ol>
+  );
+}
 
 export function errorText(e: unknown) {
   return e instanceof Error ? e.message.replace(/^Error invoking remote method '[^']+': (Error: )?/, '') : String(e);
@@ -130,13 +156,7 @@ function Entry({ entry }: { entry: ChatEntry }) {
   }
 }
 
-interface Props {
-  item: WorkItem;
-  canHandOff: boolean;
-  handOffBlocked: string | null;
-}
-
-export function ChatPanel({ item, canHandOff, handOffBlocked }: Props) {
+export function ChatPanel({ item }: { item: WorkItem }) {
   const [entries, setEntries] = useState<ChatEntry[]>([]);
   const [loading, setLoading] = useState(false);
   const [text, setText] = useState('');
@@ -226,6 +246,7 @@ export function ChatPanel({ item, canHandOff, handOffBlocked }: Props) {
     if (ok) act(() => api.finish(item.id, true));
   }
   const active = !['committed', 'removed'].includes(item.status);
+  const canRetest = active && !!item.threadId && item.stage === 'manual' && ['review', 'waiting'].includes(item.status) && !item.pending;
   const canSend = !!item.threadId && active && !['queued', 'preparing'].includes(item.status) && item.pending?.kind !== 'approval' && item.pending?.kind !== 'decision';
 
   return (
@@ -237,22 +258,42 @@ export function ChatPanel({ item, canHandOff, handOffBlocked }: Props) {
           <span className="item-title">{item.ticketSummary}</span>
         </div>
         <div className="muted small">
-          {item.project}{item.merchant ? ` m${item.merchant}` : ''} · {item.folder ?? '等資料夾'} · <code>{item.branch}</code> · {item.skill}
+          {item.project}{item.merchant ? ` m${item.merchant}` : ''} · {item.folder ?? '等資料夾'} · <code>{item.branch}</code>
           {item.activity && !REDUNDANT_ACTIVITY.test(item.activity) && <> · {item.activity}</>}
         </div>
+        <Stages item={item} />
         <div className="row">
-          {item.lane === 'conversation' && (
-            <button className="primary" disabled={busy || !canHandOff} title={handOffBlocked ?? ''} onClick={() => act(() => api.handOff(item.id))}>
-              問完了，換下一張
+          {running && <button disabled={busy} onClick={() => act(() => api.interrupt(item.id))}>中斷這一輪</button>}
+          {canRetest && (
+            <button
+              disabled={busy}
+              title="AI 先列測試計畫給你確認，再開瀏覽器測給你看（用測試帳號自動登入）"
+              onClick={() => act(async () => {
+                stick.current = true;
+                await api.retest(item.id);
+              })}
+            >
+              開瀏覽器測給我看
             </button>
           )}
-          {running && <button disabled={busy} onClick={() => act(() => api.interrupt(item.id))}>中斷這一輪</button>}
           {item.status === 'review' && item.folder && (
             <button className="primary" disabled={busy} onClick={finish}>
               完成這張單
             </button>
           )}
           {['blocked', 'failed', 'stopped'].includes(item.status) && <button disabled={busy} onClick={() => act(() => api.retry(item.id))}>重試</button>}
+          {active && item.threadId && (
+            <button
+              disabled={busy || running}
+              title={running ? 'AI 執行中，等它停下來再更新需求' : '重新讀 Jira，跟上次的內容比對，請 AI 在對話裡說明有沒有變更、打算怎麼改'}
+              onClick={() => act(async () => {
+                stick.current = true;
+                await api.requestRequirementUpdate(item.id);
+              })}
+            >
+              {busy ? '處理中…' : '更新需求'}
+            </button>
+          )}
           {active && (
             <details className="more">
               <summary>更多</summary>
@@ -273,7 +314,6 @@ export function ChatPanel({ item, canHandOff, handOffBlocked }: Props) {
             </details>
           )}
         </div>
-        {item.lane === 'conversation' && !canHandOff && handOffBlocked && <p className="warn">{handOffBlocked}</p>}
       </div>
 
       <div

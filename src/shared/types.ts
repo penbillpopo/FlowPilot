@@ -43,7 +43,8 @@ export interface PlanEntry {
 export interface TicketPlan {
   ticket: JiraTicket;
   entries: PlanEntry[];
-  skill: string;
+  /** 舊版計畫表選的技能；現在由設定檔決定每個專案用哪個技能 */
+  skill?: string;
   /** 合併請求標題，也是提交訊息：feat(ALL-xxxxx) 英文描述 */
   prTitle: string;
   /** AI 的整體說明 */
@@ -112,6 +113,30 @@ export interface ReviewIssue {
   answer?: string;
 }
 
+// ---- 需求變更 ----
+
+/** 一張單在某個時間點的內容（用來比對 PM 有沒有改單） */
+export interface TicketSnapshot {
+  key: string;
+  summary: string;
+  description: string;
+  comments: { id: string; author: string; updated: string; text: string }[];
+  attachments: string[];
+  takenAt: string;
+}
+
+/** 跟上次快照比，單上有哪些內容變了 */
+export interface RequirementChange {
+  kind: 'summary' | 'description' | 'newComment' | 'editedComment' | 'newAttachment';
+  /** 哪張單（主單或子任務） */
+  from: string;
+  /** 給人看的說明，例如「主單內文被修改」「王小明 新增了一則留言」 */
+  title: string;
+  /** 內文的逐行差異；留言、標題是整段新內容 */
+  lines?: { type: 'add' | 'del'; text: string }[];
+  text?: string;
+}
+
 /** 審閱結果：判斷（專案、要做什麼、參考資料）＋問題清單＋你們的討論 */
 export interface Review extends Judgement {
   ticketKey: string;
@@ -121,6 +146,14 @@ export interface Review extends Judgement {
   issues: ReviewIssue[];
   discussion: { role: 'you' | 'ai'; text: string; at: string }[];
   reviewedAt: string;
+  /** 上次確認過的單內容（子任務、主單） */
+  snapshot?: TicketSnapshot[];
+  /** 牽涉頁面（路由、選單、元件） */
+  pages?: string[];
+  /** 後端 API 規格（單上寫的；沒寫就是空的） */
+  apis?: string[];
+  /** 預計執行內容（要改哪些地方、怎麼改） */
+  steps?: string[];
 }
 
 export interface SkillInfo {
@@ -143,12 +176,34 @@ export type WorkStatus =
 
 /**
  * 工作項目在哪一區：
- * - waiting：排隊，等輪到跟你對話（照計畫順序）
- * - conversation：對話中，同一時間只有一張；你按「換下一張」才移到開發佇列
- * - development：開發佇列，在背景跑，你自己點進去看
- * - done：已提交或結束
+ * - waiting：排隊，等專案有空的資料夾（照計畫順序）
+ * - development：進行中（同時進行的數量由資料夾決定）
+ * - done：已結束（你按了完成或移除）
+ * conversation 是舊版「一次只跟一張單對話」留下的值，現在當成進行中。
  */
 export type WorkLane = 'waiting' | 'conversation' | 'development' | 'done';
+
+/**
+ * 這張單走到流程的哪一步：
+ * - develop：AI 開發中
+ * - autotest：AI 用無頭瀏覽器自動測試（開發完自動接著做）
+ * - manual：等你手動測試；你在對話裡要求修改，或按「開瀏覽器測給我看」
+ * - fix：AI 照你的要求修改中
+ * - retest：AI 開瀏覽器重測給你看
+ */
+export type WorkStage = 'develop' | 'autotest' | 'manual' | 'fix' | 'retest';
+
+export type Env = 'sit' | 'uat';
+
+/** 工作台右邊「測試」區塊要顯示的狀態 */
+export interface TestState {
+  /** 資料夾目前連哪個環境；mixed 是兩組都開著或都註解掉，null 是找不到標記 */
+  environment: Env | 'mixed' | null;
+  /** 這次測試會用的帳號（只有帳號，不含密碼） */
+  account: { username: string; source: '這張單指定' | '帳號檔' } | null;
+  /** 你為這張單指定的帳號 */
+  override: string | null;
+}
 
 /** 審查用：這張單改了哪些檔案 */
 export interface ChangedFile {
@@ -192,6 +247,7 @@ export interface WorkItem {
   threadId: string | null;
   lastMessage: string;
   pending: PendingRequest | null;
+  stage: WorkStage;
   updatedAt: string;
 }
 
@@ -208,10 +264,6 @@ export interface BoardState {
   items: WorkItem[];
   /** 已確認計畫、但還沒開始執行的那次 */
   pendingRun: { id: number; ticketKeys: string[] } | null;
-  /** 開發佇列的上限與目前數量 */
-  development: { max: number; count: number };
-  /** 下一張為什麼還沒開始對話（例如在等資料夾、開發佇列已滿） */
-  nextBlockedReason: string | null;
   /** AI 正在寫、還沒寫完的回覆：工作項目編號 → 目前內容 */
   streaming: Record<number, string>;
 }
@@ -282,6 +334,8 @@ export interface FlowPilotApi {
   updateIssue(ticketKey: string, issueId: string, patch: { status: ReviewIssue['status']; answer?: string }): Promise<Review>;
   /** 跟 AI 討論這張單，AI 會一併更新問題清單 */
   discussReview(ticketKey: string, text: string): Promise<Review>;
+  /** 更新需求：重新讀 Jira 跟上次的內容比對，交給這張單的 AI，在對話裡回答有沒有變更、打算怎麼改 */
+  requestRequirementUpdate(itemId: number): Promise<void>;
   /** 算出分支並檢查是否已建立；fetch 為 true 時先抓遠端 */
   checkBranches(plans: TicketPlan[], fetch: boolean): Promise<PlanBranch[]>;
   confirmPlan(runId: number, plans: TicketPlan[], judgements: Record<string, Judgement>): Promise<RunSummary>;
@@ -302,8 +356,6 @@ export interface FlowPilotApi {
   stop(itemId: number): Promise<void>;
   /** 從看板移除（不會動到檔案或分支） */
   remove(itemId: number): Promise<void>;
-  /** 對話中的單問完了：移到開發佇列，換下一張 */
-  handOff(itemId: number): Promise<void>;
   /** 這張單做完了：資料夾要乾淨（environment.ts 可選擇還原），讓出資料夾給下一張 */
   finish(itemId: number, restoreEnvironment: boolean): Promise<void>;
   /** 中斷 AI 這一輪（單本身不停止，可以再補充指示） */
@@ -341,9 +393,17 @@ export interface FlowPilotApi {
   openUrl(url: string): Promise<void>;
   retry(itemId: number): Promise<void>;
   openInVSCode(itemId: number): Promise<void>;
+  /** 開瀏覽器測給我看：AI 先列測試計畫給你確認，再開有頭的瀏覽器測 */
+  retest(itemId: number): Promise<void>;
+  test: {
+    state(itemId: number): Promise<TestState>;
+    /** 切換 SIT／UAT（只切換 environment.ts 裡的註解） */
+    setEnvironment(itemId: number, env: Env): Promise<TestState>;
+    /** 為這張單指定帳號；null 代表改回用帳號檔 */
+    setAccount(itemId: number, account: { username: string; password: string } | null): Promise<TestState>;
+  };
 }
 
 export interface PlanOptions {
   projects: { name: string; merchants: number[] | null; side: string; description: string }[];
-  defaultSkill: string;
 }

@@ -1,13 +1,117 @@
-// 工作台右邊：資料夾終端機（啟動本機網站、自己下指令）與 Git 改動（像 VS Code 的原始碼控制）
+// 工作台右邊：測試（SIT／UAT、測試帳號）、資料夾終端機（啟動本機網站、自己下指令）與 Git 改動（像 VS Code 的原始碼控制）
 import { FitAddon } from '@xterm/addon-fit';
 import { Terminal } from '@xterm/xterm';
 import '@xterm/xterm/css/xterm.css';
 import { useEffect, useRef, useState } from 'react';
-import type { GitFile, GitState, WorkItem } from '../../shared/types';
+import type { Env, GitFile, GitState, TestState, WorkItem } from '../../shared/types';
 import { errorText } from './ChatPanel';
 import { DiffView } from './DiffView';
 
 const api = window.flowpilot;
+
+/**
+ * 測試：資料夾目前連 SIT 還是 UAT（只切換 environment.ts 的註解）、這次測試會用哪個帳號。
+ * 指定的帳號只限這張單，沒指定就用帳號檔（~/.codex/local-test-configs）。畫面上只顯示帳號，不顯示密碼。
+ */
+export function TestPanel({ item }: { item: WorkItem }) {
+  const [state, setState] = useState<TestState | null>(null);
+  const [editing, setEditing] = useState(false);
+  const [username, setUsername] = useState('');
+  const [password, setPassword] = useState('');
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+
+  useEffect(() => {
+    setState(null);
+    setEditing(false);
+    setError(null);
+    const refresh = () => api.test.state(item.id).then(setState).catch((e) => setError(errorText(e)));
+    refresh();
+    // 你也可能在別的地方改了 environment.ts
+    const timer = setInterval(refresh, 5000);
+    return () => clearInterval(timer);
+  }, [item.id, item.folder]);
+
+  async function act(action: () => Promise<TestState>) {
+    setBusy(true);
+    setError(null);
+    try {
+      setState(await action());
+      return true;
+    } catch (e) {
+      setError(errorText(e));
+      return false;
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  if (!item.folder) return null;
+  const env = state?.environment;
+
+  return (
+    <div className="panel test-panel">
+      <div className="panel-head">
+        <strong>測試</strong>
+        <span className="muted small">本機連的環境與登入帳號</span>
+      </div>
+      <div className="test-row">
+        <span className="test-label">環境</span>
+        <div className="segmented">
+          {(['sit', 'uat'] as Env[]).map((e) => (
+            <button key={e} className={env === e ? 'on' : ''} disabled={busy || env === e || env === null} onClick={() => act(() => api.test.setEnvironment(item.id, e))}>
+              {e.toUpperCase()}
+            </button>
+          ))}
+        </div>
+      </div>
+      {env === 'mixed' && <p className="warn small">environment.ts 的 SIT、UAT 兩組都開著或都註解掉了，選一個就會整理好。</p>}
+      {env === null && state && <p className="muted small">environment.ts 裡找不到 SIT／UAT 的標記，沒辦法切換。</p>}
+      <div className="test-row">
+        <span className="test-label">帳號</span>
+        {state?.account ? (
+          <span>
+            {state.account.username} <span className="muted small">（{state.account.source}）</span>
+          </span>
+        ) : (
+          <span className="warn small">{env === 'sit' || env === 'uat' ? `帳號檔裡沒有 ${env.toUpperCase()} 的帳號，請指定` : '—'}</span>
+        )}
+      </div>
+      {!editing && (
+        <div className="row">
+          <button className="link" onClick={() => { setUsername(state?.override ?? ''); setPassword(''); setEditing(true); }}>
+            {state?.override ? '改這張單的帳號' : '這張單改用別的帳號'}
+          </button>
+          {state?.override && (
+            <button className="link" disabled={busy} onClick={() => act(() => api.test.setAccount(item.id, null))}>
+              改回用帳號檔
+            </button>
+          )}
+        </div>
+      )}
+      {editing && (
+        <form
+          className="account-form"
+          onSubmit={async (e) => {
+            e.preventDefault();
+            if (await act(() => api.test.setAccount(item.id, { username, password }))) {
+              setEditing(false);
+              setPassword('');
+            }
+          }}
+        >
+          <input placeholder="帳號" value={username} onChange={(e) => setUsername(e.target.value)} autoFocus />
+          <input placeholder="密碼" type="password" value={password} onChange={(e) => setPassword(e.target.value)} />
+          <div className="row">
+            <button className="primary" type="submit" disabled={busy || !username.trim() || !password}>只用在這張單</button>
+            <button type="button" onClick={() => setEditing(false)}>取消</button>
+          </div>
+        </form>
+      )}
+      {error && <div className="error small">{error}</div>}
+    </div>
+  );
+}
 
 /** 資料夾終端機：固定顯示、可以直接輸入；「在本機啟動」會在這裡執行啟動指令，抓到網址後可以打開網頁 */
 export function FolderTerminalPanel({ item }: { item: WorkItem }) {

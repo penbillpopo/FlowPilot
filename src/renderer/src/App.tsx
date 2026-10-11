@@ -48,7 +48,7 @@ export function App() {
         <TicketList onConfirmed={() => setTab('board')} />
       </div>
       <div hidden={tab !== 'board'}>
-        <Workbench onNewTicket={() => setTab('tickets')} />
+        <Workbench />
       </div>
     </div>
   );

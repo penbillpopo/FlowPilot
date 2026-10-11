@@ -1,7 +1,7 @@
 // 資料庫：~/Library/Application Support/FlowPilot/flowpilot.db（SQLite，用 Node 內建的 node:sqlite）
 // 每次狀態改變先寫進來，重新啟動才接得回去。
 import { DatabaseSync } from 'node:sqlite';
-import type { JiraTicket, Judgement, PendingRequest, Review, RunSummary, TicketPlan, WorkItem, WorkLane, WorkStatus } from '../shared/types';
+import type { JiraTicket, Judgement, PendingRequest, Review, RunSummary, TicketPlan, WorkItem, WorkLane, WorkStage, WorkStatus } from '../shared/types';
 import type { PastDecision } from './planner/judge';
 
 // 依序執行的資料庫結構變更；只能往後加，不能改前面的
@@ -68,6 +68,14 @@ const MIGRATIONS: string[] = [
      thread_id TEXT,
      updated_at TEXT NOT NULL
    );`,
+  // 雜項設定值（目前沒有使用）
+  `CREATE TABLE meta (key TEXT PRIMARY KEY, value TEXT NOT NULL);`,
+  // 流程階段（開發 → 自動測試 → 等你測試 → 修改／重測）；已經開始的舊單直接當成等你測試，不會突然自己跑測試
+  // 這張單指定的測試帳號（只限這張單）
+  `ALTER TABLE work_items ADD COLUMN stage TEXT NOT NULL DEFAULT 'develop';
+   UPDATE work_items SET stage = 'manual' WHERE thread_id IS NOT NULL;
+   ALTER TABLE work_items ADD COLUMN test_username TEXT;
+   ALTER TABLE work_items ADD COLUMN test_password TEXT;`,
 ];
 
 /** 還佔著資料夾的狀態 */
@@ -76,7 +84,7 @@ export const OCCUPYING: WorkStatus[] = ['preparing', 'running', 'waiting', 'revi
 /** 已經結束的狀態 */
 export const FINISHED: WorkStatus[] = ['failed', 'stopped', 'removed', 'committed'];
 
-type NewWorkItem = Omit<WorkItem, 'id' | 'folder' | 'lane' | 'status' | 'activity' | 'threadId' | 'lastMessage' | 'pending' | 'updatedAt'>;
+type NewWorkItem = Omit<WorkItem, 'id' | 'folder' | 'lane' | 'status' | 'activity' | 'threadId' | 'lastMessage' | 'pending' | 'stage' | 'updatedAt'>;
 
 interface WorkItemRow {
   id: number;
@@ -102,10 +110,13 @@ interface WorkItemRow {
   pending_json: string | null;
   branch_created: number;
   commit_sha: string | null;
+  stage: WorkStage;
+  test_username: string | null;
+  test_password: string | null;
   updated_at: string;
 }
 
-function toWorkItem(row: WorkItemRow): WorkItem & { branchCreated: boolean; commitSha: string | null } {
+function toWorkItem(row: WorkItemRow): WorkItem & { branchCreated: boolean; commitSha: string | null; testAccount: { username: string; password: string } | null } {
   return {
     id: row.id,
     runId: row.run_id,
@@ -128,7 +139,9 @@ function toWorkItem(row: WorkItemRow): WorkItem & { branchCreated: boolean; comm
     threadId: row.thread_id,
     lastMessage: row.last_message,
     pending: row.pending_json ? (JSON.parse(row.pending_json) as PendingRequest) : null,
+    stage: row.stage,
     updatedAt: row.updated_at,
+    testAccount: row.test_username && row.test_password ? { username: row.test_username, password: row.test_password } : null,
     branchCreated: !!row.branch_created,
     commitSha: row.commit_sha,
   };
@@ -146,6 +159,7 @@ const PATCH_COLUMNS = {
   threadId: 'thread_id',
   lastMessage: 'last_message',
   branchCreated: 'branch_created',
+  stage: 'stage',
 } as const;
 
 export class Store {
@@ -304,6 +318,11 @@ export class Store {
     }
     this.db.prepare(`UPDATE work_items SET ${sets.join(', ')} WHERE id = ?`).run(...values, id);
     return this.getWorkItem(id)!;
+  }
+
+  /** 這張單指定的測試帳號；null 代表改回用帳號檔 */
+  setTestAccount(id: number, account: { username: string; password: string } | null) {
+    this.db.prepare('UPDATE work_items SET test_username = ?, test_password = ? WHERE id = ?').run(account?.username ?? null, account?.password ?? null, id);
   }
 
   /** 同一個專案、同一條分支還沒結束的工作項目（避免重複建立） */

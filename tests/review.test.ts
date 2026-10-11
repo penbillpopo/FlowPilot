@@ -29,7 +29,7 @@ describe('審閱', () => {
   });
 
   it('提示內容附上各專案的程式碼資料夾', () => {
-    const issue = { key: 'ALL-14324', summary: '', issueType: '', description: '', comments: [], subtasks: [], resources: [] };
+    const issue = { key: 'ALL-14324', summary: '', issueType: '', description: '', comments: [], subtasks: [], resources: [], snapshot: { key: 'ALL-14575', summary: '', description: '', comments: [], attachments: [], takenAt: '' } };
     expect(buildReviewPrompt(ticket, issue, null, settings, [])).toContain('PlatformAdmin：');
   });
 
@@ -66,5 +66,18 @@ describe('審閱', () => {
     expect(brief).toContain('沒寫空資料時的顯示 → 暫定：顯示空狀態');
     expect(brief).toContain('其他商戶要不要做（建議：只做 M1）');
     expect(brief).not.toContain('類型不認得');
+  });
+
+  it('交給開發的需求分析是五段格式；單上沒寫 API 就照實說，不編', () => {
+    const review = sanitizeReview({ ...raw, pages: ['src/app/pages/banner'], apis: [], steps: ['新增存款次數欄位', ''] }, ticket, settings);
+    expect(review.pages).toEqual(['src/app/pages/banner']);
+    expect(review.steps).toEqual(['新增存款次數欄位']);
+    const brief = reviewBrief(review);
+    const order = ['### 1. 開發內容重點', '### 2. 牽涉頁面', '### 3. 後端API規格', '### 4. 預計執行內容', '### 5. 疑問'].map((h) => brief.indexOf(h));
+    expect(order.every((i, n) => i > 0 && (n === 0 || i > order[n - 1]))).toBe(true);
+    expect(brief).toContain('- 新增存款狀態設定');
+    expect(brief).toContain('- 單上沒有寫 API 規格');
+    expect(brief).toContain('不用再跑 jira-frontend-analysis');
+    expect(reviewBrief(null)).toBe('');
   });
 });

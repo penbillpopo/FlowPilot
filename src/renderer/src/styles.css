@@ -202,7 +202,6 @@ ul.files .code { font-family: ui-monospace, Menlo, monospace; font-size: 11px; c
 .workbench { display: grid; grid-template-columns: 250px minmax(0, 1fr) 440px; height: 100%; min-height: 0; }
 .workbench > * { min-height: 0; }
 .sidebar { border-right: 1px solid var(--line); padding: 12px; overflow: auto; display: flex; flex-direction: column; gap: 6px; }
-.new-ticket { width: 100%; }
 .side-section { font-size: 12px; font-weight: 600; color: var(--muted); margin-top: 10px; cursor: default; }
 details.finished-list > summary { cursor: pointer; }
 ul.tickets { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 4px; }
@@ -313,3 +312,23 @@ details.more > summary::-webkit-details-marker { display: none; }
 .discussion { display: flex; flex-direction: column; gap: 6px; padding: 6px 0; border-top: 1px dashed var(--line); }
 .discuss-box { display: flex; gap: 8px; align-items: flex-end; }
 .discuss-box textarea { flex: 1; font: inherit; font-size: 13px; color: var(--fg); background: var(--bg); border: 1px solid var(--line); border-radius: 6px; padding: 6px 8px; resize: vertical; }
+
+
+/* 對話標題列：流程階段 */
+.stages { display: flex; gap: 4px; margin: 0; padding: 0; list-style: none; font-size: 12px; flex-wrap: wrap; }
+.stages li { padding: 2px 8px; border-radius: 10px; background: var(--hover); color: var(--muted); }
+.stages li + li::before { content: '→ '; color: var(--muted); }
+.stages li.done { color: var(--ok-fg); background: var(--ok-bg); }
+.stages li.now { color: var(--bg); background: var(--accent); font-weight: 600; }
+.stages li.now::before { color: var(--bg); }
+
+/* 右邊：測試（環境、帳號） */
+.test-panel { gap: 6px; }
+.test-row { display: flex; align-items: center; gap: 10px; font-size: 13px; }
+.test-label { color: var(--muted); width: 32px; flex-shrink: 0; }
+.segmented { display: inline-flex; border: 1px solid var(--line); border-radius: 6px; overflow: hidden; }
+.segmented button { border: none; border-radius: 0; padding: 3px 14px; background: none; }
+.segmented button + button { border-left: 1px solid var(--line); }
+.segmented button.on { background: var(--accent); color: #fff; opacity: 1; }
+.account-form { display: flex; flex-direction: column; gap: 6px; }
+.account-form input { width: 100%; box-sizing: border-box; }

@@ -37,6 +37,7 @@ it.runIf(process.env.LIVE)('完整執行流程', { timeout: 600_000 }, async () 
   mkdirSync(join(folder, 'node_modules'));
 
   const settings = parseSettings(DEFAULT_SETTINGS_YAML);
+  settings.projects.PlatformWeb.devSkill = 'flowpilot-test'; // 開發技能看設定檔
   settings.folders = [{ name: 'PlatformWeb', path: folder, project: 'PlatformWeb' }];
   const store = new Store(join(root, 'test.db'));
   const run = store.createRun([{ key: 'ALL-1', summary: '測試單', status: '進行中', issueType: '子任務', updated: '', url: 'https://example.com/ALL-1', parent: null }]);
@@ -54,6 +55,7 @@ it.runIf(process.env.LIVE)('完整執行流程', { timeout: 600_000 }, async () 
   const chatEvents: unknown[] = [];
   const attached: string[] = [];
   const runner = new Runner({
+    dataDir: root, ensureSite: async () => 'http://localhost:4200/',
     store,
     settings: () => settings,
     codex,

@@ -14,6 +14,7 @@ const api: FlowPilotApi = {
   reviewTicket: (ticket, force) => ipcRenderer.invoke('review:run', ticket, !!force),
   updateIssue: (ticketKey, issueId, patch) => ipcRenderer.invoke('review:updateIssue', ticketKey, issueId, patch),
   discussReview: (ticketKey, text) => ipcRenderer.invoke('review:discuss', ticketKey, text),
+  requestRequirementUpdate: (itemId) => ipcRenderer.invoke('req:update', itemId),
   checkBranches: (plans, fetch) => ipcRenderer.invoke('plan:check', plans, fetch),
   confirmPlan: (runId, plans, judgements) => ipcRenderer.invoke('plan:confirm', runId, plans, judgements),
   board: () => ipcRenderer.invoke('board:get'),
@@ -38,7 +39,6 @@ const api: FlowPilotApi = {
   decide: (id, optionId) => ipcRenderer.invoke('item:decide', id, optionId),
   stop: (id) => ipcRenderer.invoke('item:stop', id),
   remove: (id) => ipcRenderer.invoke('item:remove', id),
-  handOff: (id) => ipcRenderer.invoke('item:handOff', id),
   finish: (id, restoreEnvironment) => ipcRenderer.invoke('item:finish', id, restoreEnvironment),
   interrupt: (id) => ipcRenderer.invoke('item:interrupt', id),
   send: (id, text, images) => ipcRenderer.invoke('item:send', id, text, images),
@@ -83,6 +83,12 @@ const api: FlowPilotApi = {
   openUrl: (url) => ipcRenderer.invoke('shell:openUrl', url),
   retry: (id) => ipcRenderer.invoke('item:retry', id),
   openInVSCode: (id) => ipcRenderer.invoke('item:openInVSCode', id),
+  retest: (id) => ipcRenderer.invoke('item:retest', id),
+  test: {
+    state: (id) => ipcRenderer.invoke('test:state', id),
+    setEnvironment: (id, env) => ipcRenderer.invoke('test:setEnvironment', id, env),
+    setAccount: (id, account) => ipcRenderer.invoke('test:setAccount', id, account),
+  },
 };
 
 contextBridge.exposeInMainWorld('flowpilot', api);

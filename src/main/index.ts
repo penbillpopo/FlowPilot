@@ -1,9 +1,10 @@
 // 應用程式主程序：選單列圖示＋主視窗。關掉視窗不會結束，背景繼續跑；從選單列「結束」才真的關掉。
 import { app, BrowserWindow, ipcMain, Menu, nativeImage, Notification, shell, Tray } from 'electron';
+import { execFileSync } from 'node:child_process';
 import { appendFileSync, mkdirSync, writeFileSync } from 'node:fs';
 import { randomUUID } from 'node:crypto';
 import { join } from 'node:path';
-import type { JiraTicket, Judgement, PlanOptions, Review, ReviewIssue, TicketPlan } from '../shared/types';
+import type { Env, JiraTicket, Judgement, PlanOptions, Review, ReviewIssue, TicketPlan, TicketSnapshot } from '../shared/types';
 import { CodexRpc } from './codex/rpc';
 import { listSkills, runStructured } from './codex/structured';
 import { checkExisting } from './git';
@@ -13,14 +14,26 @@ import { deriveBranches, planProblem } from './planner/rules';
 import { loadHistory } from './chat';
 import { FolderTerminals } from './folderterminals';
 import { commitStaged, discard, fileDiff, gitState, pushBranch, stage, unstage } from './gitpanel';
+import { diffSnapshots, updateMessage } from './requirements';
 import { Runner } from './runner/runner';
 import { VSCode } from './vscode';
 import { loadSettings } from './settings';
 import { Store } from './store';
 
+// 從 Finder／Dock 打開時只有最基本的 PATH（找不到 nvm 的 node、npx，Homebrew 的 git）：
+// 啟動時讀一次登入 shell 的 PATH，git、Codex、Codex 啟動的瀏覽器工具才都找得到
+if (app.isPackaged) {
+  try {
+    const path = execFileSync(process.env.SHELL || '/bin/zsh', ['-l', '-c', 'printf %s "$PATH"'], { timeout: 10_000, encoding: 'utf8' }).trim();
+    if (path) process.env.PATH = path;
+  } catch {}
+}
+
 // 測試時可以用 FLOWPILOT_DATA_DIR 指定另一個資料位置，不碰到正式的設定與資料庫
 const dataDir = process.env.FLOWPILOT_DATA_DIR || join(app.getPath('appData'), 'FlowPilot');
 if (process.env.FLOWPILOT_DATA_DIR) app.setPath('userData', join(dataDir, 'electron'));
+// 用測試資料位置時預設只能看畫面：不排程、不建分支、不啟動 AI、不做每日檢查（要真的執行得另外加 FLOWPILOT_ALLOW_RUN=1）
+const paused = !!process.env.FLOWPILOT_DATA_DIR && !process.env.FLOWPILOT_ALLOW_RUN;
 const settingsFile = join(dataDir, '設定.yaml');
 
 let window: BrowserWindow | null = null;
@@ -75,6 +88,10 @@ function chatChanged(itemId: number, event: unknown) {
 }
 
 const folderTerminals = new FolderTerminals((channel, ...args) => window?.webContents.send(channel, ...args), (m) => log(m));
+
+function startCommand(command: string | undefined, port: number | undefined) {
+  return (command ?? 'npm start').replaceAll('{port}', String(port ?? 4200));
+}
 
 /** 這張單所在的資料夾 */
 function folderOf(itemId: number) {
@@ -146,8 +163,37 @@ async function reviewTicket(ticket: JiraTicket, force = false): Promise<Review> 
   // 參考資料直接從 Jira 擷取（主單在前），不經過 AI；同一個網址只留一筆
   const seen = new Set<string>();
   review.resources = [...(main?.resources ?? []), ...sub.resources].filter((r) => !seen.has(r.url) && seen.add(r.url));
+  // 存下這次讀到的內容，之後比對 PM 有沒有改單
+  review.snapshot = [sub.snapshot, ...(main ? [main.snapshot] : [])];
   store.saveReview(review, threadId);
   return review;
+}
+
+// ---- 需求變更 ----
+
+/**
+ * 更新需求（你按了才做）：重新讀 Jira，跟上次確認過的內容比對，把結果交給這張單的 AI，
+ * AI 在對話裡回答有沒有變更、打算怎麼改；這次讀到的內容變成新的快照。
+ */
+async function requestRequirementUpdate(itemId: number): Promise<void> {
+  const item = store.getWorkItem(itemId);
+  if (!item) throw new Error('找不到這張單');
+  if (!item.threadId) throw new Error('這張單還沒開始開發，開始之後才能更新需求');
+  const saved = store.getReview(item.ticketKey);
+  const keys = saved?.review.snapshot?.map((s) => s.key) ?? [...new Set([item.ticketKey, item.mainKey])];
+  const credentials = loadCredentials(loadSettings(settingsFile).jira.envFile);
+  const fresh: TicketSnapshot[] = [];
+  for (const key of keys) fresh.push((await getIssueContext(credentials, key)).snapshot);
+  const changes = saved?.review.snapshot?.length ? diffSnapshots(saved.review.snapshot, fresh, item.ticketKey) : null;
+  await runner.reply(itemId, updateMessage(changes, fresh));
+  if (saved) {
+    store.saveReview({ ...saved.review, snapshot: fresh }, saved.threadId);
+    // 有變更時在背景更新審閱的問題清單（變更可能回答了之前沒確認的問題）
+    if (changes?.length) {
+      const summary = changes.map((c) => `${c.title}：${(c.lines ?? []).map((l) => `${l.type === 'add' ? '+' : '-'}${l.text}`).join(' ')}${c.text ?? ''}`).join('\n');
+      discussReview(item.ticketKey, `需求變更了，請依照下面的內容更新問題清單：\n${summary}`).catch((e) => log(`更新 ${item.ticketKey} 的問題清單失敗：${e.message}`));
+    }
+  }
 }
 
 function updateIssue(ticketKey: string, issueId: string, patch: { status: ReviewIssue['status']; answer?: string }): Review {
@@ -245,13 +291,13 @@ function registerIpc() {
         side: rule.side ?? '',
         description: rule.description ?? '',
       })),
-      defaultSkill: settings.defaultSkill,
     };
   });
   ipcMain.handle('skills:list', () => listSkills(codex, loadSettings(settingsFile).folders[0]?.path ?? dataDir));
   ipcMain.handle('review:run', (_event, ticket: JiraTicket, force: boolean) => reviewTicket(ticket, force));
   ipcMain.handle('review:updateIssue', (_event, ticketKey: string, issueId: string, patch: { status: ReviewIssue['status']; answer?: string }) => updateIssue(ticketKey, issueId, patch));
   ipcMain.handle('review:discuss', (_event, ticketKey: string, text: string) => discussReview(ticketKey, text));
+  ipcMain.handle('req:update', (_event, itemId: number) => requestRequirementUpdate(itemId));
   ipcMain.handle('plan:check', (_event, plans: TicketPlan[], fetch: boolean) => {
     const settings = loadSettings(settingsFile);
     const branches = plans.filter((p) => !planProblem(p, settings)).flatMap((p) => deriveBranches(p, settings));
@@ -280,7 +326,6 @@ function registerIpc() {
   ipcMain.handle('item:decide', (_event, id: number, optionId: string) => runner.decide(id, optionId));
   ipcMain.handle('item:stop', (_event, id: number) => runner.stop(id));
   ipcMain.handle('item:remove', (_event, id: number) => runner.remove(id));
-  ipcMain.handle('item:handOff', (_event, id: number) => runner.handOff(id));
   ipcMain.handle('item:finish', (_event, id: number, restoreEnvironment: boolean) => runner.finish(id, restoreEnvironment));
   ipcMain.handle('item:interrupt', (_event, id: number) => runner.interrupt(id));
   ipcMain.handle('item:send', (_event, id: number, text: string, images: string[]) => runner.reply(id, text, images));
@@ -314,13 +359,20 @@ function registerIpc() {
   ipcMain.on('folderTerm:interrupt', (_event, folder: string) => folderTerminals.interrupt(folder));
   ipcMain.handle('folderTerm:startSite', (_event, id: number) => {
     const { folder, rule } = folderOf(id);
-    folderTerminals.run(folder.name, (rule?.startCommand ?? 'npm start').replaceAll('{port}', String(folder.port ?? 4200)));
+    folderTerminals.run(folder.name, startCommand(rule?.startCommand, folder.port));
   });
   ipcMain.handle('shell:openUrl', (_event, url: string) => {
     if (!/^https?:\/\/(localhost|127\.0\.0\.1)(:\d+)?(\/|$)/.test(url)) throw new Error('只能打開本機網址');
     return shell.openExternal(url);
   });
   ipcMain.handle('item:retry', (_event, id: number) => runner.retry(id));
+  ipcMain.handle('item:retest', (_event, id: number) => runner.retest(id));
+  ipcMain.handle('test:state', (_event, id: number) => runner.testState(id));
+  ipcMain.handle('test:setEnvironment', (_event, id: number, env: Env) => {
+    if (env !== 'sit' && env !== 'uat') throw new Error('環境只能是 SIT 或 UAT');
+    return runner.switchEnvironment(id, env);
+  });
+  ipcMain.handle('test:setAccount', (_event, id: number, account: { username: string; password: string } | null) => runner.setTestAccount(id, account));
   ipcMain.handle('item:openInVSCode', (_event, id: number) => runner.openInVSCode(id));
 }
 
@@ -331,8 +383,17 @@ app.whenReady().then(() => {
     store,
     settings: () => loadSettings(settingsFile),
     codex: daemon,
-    vscode: new VSCode(join(app.getAppPath(), 'resources/vscode-companion'), dataDir, (url) => shell.openExternal(url)),
+    // 打包後外掛放在 app.asar.unpacked（VS Code 讀不到 asar 裡的檔案）
+    vscode: new VSCode(join(app.getAppPath(), 'resources/vscode-companion').replace(/app\.asar([/\\])/, 'app.asar.unpacked$1'), dataDir, (url) => shell.openExternal(url)),
     notify,
+    paused,
+    dataDir,
+    ensureSite: (name) => {
+      const settings = loadSettings(settingsFile);
+      const folder = settings.folders.find((f) => f.name === name);
+      if (!folder) throw new Error(`設定檔裡沒有資料夾「${name}」`);
+      return folderTerminals.ensureSite(folder.name, folder.path, startCommand(settings.projects[folder.project]?.startCommand, folder.port), folder.port ?? 4200);
+    },
     onChange: boardChanged,
     onStream: streamChanged,
     onChat: chatChanged,

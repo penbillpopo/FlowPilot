@@ -24,6 +24,10 @@ export interface ProjectRule {
   merchantNames?: Record<number, string[]>;
   /** 在本機啟動網站的指令，{port} 會換成資料夾設定的連接埠 */
   startCommand?: string;
+  /** 開發用的技能（沒寫就用 frontend-development） */
+  devSkill: string;
+  /** 瀏覽器測試用的技能（沒寫就用 frontend-playwright-test） */
+  testSkill: string;
 }
 
 export interface FolderSetting {
@@ -47,10 +51,8 @@ export interface Settings {
   };
   projects: Record<string, ProjectRule>;
   folders: FolderSetting[];
-  /** 計畫表預設的開發技能 */
-  defaultSkill: string;
-  /** 開發佇列最多幾張（再加上對話中的一張，就是同時佔用的資料夾上限） */
-  maxInDevelopment: number;
+  /** 瀏覽器測試的帳號檔放在哪裡（每個專案一個 {專案}.playwright.json） */
+  testConfigDir: string;
 }
 
 export const DEFAULT_SETTINGS_YAML = `# FlowPilot 設定。改完存檔，重新整理就生效。
@@ -65,15 +67,12 @@ jira:
   # 第一次打開時預設選哪些狀態
   defaultStatuses: [進行中]
 
-# 計畫表預設的開發技能（Codex 技能名稱）
-defaultSkill: frontend-workflow
-
-# 開發佇列最多幾張。一次只跟一張單對話，問完按「換下一張」才移到開發佇列；
-# 佇列滿了就要先審查提交或移除一張，才能換下一張。
-maxInDevelopment: 3
+# 瀏覽器測試的帳號檔（每個專案一個 {專案}.playwright.json，沿用測試技能原本讀的檔案）
+testConfigDir: ~/.codex/local-test-configs
 
 # 分支規則：{商戶} 是商戶編號，{單號} 是子任務的單號（大寫）
 # description 是給 AI 判斷專案用的說明，寫得越清楚判斷越準
+# devSkill、testSkill 是開發和瀏覽器測試用的 Codex 技能（沒寫就用 frontend-development、frontend-playwright-test）
 projects:
   PlatformWeb:
     side: 前台（玩家端）
@@ -134,14 +133,17 @@ export function parseSettings(text: string): Settings {
   raw.jira.statuses ||= ['待辦事項', '進行中', 'UAT', 'READY TO TEST'];
   raw.jira.defaultStatuses ||= ['進行中'];
   if (!raw.projects || !Array.isArray(raw.folders)) throw new Error('設定檔缺少 projects 或 folders');
-  raw.defaultSkill ||= 'frontend-workflow';
-  raw.maxInDevelopment = Math.max(1, Number(raw.maxInDevelopment) || 3);
+  for (const rule of Object.values(raw.projects)) {
+    rule.devSkill ||= 'frontend-development';
+    rule.testSkill ||= 'frontend-playwright-test';
+  }
   for (const folder of raw.folders) {
     if (!raw.projects[folder.project]) throw new Error(`資料夾「${folder.name}」的專案「${folder.project}」沒有分支規則`);
   }
   return {
     ...raw,
     jira: { ...raw.jira, envFile: expandHome(raw.jira.envFile) },
+    testConfigDir: expandHome(raw.testConfigDir || '~/.codex/local-test-configs'),
     folders: raw.folders.map((f) => ({ ...f, path: expandHome(f.path) })),
   };
 }

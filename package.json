@@ -10,7 +10,8 @@
     "start": "electron-vite preview",
     "typecheck": "tsc --noEmit -p tsconfig.node.json && tsc --noEmit -p tsconfig.web.json",
     "test": "NODE_OPTIONS=--experimental-sqlite vitest run",
-    "postinstall": "electron-rebuild -f -w node-pty"
+    "postinstall": "electron-rebuild -f -w node-pty",
+    "dist": "electron-vite build && electron-builder --mac --dir"
   },
   "dependencies": {
     "@xterm/addon-fit": "^0.11.0",
@@ -31,9 +32,34 @@
     "@types/ws": "^8.18.2",
     "@vitejs/plugin-react": "^5.2.0",
     "electron": "^44.5.1",
+    "electron-builder": "^26.15.3",
     "electron-vite": "^5.0.0",
     "typescript": "^7.0.2",
     "vite": "^7.3.7",
     "vitest": "^5.0.3"
+  },
+  "productName": "FlowPilot",
+  "build": {
+    "appId": "com.intellianalyze.flowpilot",
+    "productName": "FlowPilot",
+    "directories": {
+      "output": "release"
+    },
+    "files": [
+      "out/**",
+      "resources/**",
+      "package.json"
+    ],
+    "asarUnpack": [
+      "resources/**",
+      "node_modules/node-pty/**"
+    ],
+    "npmRebuild": true,
+    "mac": {
+      "target": "dir",
+      "identity": "-",
+      "category": "public.app-category.developer-tools",
+      "hardenedRuntime": false
+    }
   }
 }

@@ -9,6 +9,15 @@ function stripAnsi(text: string): string {
   return text.replace(/\x1b\[[0-9;?]*[ -/]*[@-~]/g, '').replace(/\x1b\][^\x07\x1b]*(\x07|\x1b\\)/g, '');
 }
 
+async function reachable(url: string): Promise<boolean> {
+  try {
+    await fetch(url, { signal: AbortSignal.timeout(3000) });
+    return true;
+  } catch {
+    return false;
+  }
+}
+
 interface Session {
   pty: pty.IPty;
   buffer: string;
@@ -71,6 +80,24 @@ export class FolderTerminals {
     session.url = null;
     this.send('folderTerm:url', folder, null);
     session.pty.write(`${command}\r`);
+  }
+
+  /**
+   * 確保本機網站有在跑，回傳網址：連接埠已經連得上就直接用（不管是誰啟動的）；
+   * 否則在這個資料夾的終端機輸入啟動指令，等到連得上為止。
+   */
+  async ensureSite(folder: string, cwd: string, command: string, port: number, timeoutMs = 6 * 60_000): Promise<string> {
+    const url = `http://localhost:${port}/`;
+    if (await reachable(url)) return url;
+    if (!this.sessions.has(folder)) this.open(folder, cwd, 120, 30);
+    this.run(folder, command);
+    const end = Date.now() + timeoutMs;
+    while (Date.now() < end) {
+      await new Promise((r) => setTimeout(r, 3000));
+      if (!this.sessions.has(folder)) throw new Error('終端機結束了，網站沒有啟動成功');
+      if (await reachable(url)) return url;
+    }
+    throw new Error(`等了 ${Math.round(timeoutMs / 60_000)} 分鐘，${url} 還是連不上，請看右邊的終端機`);
   }
 
   /** 等於按 Ctrl+C，停止正在跑的指令 */

@@ -1,11 +1,14 @@
 // 執行器：把確認好的計畫變成工作項目，分配資料夾、建立並切換分支、啟動 Codex 執行技能，
 // 並追蹤每段對話的進度、提問與同意請求。
 import { execFile } from 'node:child_process';
-import { existsSync } from 'node:fs';
+import { existsSync, readFileSync } from 'node:fs';
+import { homedir } from 'node:os';
 import { join } from 'node:path';
-import type { BoardState, ChatEvent, PendingRequest, SkillInfo, TicketPlan } from '../../shared/types';
+import type { BoardState, ChatEvent, Env, PendingRequest, SkillInfo, TestState, TicketPlan, WorkStage } from '../../shared/types';
 import { toEntry } from '../chat';
+import { ENVIRONMENT_FILE, readEnvironment, setEnvironment } from '../environment';
 import { reviewBrief } from '../planner/review';
+import { resolveAccount, writeAccountFile } from '../testaccounts';
 import type { CodexRpc, RpcMessage } from '../codex/rpc';
 import { listSkills } from '../codex/structured';
 import {
@@ -43,18 +46,51 @@ export interface RunnerDeps {
   /** 聊天紀錄的即時更新（新的一則、或某一則多了內容） */
   onChat?: (itemId: number, event: ChatEvent) => void;
   log: (message: string) => void;
+  /** 暫停：不排程、不準備資料夾、不啟動 AI（用測試資料位置看畫面時，避免動到真正的專案） */
+  paused?: boolean;
+  /** FlowPilot 的資料位置：瀏覽器測試的截圖紀錄、這次測試的登入資料放這裡（不放進專案） */
+  dataDir: string;
+  /** 確保資料夾的本機網站有在跑（沒在跑就在資料夾終端機啟動），回傳網址 */
+  ensureSite: (folder: string) => Promise<string>;
 }
 
 const APPROVAL_METHODS = /requestApproval$|^execCommandApproval$|^applyPatchApproval$/;
 
-/**
- * 開發用對話的設定：關掉 Codex 內建的「控制電腦／瀏覽器」。
- * 實測：開著時 AI 會用它去開 Figma 網頁（在常駐服務裡用不了，就放棄），關掉後才會改用 Figma MCP。
- * 瀏覽器測試用的是 Playwright MCP，不受影響。
- */
-const THREAD_CONFIG = { features: { computer_use: false, browser_use: false, browser_use_external: false } };
+/** 瀏覽器工具的名稱：自動測試用無頭的，重測用有頭的 */
+const HEADLESS_BROWSER = 'flowpilot_browser_headless';
+const HEADED_BROWSER = 'flowpilot_browser';
 
-/** 瀏覽器測試技能切換 SIT／UAT 時會改的檔案 */
+/**
+ * 開發用對話的設定（只在 FlowPilot 開的對話裡生效，不改你的 ~/.codex/config.toml）：
+ * - 關掉 Codex 內建的「控制電腦／瀏覽器」。實測：開著時 AI 會用它去開 Figma 網頁（在常駐服務裡用不了，就放棄），關掉後才會改用 Figma MCP。
+ * - 瀏覽器測試改用 FlowPilot 提供的兩套 Playwright：無頭（自動測試）與有頭（重測給你看），
+ *   截圖紀錄放在 FlowPilot 的資料夾，不會弄髒專案；你原本的 playwright 在這些對話裡關掉，AI 才不會用錯。
+ */
+function threadConfig(dataDir: string) {
+  const outputDir = join(dataDir, '瀏覽器測試紀錄');
+  const browser = (extra: string[]) => ({ command: 'npx', args: ['-y', '@playwright/mcp@latest', ...extra, '--isolated', '--caps', 'devtools', '--output-dir', outputDir] });
+  let hasOwnPlaywright = false;
+  try {
+    hasOwnPlaywright = /^\[mcp_servers\.playwright\]/m.test(readFileSync(join(homedir(), '.codex/config.toml'), 'utf8'));
+  } catch {}
+  return {
+    features: { computer_use: false, browser_use: false, browser_use_external: false },
+    mcp_servers: {
+      ...(hasOwnPlaywright ? { playwright: { enabled: false } } : {}),
+      [HEADLESS_BROWSER]: browser(['--headless']),
+      [HEADED_BROWSER]: browser(['--browser', 'chrome']),
+    },
+  };
+}
+
+const STAGE_DONE: Partial<Record<WorkStage, string>> = {
+  autotest: '自動測試完成，等你手動測試',
+  fix: '改好了，等你測試',
+  retest: '重測完成，等你確認',
+  manual: '等你測試',
+};
+
+/** 瀏覽器測試切換 SIT／UAT 時會改的檔案 */
 function isEnvironmentFile(path: string): boolean {
   return /(^|\/)src\/environments\/environment[^/]*\.ts$/.test(path);
 }
@@ -87,8 +123,6 @@ export class Runner {
   /** 準備好之後，交代給 AI 時要說明的現況 */
   private prepared = new Map<number, { continuing: boolean; commits: number; dirty: number }>();
   private scheduling = false;
-  /** 下一張為什麼還沒開始對話（顯示在看板上） */
-  private nextBlockedReason: string | null = null;
   private rescheduleRequested = false;
 
   constructor(private readonly deps: RunnerDeps) {
@@ -110,22 +144,16 @@ export class Runner {
     const occupiedBy = new Map(items.filter((i) => i.folder && OCCUPYING.includes(i.status)).map((i) => [i.folder!, i.id]));
     return {
       folders: this.deps.settings().folders.map((f) => ({ ...f, itemId: occupiedBy.get(f.name) ?? null })),
-      items: items.map(({ branchCreated: _, ...item }) => item),
+      // 密碼不送到畫面
+      items: items.map(({ branchCreated: _, testAccount: __, commitSha: ___, ...item }) => item),
       pendingRun: store.pendingPlannedRun(),
       streaming: Object.fromEntries(this.streaming),
-      development: { max: this.deps.settings().maxInDevelopment, count: this.inDevelopment(items).length },
-      nextBlockedReason: this.nextBlockedReason,
     };
   }
 
-  /** 開發佇列裡還沒結束的單 */
-  private inDevelopment(items = this.deps.store.listWorkItems()) {
-    return items.filter((i) => i.lane === 'development' && !FINISHED.includes(i.status));
-  }
-
-  /** 只有「對話中」的單跳系統通知；開發佇列只在看板上標示，由你自己點進去看 */
+  /** 進行中的單停下來等你、做完或失敗時跳系統通知（每一張進行中的單都會通知） */
   private notify(id: number, title: string, body: string) {
-    if (this.deps.store.getWorkItem(id)?.lane === 'conversation') this.deps.notify(title, body, id);
+    this.deps.notify(title, body, id);
   }
 
   private update(id: number, patch: Parameters<Store['updateWorkItem']>[1]): StoredWorkItem {
@@ -160,7 +188,7 @@ export class Runner {
           targetMerchants: branches.filter((t) => t.role === 'target' && t.project === b.project).map((t) => t.merchant!),
           branch: b.branch,
           baseBranch: b.baseBranch,
-          skill: plan.skill,
+          skill: settings.projects[b.project]?.devSkill ?? 'frontend-development',
           prTitle: plan.prTitle,
           preferredFolder: plan.entries.find((e) => e.project === b.project)?.folder ?? null,
         }));
@@ -176,11 +204,12 @@ export class Runner {
   }
 
   /**
-   * 排程：同一時間只跟一張單對話。
-   * 沒有單在對話中時，照計畫順序取下一張排隊的單，分配資料夾、開始準備；
-   * 下一張拿不到資料夾就停在原地（不跳過，維持順序），並在看板說明原因。
+   * 排程：同時進行的單數由資料夾決定（每個資料夾一次一張）。
+   * 每個專案照計畫順序，有空的資料夾就開始下一張；拿不到資料夾的留在排隊，並在說明寫出原因。
+   * 不會自己結束任何一張單，結束由你決定（完成或移除）。
    */
   async schedule(): Promise<void> {
+    if (this.deps.paused) return;
     if (this.scheduling) {
       this.rescheduleRequested = true;
       return;
@@ -189,7 +218,7 @@ export class Runner {
     try {
       do {
         this.rescheduleRequested = false;
-        await this.startNextConversation();
+        await this.startQueued();
         this.deps.onChange();
       } while (this.rescheduleRequested);
     } finally {
@@ -197,78 +226,64 @@ export class Runner {
     }
   }
 
-  private async startNextConversation(): Promise<void> {
+  private async startQueued(): Promise<void> {
     const settings = this.deps.settings();
     const items = this.deps.store.listWorkItems();
-    const talking = items.find((i) => i.lane === 'conversation' && !FINISHED.includes(i.status));
-    const next = items.find((i) => i.lane === 'waiting' && i.status === 'queued');
-    if (talking || !next) {
-      this.nextBlockedReason = null;
-      return;
-    }
-    const rule = settings.projects[next.project];
-    if (!rule) {
-      this.update(next.id, { status: 'blocked', activity: `設定檔裡沒有「${next.project}」的規則` });
-      return;
-    }
     const occupiedBy = new Map(items.filter((i) => i.folder && OCCUPYING.includes(i.status)).map((i) => [i.folder!, i]));
-    const projectFolders = settings.folders.filter((f) => f.project === next.project);
-
-    // 分支已經存在於某個資料夾：之前的提交只在那裡，一定要用那個資料夾
-    const holding: string[] = [];
-    for (const f of projectFolders) if (await localBranchExists(f.path, next.branch).catch(() => false)) holding.push(f.name);
-    let onlyFolder: string | null = null;
-    if (holding.length === 1) onlyFolder = holding[0];
-    else if (holding.length > 1) {
-      if (!next.preferredFolder || !holding.includes(next.preferredFolder)) {
-        this.update(next.id, { status: 'blocked', activity: `分支在 ${holding.join('、')} 都有，請在計畫表選擇要用哪一個資料夾` });
-        return;
-      }
-      onlyFolder = next.preferredFolder;
-    }
-
-    // 每個資料夾不能用的原因：被哪張單佔住，或有未提交的修改（資料夾本來就在這條分支上的除外：那是之前做到一半的進度，準備時會問你）
-    const reasons: string[] = [];
-    const busy = new Set<string>();
-    const branches: Record<string, string> = {};
-    for (const f of projectFolders) {
-      if (onlyFolder && f.name !== onlyFolder) continue;
-      const owner = occupiedBy.get(f.name);
-      if (owner) {
-        busy.add(f.name);
-        reasons.push(`${f.name} 被 ${owner.ticketKey} 佔用`);
+    const blockedProjects = new Set<string>();
+    for (const next of items.filter((i) => i.status === 'queued')) {
+      // 同一個專案照順序：前面那張還拿不到資料夾，後面的也先等
+      if (blockedProjects.has(next.project)) continue;
+      const rule = settings.projects[next.project];
+      if (!rule) {
+        this.update(next.id, { status: 'blocked', activity: `設定檔裡沒有「${next.project}」的規則` });
         continue;
       }
-      branches[f.name] = await currentBranch(f.path).catch(() => '');
-      if (branches[f.name] === next.branch) continue;
-      const dirty = await dirtyFiles(f.path).catch(() => ['（讀不到 git 狀態）']);
-      if (dirty.length) {
-        busy.add(f.name);
-        reasons.push(`${f.name} 有未提交的修改（${dirty.slice(0, 2).join('、')}${dirty.length > 2 ? ' 等' : ''}）`);
-      }
-    }
-    const folder = pickFolder(next, settings.folders, busy, branches, rule, onlyFolder);
-    if (!folder) {
-      this.nextBlockedReason = `下一張 ${next.ticketKey} 在等 ${next.project} 的資料夾：${reasons.join('；') || '沒有可用的資料夾'}`;
-      this.update(next.id, { activity: `排隊中：${reasons.join('；') || '等資料夾空出來'}` });
-      return;
-    }
-    this.nextBlockedReason = null;
-    this.update(next.id, { folder: folder.name, lane: 'conversation', status: 'preparing', activity: '準備資料夾' });
-    void this.prepare(next.id);
-  }
+      const projectFolders = settings.folders.filter((f) => f.project === next.project);
 
-  /** 對話中的單問完了：移到開發佇列，讓下一張進來對話（開發佇列有上限） */
-  async handOff(id: number) {
-    const item = this.deps.store.getWorkItem(id)!;
-    if (item.lane !== 'conversation') throw new Error('只有對話中的單可以換下一張');
-    const { maxInDevelopment } = this.deps.settings();
-    const developing = this.inDevelopment();
-    if (developing.length >= maxInDevelopment) {
-      throw new Error(`開發佇列已滿（${developing.length}／${maxInDevelopment}）：請先審查提交、或移除一張（${developing.map((i) => i.ticketKey).join('、')}）`);
+      // 分支已經存在於某個資料夾：之前的提交只在那裡，一定要用那個資料夾
+      const holding: string[] = [];
+      for (const f of projectFolders) if (await localBranchExists(f.path, next.branch).catch(() => false)) holding.push(f.name);
+      let onlyFolder: string | null = null;
+      if (holding.length === 1) onlyFolder = holding[0];
+      else if (holding.length > 1) {
+        if (!next.preferredFolder || !holding.includes(next.preferredFolder)) {
+          this.update(next.id, { status: 'blocked', activity: `分支在 ${holding.join('、')} 都有，請在計畫表選擇要用哪一個資料夾` });
+          continue;
+        }
+        onlyFolder = next.preferredFolder;
+      }
+
+      // 每個資料夾不能用的原因：被哪張單佔住，或有未提交的修改（資料夾本來就在這條分支上的除外：那是之前做到一半的進度，準備時會問你）
+      const reasons: string[] = [];
+      const busy = new Set<string>();
+      const branches: Record<string, string> = {};
+      for (const f of projectFolders) {
+        if (onlyFolder && f.name !== onlyFolder) continue;
+        const owner = occupiedBy.get(f.name);
+        if (owner) {
+          busy.add(f.name);
+          reasons.push(`${f.name} 正在做 ${owner.ticketKey}`);
+          continue;
+        }
+        branches[f.name] = await currentBranch(f.path).catch(() => '');
+        if (branches[f.name] === next.branch) continue;
+        const dirty = await dirtyFiles(f.path).catch(() => ['（讀不到 git 狀態）']);
+        if (dirty.length) {
+          busy.add(f.name);
+          reasons.push(`${f.name} 有未提交的修改（${dirty.slice(0, 2).join('、')}${dirty.length > 2 ? ' 等' : ''}）`);
+        }
+      }
+      const folder = pickFolder(next, settings.folders, busy, branches, rule, onlyFolder);
+      if (!folder) {
+        blockedProjects.add(next.project);
+        this.update(next.id, { activity: `排隊中：${reasons.join('；') || '等資料夾空出來'}` });
+        continue;
+      }
+      occupiedBy.set(folder.name, next);
+      this.update(next.id, { folder: folder.name, lane: 'development', status: 'preparing', activity: '準備資料夾' });
+      void this.prepare(next.id);
     }
-    this.update(id, { lane: 'development' });
-    await this.schedule();
   }
 
   private folderPath(name: string): string {
@@ -397,14 +412,18 @@ export class Runner {
     const cwd = this.folderPath(item.folder!);
     await codex.start();
     this.update(id, { activity: '啟動 Codex' });
-    const { thread } = await codex.request<{ thread: { id: string } }>('thread/start', {
-      cwd,
-      // 每個指令都先問 FlowPilot，由 FlowPilot 決定自動同意或轉給你（見 policy.ts）
-      approvalPolicy: 'untrusted',
-      sandbox: 'danger-full-access',
-      config: THREAD_CONFIG,
-    });
-    this.update(id, { threadId: thread.id, status: 'running', activity: '執行技能' });
+    const { thread } = await codex.request<{ thread: { id: string } }>(
+      'thread/start',
+      {
+        cwd,
+        // 每個指令都先問 FlowPilot，由 FlowPilot 決定自動同意或轉給你（見 policy.ts）
+        approvalPolicy: 'untrusted',
+        sandbox: 'danger-full-access',
+        config: threadConfig(this.deps.dataDir),
+      },
+      180_000, // 第一次要下載瀏覽器工具，比較久
+    );
+    this.update(id, { threadId: thread.id, status: 'running', stage: 'develop', activity: '開發中' });
     await codex.request('thread/name/set', { threadId: thread.id, name: `${item.ticketKey}｜${item.merchant ? `m${item.merchant}｜` : ''}${item.folder}` }).catch(() => {});
 
     const state = this.prepared.get(id) ?? { continuing: false, commits: 0, dirty: 0 };
@@ -414,26 +433,142 @@ export class Runner {
       ? `- 這是已經存在的分支 ${item.branch}（基底 origin/${item.baseBranch}），之前已經有開發內容：比基底多 ${state.commits} 個提交、${state.dirty} 個未提交的修改。` +
         `請先看過現有的差異（git diff origin/${item.baseBranch}...HEAD 與 git status），了解做到哪裡，再接著完成剩下的部分；不要重做已經完成的內容，也不要丟掉未提交的修改。FlowPilot 已經切換好分支，不要切換分支。`
       : `- FlowPilot 已經在這個資料夾建立並切換到分支 ${item.branch}（從 origin/${item.baseBranch} 開出）。請直接在目前分支開發，不要切換分支。`;
+    const skill = this.deps.settings().projects[item.project]?.devSkill ?? item.skill;
+    const brief = reviewBrief(this.deps.store.getReview(item.ticketKey)?.review ?? null);
     const instructions = [
-      `請使用 $${item.skill} 處理這張 Jira：${item.mainUrl}`,
+      `請使用 $${skill} 處理這張 Jira：${item.mainUrl}`,
       '',
       `- 指派給我的子任務是 ${item.ticketKey}（${item.ticketSummary}）；需求內容寫在主單 ${item.mainKey}。`,
+      '- 需求以單上的「需求 / Requirements」與「預期結果 / Acceptance Criteria」為準，完成時要對照預期結果逐項確認；不理會「原始需求 / Merchant Requirements」。',
+      brief ? '' : '- 這張單沒有開發前的審閱結果：請自己讀 Jira 單，整理成開發內容重點、牽涉頁面、後端API規格、預計執行內容、疑問五段之後再開發，不用要我先跑 jira-frontend-analysis。',
       branchLine,
+      '- 這次只做開發：開發完 FlowPilot 會接著安排瀏覽器測試，你不用自己開瀏覽器測試。',
+      `- 不要修改 ${ENVIRONMENT_FILE}（SIT／UAT 由 FlowPilot 切換）。`,
       '- 不要提交、不要推送；完成後由我審查並提交。',
       item.targetMerchants.length ? `- 這張單之後還要移植到商戶 ${item.targetMerchants.join('、')}，那是下一階段的事，這次只做目前這個商戶。` : '',
-      reviewBrief(this.deps.store.getReview(item.ticketKey)?.review ?? null),
+      brief,
     ]
       .filter((line) => line !== '')
       .join('\n');
     const { turn } = await codex.request<{ turn: { id: string } }>('turn/start', {
       threadId: thread.id,
       input: [
-        { type: 'skill', name: item.skill, path: await this.skillPath(item.skill) },
+        { type: 'skill', name: skill, path: await this.skillPath(skill) },
         { type: 'text', text: instructions, text_elements: [] },
       ],
     });
     this.turns.set(thread.id, turn.id);
     // 不自動打開 VS Code：工作台就看得到對話與改動；需要時再按「在 VS Code 查看」
+  }
+
+  // ---- 瀏覽器測試 ----
+
+  /**
+   * 開始瀏覽器測試（同一段對話裡的新一輪）：
+   * - 自動測試（開發完自動接著做）：無頭、不用你確認測試計畫、只做不改資料的操作、前端問題自己修正重測最多 3 次
+   * - 重測（你按了才做）：有頭、先列測試計畫給你確認
+   * 兩者都用測試帳號自動登入；網站由 FlowPilot 在資料夾終端機啟動；環境照資料夾目前的 environment.ts。
+   */
+  private async startTest(id: number, headed: boolean): Promise<void> {
+    const { codex, settings: getSettings } = this.deps;
+    const item = this.deps.store.getWorkItem(id)!;
+    const settings = getSettings();
+    const rule = settings.projects[item.project];
+    const label = headed ? '重測' : '自動測試';
+    this.update(id, { stage: headed ? 'retest' : 'autotest', status: 'running', activity: '準備瀏覽器測試：啟動本機網站', pending: null });
+    try {
+      if (!item.threadId || !item.folder) throw new Error('這張單還沒有 AI 對話');
+      const cwd = this.folderPath(item.folder);
+      const env = readEnvironment(cwd);
+      if (env === null) throw new Error(`${ENVIRONMENT_FILE} 裡找不到 SIT／UAT 的標記`);
+      if (env === 'mixed') throw new Error(`${ENVIRONMENT_FILE} 的 SIT、UAT 兩組都開著或都註解掉了，請在右邊「測試」選一個環境`);
+      const account = resolveAccount(settings.testConfigDir, item.project, item.merchant, env, item.testAccount);
+      const where = `${item.project}${item.merchant ? ` m${item.merchant}` : ''} 的 ${env.toUpperCase()}`;
+      if (!account) throw new Error(`帳號檔裡沒有 ${where} 的測試帳號，請在右邊「測試」指定這張單要用的帳號`);
+      const url = await this.deps.ensureSite(item.folder);
+      const accountFile = writeAccountFile(join(this.deps.dataDir, '測試帳號'), id, { project: item.project, merchant: item.merchant, environment: env, url, account });
+      const common = [
+        `- 本機網站已經由 FlowPilot 啟動：${url}，直接用；不要自己啟動、重啟或關掉網站。`,
+        `- 環境：FlowPilot 已經切到 ${env.toUpperCase()}，不要修改 ${ENVIRONMENT_FILE}。`,
+        `- 登入：讀 ${accountFile} 裡的帳號密碼自動登入（登入畫面要 OTP 時，填檔案裡的 otp）。不要停下來等我登入，也不要把密碼印出來或寫進任何檔案、回覆。`,
+        '- 失敗時先判斷原因：是前端程式的問題就直接修正，然後重測失敗的部分，最多 3 輪；不是前端的問題（後端、資料、權限、環境）就記下來，不要修。',
+        '- 不要提交、不要推送。',
+      ];
+      const text = headed
+        ? [
+            `請使用 $${rule.testSkill} 開瀏覽器重新測試給我看（我手動測過，也可能請你改過了）。以下是 FlowPilot 的安排，跟技能預設規則不同的地方以這裡為準：`,
+            '',
+            `- 這次是有頭模式：只能用 ${HEADED_BROWSER} 這個瀏覽器工具（會開出視窗讓我看）；不要用 ${HEADLESS_BROWSER}，也不要另外寫 Playwright 腳本開瀏覽器。`,
+            '- 先列出測試計畫（要測的頁面、操作、預期的 API），等我確認後才開始。重點放在我在這段對話裡要求修改的部分，再加上這張單的主要流程。',
+            '- 會新增、修改、刪除資料的操作，照技能的規則，每一步做之前都要先問我。',
+            ...common,
+          ]
+        : [
+            `請使用 $${rule.testSkill} 測試剛才完成的開發（這是開發完 FlowPilot 自動安排的測試，只是先幫我抓明顯的錯，我之後一定會自己手動測）。以下是 FlowPilot 的安排，跟技能預設規則不同的地方以這裡為準：`,
+            '',
+            `- 我已經授權這次用無頭模式：只能用 ${HEADLESS_BROWSER} 這個瀏覽器工具（不會開出視窗）；不要用 ${HEADED_BROWSER}，也不要另外寫 Playwright 腳本開有頭的瀏覽器。`,
+            '- 不用先給我確認測試計畫：列出測試案例後直接開始測，中途也不要停下來問我。',
+            '- 只做不會新增、修改、刪除資料的操作（瀏覽、搜尋、篩選、看詳情、切換語言、匯出下載）；會新增或修改資料的步驟（新增、送出、儲存、核准、拒絕、刪除、狀態變更、資金相關…）一律跳過，在結果裡列出來給我手動測。',
+            ...common,
+            '- 最後照技能的結果格式回報，並另外列出「跳過、要你手動測的項目」。',
+          ];
+      await codex.start();
+      const { turn } = await codex.request<{ turn: { id: string } }>('turn/start', {
+        threadId: item.threadId,
+        input: [
+          { type: 'skill', name: rule.testSkill, path: await this.skillPath(rule.testSkill) },
+          { type: 'text', text: text.join('\n'), text_elements: [] },
+        ],
+      });
+      this.turns.set(item.threadId, turn.id);
+      this.update(id, { activity: headed ? '列測試計畫給你確認' : '自動測試中（無頭）' });
+    } catch (error) {
+      if (['removed', 'stopped'].includes(this.deps.store.getWorkItem(id)!.status)) return;
+      const message = `${label}沒辦法開始：${(error as Error).message}`;
+      this.update(id, { stage: 'manual', status: 'waiting', activity: message });
+      this.notify(id, `${item.ticketKey} ${label}沒辦法開始`, (error as Error).message);
+    }
+  }
+
+  /** 開瀏覽器測給我看（你按了才做） */
+  async retest(id: number) {
+    const item = this.deps.store.getWorkItem(id)!;
+    if (!item.threadId) throw new Error('這張單還沒有 AI 對話');
+    if (this.turns.has(item.threadId) || item.status === 'running' || item.status === 'preparing') throw new Error('AI 還在執行，請等它停下來（或中斷）再重測');
+    if (item.pending) throw new Error('AI 有事在等你回答，先處理再重測');
+    await this.startTest(id, true);
+  }
+
+  /** 工作台右邊「測試」區塊：目前的環境、會用哪個帳號（不含密碼） */
+  testState(id: number): TestState {
+    const item = this.deps.store.getWorkItem(id)!;
+    if (!item.folder) throw new Error('這張單還沒有分配資料夾');
+    const settings = this.deps.settings();
+    const environment = readEnvironment(this.folderPath(item.folder));
+    const account = environment === 'sit' || environment === 'uat' ? resolveAccount(settings.testConfigDir, item.project, item.merchant, environment, item.testAccount) : null;
+    return {
+      environment,
+      account: account ? { username: account.username, source: account.source } : null,
+      override: item.testAccount?.username ?? null,
+    };
+  }
+
+  /** 切換 SIT／UAT：只切換 environment.ts 裡的註解 */
+  switchEnvironment(id: number, env: Env): TestState {
+    const item = this.deps.store.getWorkItem(id)!;
+    if (!item.folder) throw new Error('這張單還沒有分配資料夾');
+    if (item.status === 'running' && (item.stage === 'autotest' || item.stage === 'retest')) throw new Error('瀏覽器測試進行中，切換環境會影響測試，請等它停下來（或中斷）');
+    setEnvironment(this.folderPath(item.folder), env);
+    return this.testState(id);
+  }
+
+  /** 為這張單指定測試帳號（只限這張單）；null 代表改回用帳號檔 */
+  setTestAccount(id: number, account: { username: string; password: string } | null): TestState {
+    const username = account?.username.trim() ?? '';
+    if (account && (!username || !account.password)) throw new Error('帳號和密碼都要填');
+    this.deps.store.setTestAccount(id, account ? { username, password: account.password } : null);
+    this.deps.onChange();
+    return this.testState(id);
   }
 
   // ---- Codex 訊息 ----
@@ -521,9 +656,13 @@ export class Runner {
         } else if (looksLikeQuestion(latest.lastMessage)) {
           this.update(item.id, { status: 'waiting', activity: 'AI 在問你問題', pending: null });
           this.notify(item.id, `${item.ticketKey} 在等你回答`, short(latest.lastMessage.slice(-200)));
+        } else if (latest.stage === 'develop') {
+          // 開發完自動接著做無頭測試
+          void this.startTest(item.id, false);
         } else {
-          this.update(item.id, { status: 'review', activity: 'AI 做完了，等你審查', pending: null });
-          this.notify(item.id, `${item.ticketKey} 做完了`, '等你審查');
+          const activity = STAGE_DONE[latest.stage] ?? '等你測試';
+          this.update(item.id, { status: 'review', stage: 'manual', activity, pending: null });
+          this.notify(item.id, `${item.ticketKey} ${activity}`, short(latest.lastMessage.slice(-200)));
         }
         break;
       }
@@ -611,7 +750,9 @@ export class Runner {
       const { turn } = await codex.request<{ turn: { id: string } }>('turn/start', { threadId: item.threadId, input });
       this.turns.set(item.threadId, turn.id);
     }
-    this.update(id, { status: 'running', activity: '已送出，繼續執行', pending: null });
+    // 等你測試時你在對話裡說的話，當成要求修改；改完回到等你測試（不會再自動測試，要重測按「開瀏覽器測給我看」）
+    const stage = !turnId && item.stage === 'manual' ? { stage: 'fix' as const } : {};
+    this.update(id, { status: 'running', activity: '已送出，繼續執行', pending: null, ...stage });
   }
 
   /** 中斷 AI 這一輪：單不停止，之後可以再補充指示讓它繼續 */
@@ -687,7 +828,7 @@ export class Runner {
       return;
     }
     this.allowed.delete(id);
-    this.update(id, { status: 'queued', lane: item.lane === 'development' ? 'waiting' : item.lane === 'conversation' ? 'waiting' : item.lane, folder: null, activity: '' });
+    this.update(id, { status: 'queued', lane: 'waiting', folder: null, activity: '' });
     await this.schedule();
   }
 
@@ -699,11 +840,12 @@ export class Runner {
 
   /** 啟動或重新連線後，重新訂閱還在進行中的對話，才收得到它們的進度 */
   async resubscribe(): Promise<void> {
+    if (this.deps.paused) return;
     const active = this.deps.store.listWorkItems().filter((i) => i.threadId && ['running', 'waiting', 'review'].includes(i.status));
     if (active.length) await this.deps.codex.start();
     for (const item of active) {
       try {
-        const { thread } = await this.deps.codex.request<{ thread: { status?: { type: string } } }>('thread/resume', { threadId: item.threadId, excludeTurns: true, config: THREAD_CONFIG });
+        const { thread } = await this.deps.codex.request<{ thread: { status?: { type: string } } }>('thread/resume', { threadId: item.threadId, excludeTurns: true, config: threadConfig(this.deps.dataDir) });
         if (item.status === 'running' && thread.status?.type === 'idle') {
           this.update(item.id, { status: 'waiting', activity: 'FlowPilot 重新啟動時這一輪已經結束，看一下最後的回覆', pending: null });
         }

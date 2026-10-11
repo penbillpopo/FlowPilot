@@ -1,7 +1,7 @@
 // Jira 查詢：連線資訊沿用 JiraMcpServer 的 .env 與權杖檔，權杖只在執行時讀取。
 import { readFileSync } from 'node:fs';
 import { dirname, isAbsolute, resolve } from 'node:path';
-import type { JiraTicket, Resource } from '../shared/types';
+import type { JiraTicket, Resource, TicketSnapshot } from '../shared/types';
 import { expandHome } from './settings';
 
 export interface JiraCredentials {
@@ -101,6 +101,8 @@ export interface IssueContext {
   subtasks: { key: string; summary: string }[];
   /** 內文、留言、附件裡的參考資料 */
   resources: Resource[];
+  /** 這個時間點的內容（用來比對 PM 有沒有改單） */
+  snapshot: TicketSnapshot;
 }
 
 const URL_IN_TEXT = /https?:\/\/[^\s<>"'）)\]】，。]+/g;
@@ -176,6 +178,26 @@ export function adfToText(node: unknown): string {
 
 const MAX_TEXT = 6000;
 
+/** 「原始需求 / Merchant Requirements」段落的標題 */
+const MERCHANT_SECTION = /原始需求|Merchant\s+Requirements/i;
+
+/**
+ * 拿掉「原始需求 / Merchant Requirements」整段：不交給 AI、不擷取裡面的連結、需求變更也不比對這段。
+ * Jira 單的段落是用面板（panel）當標題，段落內容接在面板後面直到下一個面板；
+ * 原始需求段落裡也可能有「Acceptance criteria」之類的小標題，那是商戶寫的，一起拿掉。
+ * 要看的是「需求 / Requirements」與「預期結果 / Acceptance Criteria」。
+ */
+export function stripMerchantSection(doc: unknown): unknown {
+  if (!doc || typeof doc !== 'object' || !Array.isArray((doc as { content?: unknown[] }).content)) return doc;
+  const kept: unknown[] = [];
+  let skipping = false;
+  for (const node of (doc as { content: unknown[] }).content) {
+    if ((node as { type?: string })?.type === 'panel') skipping = MERCHANT_SECTION.test(adfToText(node));
+    if (!skipping) kept.push(node);
+  }
+  return { ...(doc as object), content: kept };
+}
+
 export async function getIssueContext(credentials: JiraCredentials, key: string, fetchImpl: typeof fetch = fetch): Promise<IssueContext> {
   const auth = Buffer.from(`${credentials.email}:${credentials.token}`).toString('base64');
   const params = new URLSearchParams({ fields: 'summary,issuetype,description,comment,subtasks,attachment' });
@@ -188,20 +210,31 @@ export async function getIssueContext(credentials: JiraCredentials, key: string,
       summary: string;
       issuetype: { name: string };
       description: unknown;
-      comment?: { comments: { body: unknown }[] };
+      comment?: { comments: { id: string; body: unknown; updated?: string; author?: { displayName?: string } }[] };
       subtasks?: { key: string; fields: { summary: string } }[];
       attachment?: { filename: string; content: string }[];
     };
+  };
+  const description = stripMerchantSection(fields.description);
+  const fullDescription = adfToText(description).replace(/\n{3,}/g, '\n\n').trim();
+  const snapshot: TicketSnapshot = {
+    key: key.toUpperCase(),
+    summary: fields.summary,
+    description: fullDescription,
+    comments: (fields.comment?.comments ?? []).map((c) => ({ id: c.id, author: c.author?.displayName ?? '', updated: c.updated ?? '', text: adfToText(c.body).trim() })),
+    attachments: (fields.attachment ?? []).map((a) => a.filename),
+    takenAt: new Date().toISOString(),
   };
   return {
     key: key.toUpperCase(),
     summary: fields.summary,
     issueType: fields.issuetype.name,
-    description: adfToText(fields.description).replace(/\n{3,}/g, '\n\n').trim().slice(0, MAX_TEXT),
+    snapshot,
+    description: fullDescription.slice(0, MAX_TEXT),
     // 最近 5 則留言
     comments: (fields.comment?.comments ?? []).slice(-5).map((c) => adfToText(c.body).trim().slice(0, 1500)),
     subtasks: (fields.subtasks ?? []).map((s) => ({ key: s.key, summary: s.fields.summary })),
-    resources: extractResources(key.toUpperCase(), [fields.description, ...(fields.comment?.comments ?? []).map((c) => c.body)], fields.attachment ?? []),
+    resources: extractResources(key.toUpperCase(), [description, ...(fields.comment?.comments ?? []).map((c) => c.body)], fields.attachment ?? []),
   };
 }
 

@@ -1,0 +1,83 @@
+// 本機要連 SIT 還是 UAT：environment.ts 裡兩組設定都寫好了，只靠註解切換，從來不改值。
+// 標記：PlatformWeb 是「// sit分支本地调试使用这个」「// uat分支本地调试使用这个」；
+// PlatformAdmin、GoMoneyAdmin 是「/** SIT */」「/** UAT */」。
+// 標記下面接著的程式碼行算同一組，碰到空行或下一個標記就結束。
+import { existsSync, readFileSync, writeFileSync } from 'node:fs';
+import { join } from 'node:path';
+import type { Env } from '../shared/types';
+
+export type { Env };
+
+export const ENVIRONMENT_FILE = 'src/environments/environment.ts';
+
+const MARKERS: Record<Env, RegExp[]> = {
+  sit: [/^\s*\/\/\s*sit分支/i, /^\s*\/\*\*\s*SIT\s*\*\/\s*$/],
+  uat: [/^\s*\/\/\s*uat分支/i, /^\s*\/\*\*\s*UAT\s*\*\/\s*$/],
+};
+
+function markerOf(line: string): Env | null {
+  for (const env of ['sit', 'uat'] as Env[]) if (MARKERS[env].some((re) => re.test(line))) return env;
+  return null;
+}
+
+const isCommented = (line: string) => /^\s*\/\//.test(line);
+
+/** 設定行的名稱：`apiUrl: '…',`、`const tenant = '…';`（前面可以有 // ） */
+function keyOf(line: string): string | null {
+  return line.match(/^\s*(?:\/\/\s*)?(?:(?:const|let|var)\s+)?([A-Za-z_$][\w$]*)\s*[:=]/)?.[1] ?? null;
+}
+
+/**
+ * 兩組設定各在第幾行（從 0 算）。標記下面連續的設定行算同一組，碰到空行、下一個標記或不是設定的行就停；
+ * 兩組要一一對應同樣的名稱（例如都是 apiUrl、tenant），對不上的行一律不碰。
+ */
+function blocks(lines: string[]): Record<Env, number[]> | null {
+  const found: Partial<Record<Env, number[]>> = {};
+  for (let i = 0; i < lines.length; i++) {
+    const env = markerOf(lines[i]);
+    if (!env || found[env]) continue;
+    const rows: number[] = [];
+    for (let j = i + 1; j < lines.length && lines[j].trim() !== '' && !markerOf(lines[j]) && keyOf(lines[j]); j++) rows.push(j);
+    found[env] = rows;
+  }
+  if (!found.sit || !found.uat) return null;
+  let n = 0;
+  while (n < found.sit.length && n < found.uat.length && keyOf(lines[found.sit[n]]) === keyOf(lines[found.uat[n]])) n++;
+  return n ? { sit: found.sit.slice(0, n), uat: found.uat.slice(0, n) } : null;
+}
+
+/** 目前是哪個環境；'mixed' 表示兩組都開著或都註解掉，null 表示找不到標記 */
+export function detectEnvironment(text: string): Env | 'mixed' | null {
+  const b = blocks(text.split('\n'));
+  if (!b) return null;
+  const lines = text.split('\n');
+  const on = (env: Env) => b[env].every((i) => !isCommented(lines[i]));
+  const off = (env: Env) => b[env].every((i) => isCommented(lines[i]));
+  if (on('sit') && off('uat')) return 'sit';
+  if (on('uat') && off('sit')) return 'uat';
+  return 'mixed';
+}
+
+/** 打開目標那組的註解、註解掉另一組；其他行原封不動 */
+export function switchEnvironment(text: string, target: Env): string {
+  const lines = text.split('\n');
+  const b = blocks(lines);
+  if (!b) throw new Error('environment.ts 裡找不到 SIT／UAT 的標記');
+  const other: Env = target === 'sit' ? 'uat' : 'sit';
+  for (const i of b[target]) lines[i] = lines[i].replace(/^(\s*)\/\/ ?/, '$1');
+  for (const i of b[other]) if (!isCommented(lines[i])) lines[i] = lines[i].replace(/^(\s*)/, '$1// ');
+  return lines.join('\n');
+}
+
+/** 讀資料夾目前的環境；沒有這個檔案就是 null */
+export function readEnvironment(folder: string): Env | 'mixed' | null {
+  const file = join(folder, ENVIRONMENT_FILE);
+  return existsSync(file) ? detectEnvironment(readFileSync(file, 'utf8')) : null;
+}
+
+export function setEnvironment(folder: string, target: Env): void {
+  const file = join(folder, ENVIRONMENT_FILE);
+  const text = readFileSync(file, 'utf8');
+  const next = switchEnvironment(text, target);
+  if (next !== text) writeFileSync(file, next);
+}

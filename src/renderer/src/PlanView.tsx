@@ -1,6 +1,6 @@
 // 第二階段畫面：計畫表。AI 先判斷每張單的專案與商戶，你可以改；檢查分支是否已建立後確認。
 import { useEffect, useMemo, useRef, useState } from 'react';
-import type { JiraTicket, PlanBranch, PlanEntry, PlanOptions, Review, RunSummary, SkillInfo, TicketPlan } from '../../shared/types';
+import type { JiraTicket, PlanBranch, PlanEntry, PlanOptions, Review, RunSummary, TicketPlan } from '../../shared/types';
 import { ReviewIssues } from './ReviewIssues';
 
 const api = window.flowpilot;
@@ -22,17 +22,34 @@ function problemOf(plan: TicketPlan, options: PlanOptions): string | null {
     if (project?.merchants && !entry.merchants.length) return `${entry.project} 還沒選商戶`;
   }
   if (new Set(plan.entries.map((e) => e.project)).size !== plan.entries.length) return '同一個專案出現兩次';
-  if (!plan.skill) return '還沒選技能';
   if (!/^feat\([A-Z]+-\d+\) \S/.test(plan.prTitle)) return '標題格式要是 feat(單號) 英文描述';
   return null;
 }
 
-/** 你自己寫的技能放在 ~/.codex/skills/ 底下，排在前面 */
-const isOwnSkill = (skill: SkillInfo) => /\/\.codex\/skills\/[^/]+\/SKILL\.md$/.test(skill.path);
-
 const RESOURCE_LABEL = { figma: 'Figma', document: '文件', jira: 'Jira', attachment: '附件', link: '網頁' } as const;
 
 const ROLE_LABEL: Record<PlanBranch['role'], string> = { single: '開發', source: '開發（來源）', target: '移植目標' };
+
+/** 審閱整理出來、會交給開發 AI 的需求分析（要做什麼之外的三段） */
+function BriefBlocks({ review }: { review: Review }) {
+  const blocks: [string, string[] | undefined, string][] = [
+    ['牽涉頁面', review.pages, '審閱時沒有確定，開發時 AI 會看程式碼找出來。'],
+    ['後端 API', review.apis, '單上沒有寫 API 規格。'],
+    ['預計執行內容', review.steps, 'AI 會在開發時自己規劃。'],
+  ];
+  // 舊的審閱結果沒有這些欄位，就不顯示
+  if (!review.pages && !review.apis && !review.steps) return null;
+  return (
+    <>
+      {blocks.map(([title, items, empty]) => (
+        <div className="plan-block" key={title}>
+          <div className="plan-block-title">{title}</div>
+          {items?.length ? <ul className="summary">{items.map((line, i) => <li key={i}>{line}</li>)}</ul> : <p className="muted small">{empty}</p>}
+        </div>
+      ))}
+    </>
+  );
+}
 
 interface Props {
   run: RunSummary;
@@ -44,7 +61,6 @@ interface Props {
 
 export function PlanView({ run, tickets, onBack, onConfirmed }: Props) {
   const [options, setOptions] = useState<PlanOptions | null>(null);
-  const [skills, setSkills] = useState<SkillInfo[]>([]);
   const [plans, setPlans] = useState<Record<string, TicketPlan>>({});
   /** 審閱結果（判斷＋問題清單＋討論） */
   const [judgements, setJudgements] = useState<Record<string, Review>>({});
@@ -60,7 +76,7 @@ export function PlanView({ run, tickets, onBack, onConfirmed }: Props) {
   /** 看板上還沒結束的工作（同一條分支不會重複建立） */
   const [active, setActive] = useState<{ branch: string; status: string }[]>([]);
 
-  async function judge(ticket: JiraTicket, defaultSkill: string, force = false) {
+  async function judge(ticket: JiraTicket, force = false) {
     setJudgeErrors(({ [ticket.key]: _, ...rest }) => rest);
     if (force) {
       setPlans(({ [ticket.key]: _, ...rest }) => rest);
@@ -71,7 +87,7 @@ export function PlanView({ run, tickets, onBack, onConfirmed }: Props) {
       setJudgements((prev) => ({ ...prev, [ticket.key]: j }));
       setPlans((prev) => ({
         ...prev,
-        [ticket.key]: { ticket, entries: j.entries, skill: defaultSkill, prTitle: j.prTitle, reason: j.reason, summary: j.summary, resources: j.resources },
+        [ticket.key]: { ticket, entries: j.entries, prTitle: j.prTitle, reason: j.reason, summary: j.summary, resources: j.resources },
       }));
     } catch (e) {
       setJudgeErrors((prev) => ({ ...prev, [ticket.key]: errorText(e) }));
@@ -83,9 +99,8 @@ export function PlanView({ run, tickets, onBack, onConfirmed }: Props) {
     started.current = true;
     api.planOptions().then((o) => {
       setOptions(o);
-      tickets.forEach((t) => judge(t, o.defaultSkill));
+      tickets.forEach((t) => judge(t));
     });
-    api.listSkills().then(setSkills).catch(() => setSkills([]));
     api
       .board()
       .then((b) => setActive(b.items.filter((i) => !['failed', 'stopped', 'removed'].includes(i.status)).map((i) => ({ branch: i.branch, status: i.status }))))
@@ -182,7 +197,7 @@ export function PlanView({ run, tickets, onBack, onConfirmed }: Props) {
       <header>
         <div>
           <h1>計畫表</h1>
-          <p className="muted">AI 先判斷每張單要做在哪個專案與商戶，有錯直接改。確認後會建立分支、分配資料夾，交給 Codex 開始開發。</p>
+          <p className="muted">AI 先審閱每張單、判斷要做在哪個專案與商戶，有錯直接改。確認後會建立分支、分配資料夾，交給 Codex 開發，做完自動用無頭瀏覽器測一輪。</p>
         </div>
         <div className="actions">
           <button onClick={onBack}>返回</button>
@@ -210,7 +225,7 @@ export function PlanView({ run, tickets, onBack, onConfirmed }: Props) {
                 {judgements[ticket.key] && (
                   <span className="muted small">
                     審閱於 {new Date(judgements[ticket.key].reviewedAt).toLocaleString('zh-TW', { month: 'numeric', day: 'numeric', hour: '2-digit', minute: '2-digit', hour12: false })}
-                    <button className="link" onClick={() => window.confirm('重新審閱這張單？目前的問題、你的回答和討論都會被新的結果取代。') && judge(ticket, options!.defaultSkill, true)}>重新審閱</button>
+                    <button className="link" onClick={() => window.confirm('重新審閱這張單？目前的問題、你的回答和討論都會被新的結果取代。') && judge(ticket, true)}>重新審閱</button>
                   </span>
                 )}
               </div>
@@ -218,7 +233,7 @@ export function PlanView({ run, tickets, onBack, onConfirmed }: Props) {
               {!plan && !error && <p className="muted">AI 審閱中…（讀單、判斷專案；一般或複雜的單會大略看程式碼，約 1 分鐘）</p>}
               {error && (
                 <div className="error">
-                  AI 審閱失敗：{error} <button onClick={() => judge(ticket, options!.defaultSkill)}>重試</button>
+                  AI 審閱失敗：{error} <button onClick={() => judge(ticket)}>重試</button>
                 </div>
               )}
 
@@ -232,6 +247,8 @@ export function PlanView({ run, tickets, onBack, onConfirmed }: Props) {
                       <p className="muted small">AI 沒有整理出重點，請點單號看原文。</p>
                     )}
                   </div>
+
+                  {judgements[ticket.key] && <BriefBlocks review={judgements[ticket.key]} />}
 
                   <div className="plan-block">
                     <div className="plan-block-title">參考資料（{plan.resources?.length ?? 0}）</div>
@@ -315,18 +332,6 @@ export function PlanView({ run, tickets, onBack, onConfirmed }: Props) {
                   )}
 
                   <div className="fields">
-                    <label>
-                      技能
-                      <select value={plan.skill} onChange={(e) => update(ticket.key, (p) => ({ ...p, skill: e.target.value }))}>
-                        {!skills.some((s) => s.name === plan.skill) && <option>{plan.skill}</option>}
-                        <optgroup label="你的技能">
-                          {skills.filter(isOwnSkill).map((s) => <option key={s.name} title={s.description}>{s.name}</option>)}
-                        </optgroup>
-                        <optgroup label="其他技能">
-                          {skills.filter((s) => !isOwnSkill(s)).map((s) => <option key={s.name} title={s.description}>{s.name}</option>)}
-                        </optgroup>
-                      </select>
-                    </label>
                     <label className="grow">
                       標題
                       <input value={plan.prTitle} onChange={(e) => update(ticket.key, (p) => ({ ...p, prTitle: e.target.value }))} />

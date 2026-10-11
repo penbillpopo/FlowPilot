@@ -131,3 +131,50 @@ describe('參考資料擷取', () => {
     expect(resources.every((r) => r.from === 'ALL-14396')).toBe(true);
   });
 });
+
+describe('拿掉原始需求', () => {
+  const panel = (text: string) => ({ type: 'panel', content: [{ type: 'paragraph', content: [{ type: 'text', text }] }] });
+  const para = (text: string, href?: string) => ({ type: 'paragraph', content: [{ type: 'text', text, ...(href ? { marks: [{ type: 'link', attrs: { href } }] } : {}) }] });
+  const heading = (text: string) => ({ type: 'heading', attrs: { level: 3 }, content: [{ type: 'text', text }] });
+  const doc = {
+    type: 'doc',
+    content: [
+      panel('原始需求 / Merchant Requirements'),
+      heading('User story'),
+      para('商戶想要 All 選項'),
+      heading('Acceptance criteria'),
+      para('商戶寫的驗收條件'),
+      para('商戶附的頁面', 'https://merchant.example.com/page'),
+      panel('需求 / Requirements'),
+      para('新增未存款、存款次數兩種條件'),
+      panel('預期結果 / Acceptance Criteria'),
+      para('勾選未存款時只有未存款玩家看得到'),
+      panel('文档和设计图 / Document & Design'),
+      para('Figma', 'https://www.figma.com/design/abc/x?node-id=1-2'),
+    ],
+  };
+
+  it('整段拿掉（包括裡面商戶寫的 Acceptance criteria 小標題），保留需求、預期結果、文件與設計圖', async () => {
+    const { adfToText, stripMerchantSection } = await import('../src/main/jira');
+    const text = adfToText(stripMerchantSection(doc));
+    expect(text).not.toContain('商戶');
+    expect(text).not.toContain('Merchant');
+    expect(text).toContain('需求 / Requirements');
+    expect(text).toContain('新增未存款、存款次數兩種條件');
+    expect(text).toContain('預期結果 / Acceptance Criteria');
+    expect(text).toContain('勾選未存款時只有未存款玩家看得到');
+    expect(text).toContain('文档和设计图');
+  });
+
+  it('原始需求段落裡的連結不會被擷取成參考資料', async () => {
+    const { extractResources, stripMerchantSection } = await import('../src/main/jira');
+    const urls = extractResources('ALL-1', [stripMerchantSection(doc)], []).map((r) => r.url);
+    expect(urls).toEqual(['https://www.figma.com/design/abc/x?node-id=1-2']);
+  });
+
+  it('沒有面板結構的單（例如 AI 寫的需求文件）不受影響', async () => {
+    const { adfToText, stripMerchantSection } = await import('../src/main/jira');
+    const plain = { type: 'doc', content: [heading('Background / 背景'), para('內容')] };
+    expect(adfToText(stripMerchantSection(plain))).toBe(adfToText(plain));
+  });
+});

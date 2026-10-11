@@ -1,7 +1,7 @@
 // 資料庫：~/Library/Application Support/FlowPilot/flowpilot.db（SQLite，用 Node 內建的 node:sqlite）
 // 每次狀態改變先寫進來，重新啟動才接得回去。
 import { DatabaseSync } from 'node:sqlite';
-import type { JiraTicket, Judgement, PendingRequest, Review, RunSummary, TestResult, TicketPlan, WorkItem, WorkLane, WorkStage, WorkStatus } from '../shared/types';
+import type { JiraTicket, Judgement, PendingRequest, Review, RunSummary, TestReport, TestResult, TicketPlan, WorkItem, WorkLane, WorkStage, WorkStatus } from '../shared/types';
 import type { PastDecision } from './planner/judge';
 
 // 依序執行的資料庫結構變更；只能往後加，不能改前面的
@@ -80,6 +80,8 @@ const MIGRATIONS: string[] = [
   `ALTER TABLE work_items ADD COLUMN autotested INTEGER NOT NULL DEFAULT 0;`,
   // 自動測試的結果（通過、部分通過、沒測成）：沒測成不再打勾
   `ALTER TABLE work_items ADD COLUMN autotest_result TEXT;`,
+  // 最近一次瀏覽器測試的報告：預期結果對照、手動測試清單
+  `ALTER TABLE work_items ADD COLUMN test_report TEXT;`,
 ];
 
 /** 還佔著資料夾的狀態 */
@@ -88,7 +90,7 @@ export const OCCUPYING: WorkStatus[] = ['preparing', 'running', 'waiting', 'revi
 /** 已經結束的狀態 */
 export const FINISHED: WorkStatus[] = ['failed', 'stopped', 'removed', 'committed'];
 
-type NewWorkItem = Omit<WorkItem, 'id' | 'folder' | 'lane' | 'status' | 'activity' | 'threadId' | 'lastMessage' | 'pending' | 'stage' | 'autotested' | 'autotestResult' | 'updatedAt'>;
+type NewWorkItem = Omit<WorkItem, 'id' | 'folder' | 'lane' | 'status' | 'activity' | 'threadId' | 'lastMessage' | 'pending' | 'stage' | 'autotested' | 'autotestResult' | 'testReport' | 'updatedAt'>;
 
 interface WorkItemRow {
   id: number;
@@ -117,6 +119,7 @@ interface WorkItemRow {
   stage: WorkStage;
   autotested: number;
   autotest_result: string | null;
+  test_report: string | null;
   test_username: string | null;
   test_password: string | null;
   updated_at: string;
@@ -148,6 +151,7 @@ function toWorkItem(row: WorkItemRow): WorkItem & { branchCreated: boolean; comm
     stage: row.stage,
     autotested: !!row.autotested,
     autotestResult: row.autotest_result ? (JSON.parse(row.autotest_result) as TestResult) : null,
+    testReport: row.test_report ? (JSON.parse(row.test_report) as TestReport) : null,
     updatedAt: row.updated_at,
     branchCreated: !!row.branch_created,
     commitSha: row.commit_sha,
@@ -308,7 +312,7 @@ export class Store {
 
   updateWorkItem(
     id: number,
-    patch: Partial<Pick<StoredWorkItem, keyof typeof PATCH_COLUMNS>> & { pending?: PendingRequest | null; autotestResult?: TestResult | null },
+    patch: Partial<Pick<StoredWorkItem, keyof typeof PATCH_COLUMNS>> & { pending?: PendingRequest | null; autotestResult?: TestResult | null; testReport?: TestReport | null },
     now = new Date(),
   ): StoredWorkItem {
     const sets: string[] = ['updated_at = ?'];
@@ -320,6 +324,10 @@ export class Store {
         values.push(typeof v === 'boolean' ? Number(v) : (v as string | number | null));
       }
     }
+    if ('testReport' in patch) {
+      sets.push('test_report = ?');
+      values.push(patch.testReport ? JSON.stringify(patch.testReport) : null);
+    }
     if ('autotestResult' in patch) {
       sets.push('autotest_result = ?');
       values.push(patch.autotestResult ? JSON.stringify(patch.autotestResult) : null);
@@ -330,6 +338,14 @@ export class Store {
     }
     this.db.prepare(`UPDATE work_items SET ${sets.join(', ')} WHERE id = ?`).run(...values, id);
     return this.getWorkItem(id)!;
+  }
+
+  /** 同一條分支、同一個資料夾以前做過的 AI 對話（重新開始時接回去，AI 才記得之前討論過的事） */
+  previousThread(project: string, branch: string, folder: string, excludeId: number): string | null {
+    const row = this.db
+      .prepare('SELECT thread_id FROM work_items WHERE project = ? AND branch = ? AND folder = ? AND id != ? AND thread_id IS NOT NULL ORDER BY id DESC LIMIT 1')
+      .get(project, branch, folder, excludeId) as { thread_id: string } | undefined;
+    return row?.thread_id ?? null;
   }
 
   /** 同一個專案、同一條分支還沒結束的工作項目（避免重複建立） */

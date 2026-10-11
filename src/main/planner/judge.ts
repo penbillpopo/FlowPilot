@@ -66,7 +66,7 @@ function describeProjects(settings: Settings): string {
 function describeIssue(label: string, issue: IssueContext): string {
   return [
     `### ${label} ${issue.key}（${issue.issueType}）：${issue.summary}`,
-    issue.subtasks.length ? `子單：${issue.subtasks.map((s) => `${s.key} ${s.summary}`).join('；')}` : '',
+    issue.subtasks.length ? `子單：${issue.subtasks.map((s) => `${s.key} ${s.summary}${s.status ? `（${s.status}）` : ''}`).join('；')}` : '',
     `內文：\n${issue.description || '（沒有內文）'}`,
     issue.comments.length ? `最近的留言：\n${issue.comments.map((c) => `- ${c}`).join('\n')}` : '',
     ...(issue.textAttachments ?? []).map((a) => `附件「${a.filename}」的內容：\n${a.text}`),

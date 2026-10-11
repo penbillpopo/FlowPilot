@@ -51,7 +51,9 @@ export async function gitState(cwd: string, baseBranch?: string): Promise<GitSta
   const ahead = baseBranch ? Number((await runGit(cwd, ['rev-list', '--count', `origin/${baseBranch}..HEAD`])).stdout.trim() || 0) : 0;
   // 資料夾目前設定的提交身分（預設用這個）
   const identity = { name: (await runGit(cwd, ['config', 'user.name'])).stdout.trim(), email: (await runGit(cwd, ['config', 'user.email'])).stdout.trim() };
-  return { branch, staged, unstaged, unpushed, hasRemote, ahead, identity, identities: [] };
+  // 遠端有本機沒有的提交（通常是 rebase 過）：推送要強制
+  const needsForce = hasRemote ? Number((await runGit(cwd, ['rev-list', '--count', `HEAD..refs/remotes/origin/${branch}`])).stdout.trim() || 0) > 0 : false;
+  return { branch, staged, unstaged, unpushed, hasRemote, ahead, identity, identities: [], needsForce };
 }
 
 /** 某個檔案的差異；新檔案（未追蹤）顯示整個檔案都是新增 */
@@ -130,5 +132,7 @@ export async function pushBranch(cwd: string): Promise<string> {
   const branch = await currentBranch(cwd);
   if (!branch) throw new Error('目前不在任何分支上，不推送');
   const quoted = `'${branch.replace(/'/g, `'\\''`)}'`;
-  return loginShell(cwd, `git push -u origin ${quoted}`, 5 * 60_000);
+  // rebase 過之後遠端的歷史跟本機不一樣，要強制推送；用 --force-with-lease，遠端被別人推了新東西時會拒絕，不會吃掉別人的提交
+  const force = (await gitState(cwd)).needsForce ? '--force-with-lease ' : '';
+  return loginShell(cwd, `git push ${force}-u origin ${quoted}`, 5 * 60_000);
 }

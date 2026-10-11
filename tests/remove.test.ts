@@ -41,7 +41,7 @@ function setup() {
   }])[0];
   store.updateWorkItem(item.id, { lane: 'development', status: 'review', folder: 'PlatformAdmin', threadId: 'th' });
   const runner = new Runner({
-    dataDir: join(root, 'data'), ensureSite: async () => 'http://localhost:4300/',
+    dataDir: join(root, 'data'), writeGuard: 'resources/write-guard.cjs', ensureSite: async () => 'http://localhost:4300/',
     store, settings: () => settings, codex: { on: () => () => {}, setDisconnectHandler: () => {} } as unknown as CodexRpc, vscode: {} as VSCode,
     notify: () => {}, onChange: () => {}, onStream: () => {}, log: () => {},
   });

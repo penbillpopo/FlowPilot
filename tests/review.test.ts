@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { applyDiscussion, buildDiscussionPrompt, buildReviewPrompt, REVIEW_INSTRUCTIONS, reviewBrief, reviewSchema, sanitizeReview } from '../src/main/planner/review';
+import { applyDiscussion, buildDiscussionPrompt, buildFigmaPrompt, buildReviewPrompt, REVIEW_INSTRUCTIONS, reviewBrief, reviewSchema, sanitizeReview } from '../src/main/planner/review';
 import { DEFAULT_SETTINGS_YAML, parseSettings } from '../src/main/settings';
 import type { JiraTicket } from '../src/shared/types';
 
@@ -29,7 +29,7 @@ describe('審閱', () => {
   });
 
   it('提示內容附上各專案的程式碼資料夾', () => {
-    const issue = { key: 'ALL-14324', summary: '', issueType: '', description: '', comments: [], subtasks: [], resources: [], textAttachments: [], snapshot: { key: 'ALL-14575', summary: '', description: '', comments: [], attachments: [], takenAt: '' } };
+    const issue = { key: 'ALL-14324', summary: '', issueType: '', description: '', comments: [], subtasks: [], resources: [], textAttachments: [], imageAttachments: [], snapshot: { key: 'ALL-14575', summary: '', description: '', comments: [], attachments: [], takenAt: '' } };
     expect(buildReviewPrompt(ticket, issue, null, settings, [])).toContain('PlatformAdmin：');
   });
 
@@ -87,5 +87,13 @@ describe('審閱', () => {
     expect(sanitizeReview(raw, ticket, settings)).toMatchObject({ complete: true, problem: '' });
     expect((reviewSchema(settings) as any).required).toEqual(expect.arrayContaining(['complete', 'problem']));
     expect(REVIEW_INSTRUCTIONS).toContain('不要使用任何技能');
+  });
+
+  it('檢查計畫：照 AI 的判斷；沒給就照單的大小給預設（一般、複雜的單才自我審查）', () => {
+    const withChecks = sanitizeReview({ ...raw, checks: { figma: { need: true, reason: '有設計稿' }, codeReview: { need: false, reason: '只改文字' }, designCompare: { need: false, reason: '' } } }, ticket, settings);
+    expect(withChecks.checks).toEqual({ figma: { need: true, reason: '有設計稿' }, codeReview: { need: false, reason: '只改文字' }, designCompare: { need: false, reason: '' } });
+    expect(sanitizeReview(raw, ticket, settings).checks?.codeReview.need).toBe(true); // raw 是一般單
+    expect(sanitizeReview({ ...raw, level: '小' }, ticket, settings).checks?.codeReview.need).toBe(false);
+    expect(buildFigmaPrompt(['https://figma.com/x'])).toContain('間距、排版、顏色、字級這類細節一律不管');
   });
 });

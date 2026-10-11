@@ -98,11 +98,14 @@ export interface IssueContext {
   issueType: string;
   description: string;
   comments: string[];
-  subtasks: { key: string; summary: string }[];
+  /** 子單（含狀態：看 BE 子單做完了沒） */
+  subtasks: { key: string; summary: string; status?: string }[];
   /** 內文、留言、附件裡的參考資料 */
   resources: Resource[];
   /** 文字附件（.md、.txt…）的內容：單上常把 API 規格寫成附件 */
   textAttachments: { filename: string; text: string }[];
+  /** 圖片附件（需求常畫在截圖裡）：只有資訊，審閱時才下載 */
+  imageAttachments: { filename: string; url: string; size: number }[];
   /** 這個時間點的內容（用來比對 PM 有沒有改單） */
   snapshot: TicketSnapshot;
 }
@@ -213,7 +216,7 @@ export async function getIssueContext(credentials: JiraCredentials, key: string,
       issuetype: { name: string };
       description: unknown;
       comment?: { comments: { id: string; body: unknown; updated?: string; author?: { displayName?: string } }[] };
-      subtasks?: { key: string; fields: { summary: string } }[];
+      subtasks?: { key: string; fields: { summary: string; status?: { name?: string } } }[];
       attachment?: JiraAttachment[];
     };
   };
@@ -235,9 +238,12 @@ export async function getIssueContext(credentials: JiraCredentials, key: string,
     description: fullDescription.slice(0, MAX_TEXT),
     // 最近 5 則留言
     comments: (fields.comment?.comments ?? []).slice(-5).map((c) => adfToText(c.body).trim().slice(0, 1500)),
-    subtasks: (fields.subtasks ?? []).map((s) => ({ key: s.key, summary: s.fields.summary })),
+    subtasks: (fields.subtasks ?? []).map((s) => ({ key: s.key, summary: s.fields.summary, status: s.fields.status?.name })),
     resources: extractResources(key.toUpperCase(), [description, ...(fields.comment?.comments ?? []).map((c) => c.body)], fields.attachment ?? []),
     textAttachments: await readTextAttachments(fields.attachment ?? [], auth, fetchImpl),
+    imageAttachments: (fields.attachment ?? [])
+      .filter((a) => /^image\/(png|jpe?g|gif|webp)$/.test(a.mimeType ?? '') || /\.(png|jpe?g|gif|webp)$/i.test(a.filename))
+      .map((a) => ({ filename: a.filename, url: a.content, size: a.size ?? 0 })),
   };
 }
 
@@ -255,6 +261,15 @@ const MAX_ATTACHMENT_BYTES = 200_000;
 /** 每個附件、所有附件加起來最多給 AI 看多少字 */
 const MAX_ATTACHMENT_TEXT = 8000;
 const MAX_ATTACHMENTS_TEXT = 20000;
+
+/** 下載一個附件到本機（審閱時給 AI 看圖片用） */
+export async function downloadAttachment(credentials: JiraCredentials, url: string, dest: string, fetchImpl: typeof fetch = fetch): Promise<void> {
+  const auth = Buffer.from(`${credentials.email}:${credentials.token}`).toString('base64');
+  const response = await fetchImpl(url, { headers: { Authorization: `Basic ${auth}` } });
+  if (!response.ok) throw new Error(`下載附件失敗：HTTP ${response.status}`);
+  const { writeFileSync } = await import('node:fs');
+  writeFileSync(dest, Buffer.from(await response.arrayBuffer()));
+}
 
 /** 讀文字附件（.md、.txt 或 Jira 標成文字的）；圖片、PDF 不讀，單一個讀不到就略過 */
 export async function readTextAttachments(attachments: JiraAttachment[], auth: string, fetchImpl: typeof fetch = fetch): Promise<{ filename: string; text: string }[]> {

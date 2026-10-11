@@ -80,7 +80,7 @@ it.runIf(process.env.LIVE)('已存在的分支繼續開發', { timeout: 600_000 
 
   const codex = new CodexRpc('daemon');
   const runner = new Runner({
-    dataDir: root, ensureSite: async () => 'http://localhost:4200/',
+    dataDir: root, writeGuard: 'resources/write-guard.cjs', ensureSite: async () => 'http://localhost:4200/',
     store,
     settings: () => settings,
     codex,

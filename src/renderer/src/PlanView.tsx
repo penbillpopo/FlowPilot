@@ -1,6 +1,6 @@
 // 第二階段畫面：計畫表。AI 先判斷每張單的專案與商戶，你可以改；檢查分支是否已建立後確認。
 import { useEffect, useMemo, useRef, useState } from 'react';
-import type { JiraTicket, PlanBranch, PlanEntry, PlanOptions, Review, RunSummary, TicketPlan } from '../../shared/types';
+import type { JiraTicket, PlanBranch, PlanEntry, PlanOptions, Review, ReviewChecks, RunSummary, TicketPlan } from '../../shared/types';
 import { ReviewIssues } from './ReviewIssues';
 
 const api = window.flowpilot;
@@ -30,9 +30,49 @@ const RESOURCE_LABEL = { figma: 'Figma', document: '文件', jira: 'Jira', attac
 
 const ROLE_LABEL: Record<PlanBranch['role'], string> = { single: '開發', source: '開發（來源）', target: '移植目標' };
 
+const CHECK_LABEL: Record<keyof ReviewChecks, string> = {
+  figma: '審閱時對照 Figma 設計稿',
+  codeReview: '開發完 AI 先自我審查程式碼',
+  designCompare: '測試時截圖跟設計稿比對',
+};
+
+/** 檢查計畫：AI 判斷這張單需要哪些額外檢查，你可以勾掉或加上 */
+function CheckPlan({ review, onChange }: { review: Review; onChange(review: Review): void }) {
+  const [error, setError] = useState<string | null>(null);
+  if (!review.checks) return null; // 舊的審閱結果沒有
+  const checks = review.checks;
+  async function toggle(key: keyof ReviewChecks) {
+    setError(null);
+    try {
+      onChange(await api.setReviewChecks(review.ticketKey, { ...checks, [key]: { ...checks[key], need: !checks[key].need } }));
+    } catch (e) {
+      setError(errorText(e));
+    }
+  }
+  return (
+    <div className="plan-block">
+      <div className="plan-block-title">檢查計畫 <span className="muted small">AI 依這張單判斷要做哪些額外檢查，你可以改</span></div>
+      <ul className="check-plan">
+        {(Object.keys(CHECK_LABEL) as (keyof ReviewChecks)[]).map((key) => (
+          <li key={key}>
+            <label>
+              <input type="checkbox" checked={checks[key].need} onChange={() => toggle(key)} />
+              {CHECK_LABEL[key]}
+              {key === 'figma' && review.figmaChecked && <span className="mark">已對照</span>}
+            </label>
+            {checks[key].reason && <span className="muted small">{checks[key].reason}</span>}
+          </li>
+        ))}
+      </ul>
+      {error && <div className="error small">{error}</div>}
+    </div>
+  );
+}
+
 /** 審閱整理出來、會交給開發 AI 的需求分析（要做什麼之外的三段） */
 function BriefBlocks({ review }: { review: Review }) {
   const blocks: [string, string[] | undefined, string][] = [
+    ['預期結果（逐條，測試時一條一條對照）', review.acceptance, '單上沒有寫預期結果。'],
     ['牽涉頁面', review.pages, '審閱時沒有確定，開發時 AI 會看程式碼找出來。'],
     ['後端 API', review.apis, '單上沒有寫 API 規格。'],
     ['預計執行內容', review.steps, 'AI 會在開發時自己規劃。'],
@@ -363,6 +403,8 @@ export function PlanView({ run, tickets, onBack, onConfirmed }: Props) {
                     <p className="reason">分支已存在：會切換過去，請 AI 先看過現有的差異再接著開發。資料夾有未提交的修改、或本機與遠端分歧時，會先問你。</p>
                   )}
                   </div>
+
+                  {judgements[ticket.key] && <CheckPlan review={judgements[ticket.key]} onChange={(r) => setJudgements((prev) => ({ ...prev, [ticket.key]: r }))} />}
 
                   <div className="plan-block">
                     <div className="plan-block-title">要做什麼</div>

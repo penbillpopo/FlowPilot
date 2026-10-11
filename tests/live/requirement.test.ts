@@ -42,7 +42,7 @@ it.runIf(process.env.LIVE)('更新需求：沒有變更、有變更', { timeout:
   store.confirmPlan(run.id, [{ ticket, entries: [{ project: 'PlatformWeb', merchants: [1], sourceMerchant: 1, reason: '' }], skill: 'flowpilot-test', prTitle: 'feat(ALL-14404) x', reason: '' }], {});
   const codex = new CodexRpc('daemon');
   const runner = new Runner({
-    dataDir: root, ensureSite: async () => 'http://localhost:4200/',
+    dataDir: root, writeGuard: 'resources/write-guard.cjs', ensureSite: async () => 'http://localhost:4200/',
     store, settings: () => settings, codex, vscode: { attach: async () => {} } as unknown as VSCode,
     notify: () => {}, onChange: () => {}, onStream: () => {}, log: (m) => console.log('紀錄', m),
   });

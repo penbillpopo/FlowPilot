@@ -4,18 +4,18 @@ import { execFileSync } from 'node:child_process';
 import { appendFileSync, mkdirSync, writeFileSync } from 'node:fs';
 import { randomUUID } from 'node:crypto';
 import { join } from 'node:path';
-import type { Env, JiraTicket, Judgement, PlanOptions, Review, ReviewIssue, TicketPlan, TicketSnapshot } from '../shared/types';
+import type { Env, JiraTicket, Judgement, PlanOptions, Review, ReviewChecks, ReviewIssue, TicketPlan, TicketSnapshot } from '../shared/types';
 import { CodexRpc } from './codex/rpc';
 import { listSkills, runStructured } from './codex/structured';
 import { checkExisting, localBranchExists } from './git';
-import { buildJql, getIssueContext, loadCredentials, searchTickets, statusIdsByName } from './jira';
-import { applyDiscussion, buildCodeCheckPrompt, buildDiscussionPrompt, buildReviewPrompt, discussionSchema, REVIEW_INSTRUCTIONS, reviewSchema, sanitizeReview } from './planner/review';
+import { buildJql, downloadAttachment, getIssueContext, loadCredentials, searchTickets, statusIdsByName } from './jira';
+import { applyDiscussion, buildCodeCheckPrompt, buildDiscussionPrompt, buildFigmaPrompt, buildReviewPrompt, discussionSchema, REVIEW_INSTRUCTIONS, reviewSchema, sanitizeReview } from './planner/review';
 import { deriveBranches, planProblem } from './planner/rules';
 import { loadHistory } from './chat';
 import { FolderTerminals } from './folderterminals';
 import { commitStaged, discard, fileDiff, gitState, pushBranch, stage, unstage } from './gitpanel';
 import { diffSnapshots, updateMessage } from './requirements';
-import { Runner } from './runner/runner';
+import { HEADLESS_BROWSER_NAME, Runner, threadConfig } from './runner/runner';
 import { VSCode } from './vscode';
 import { loadSettings } from './settings';
 import { Store } from './store';
@@ -137,12 +137,26 @@ async function reviewTicket(ticket: JiraTicket, force = false): Promise<Review> 
     getIssueContext(credentials, ticket.key),
     ticket.parent ? getIssueContext(credentials, ticket.parent.key) : Promise.resolve(null),
   ]);
+  // 圖片附件（需求常畫在截圖裡）：主單在前，最多 5 張、每張 5MB 以內，讀不到就略過
+  const images: string[] = [];
+  const imageDir = join(dataDir, 'attachments', 'review', ticket.key);
+  for (const img of [...(main?.imageAttachments ?? []), ...sub.imageAttachments].filter((a) => a.size <= 5_000_000).slice(0, 5)) {
+    try {
+      mkdirSync(imageDir, { recursive: true });
+      const dest = join(imageDir, img.filename.replace(/[^\w.\-]+/g, '_'));
+      await downloadAttachment(credentials, img.url, dest);
+      images.push(dest);
+    } catch (error) {
+      log(`${ticket.key} 下載圖片 ${img.filename} 失敗：${(error as Error).message}`);
+    }
+  }
   const { result, threadId } = await withJudgeSlot(() =>
     runStructured<any>(codex, {
       cwd: dataDir,
       keep: true, // 保留對話，之後可以接著討論
       developerInstructions: REVIEW_INSTRUCTIONS,
-      prompt: buildReviewPrompt(ticket, sub, main, settings, store.recentDecisions()),
+      images,
+      prompt: buildReviewPrompt(ticket, sub, main, settings, store.recentDecisions()) + (images.length ? `\n\n（附上單上的 ${images.length} 張圖片）` : ''),
       schema: reviewSchema(settings),
       timeoutMs: 300_000,
     }),
@@ -163,7 +177,20 @@ async function reviewTicket(ticket: JiraTicket, force = false): Promise<Review> 
   }
   // 參考資料直接從 Jira 擷取（主單在前），不經過 AI；同一個網址只留一筆
   const seen = new Set<string>();
-  review.resources = [...(main?.resources ?? []), ...sub.resources].filter((r) => !seen.has(r.url) && seen.add(r.url));
+  const resources = [...(main?.resources ?? []), ...sub.resources].filter((r) => !seen.has(r.url) && seen.add(r.url));
+  // 檢查計畫要對照 Figma、單上也有 Figma 連結：追加一輪，用 Figma 工具看設計稿（只看流程與描述）
+  const figmaUrls = resources.filter((r) => r.kind === 'figma').map((r) => r.url).slice(0, 3);
+  if (review.checks?.figma.need && figmaUrls.length) {
+    try {
+      const figma = await withJudgeSlot(() =>
+        runStructured<any>(codex, { cwd: dataDir, keep: true, threadId, developerInstructions: REVIEW_INSTRUCTIONS, prompt: buildFigmaPrompt(figmaUrls), schema: reviewSchema(settings), timeoutMs: 300_000 }),
+      );
+      review = { ...sanitizeReview(figma.result, ticket, settings), figmaChecked: true };
+    } catch (error) {
+      log(`${ticket.key} 對照 Figma 失敗，先用沒對照的結果：${(error as Error).message}`);
+    }
+  }
+  review.resources = resources;
   // 存下這次讀到的內容，之後比對 PM 有沒有改單
   review.snapshot = [sub.snapshot, ...(main ? [main.snapshot] : [])];
   store.saveReview(review, threadId);
@@ -238,6 +265,33 @@ function closeTestBrowsers(): number {
     } catch {}
   }
   return browsers.length;
+}
+
+/**
+ * 試登一次：開一段獨立的臨時對話（不弄亂這張單的開發對話），用無頭瀏覽器照帳號檔登入看看。
+ * 瀏覽器一樣套上寫入防護。
+ */
+async function trialLogin(itemId: number): Promise<{ ok: boolean; reason: string }> {
+  const { url, env, accountFile, username, hosts } = await runner.prepareTrialLogin(itemId);
+  const browser = threadConfig(dataDir, writeGuardPath(), itemId, hosts).mcp_servers[HEADLESS_BROWSER_NAME];
+  const { result } = await runStructured<{ ok: boolean; reason: string }>(codex, {
+    cwd: dataDir,
+    timeoutMs: 240_000,
+    config: { mcp_servers: { [HEADLESS_BROWSER_NAME]: browser } },
+    schema: { type: 'object', additionalProperties: false, required: ['ok', 'reason'], properties: { ok: { type: 'boolean' }, reason: { type: 'string', description: '繁體中文一句話：成功就寫登入後看到什麼；失敗寫原因' } } },
+    prompt: [
+      `只做一件事：用 ${HEADLESS_BROWSER_NAME} 這個瀏覽器工具打開 ${url}，登入看看。`,
+      `帳號密碼用終端機讀 ${accountFile}（例如 cat），登入畫面要 OTP 就填檔案裡的 otp。不要把密碼寫進回覆。`,
+      '登入成功（進到登入後的頁面）就回 ok: true；失敗（帳號密碼錯、OTP、被擋、頁面打不開）就回 ok: false 並寫原因。不要做其他操作。',
+    ].join('\n'),
+  });
+  log(`試登 ${env.toUpperCase()}（${username}）：${result.ok ? '成功' : '失敗'}：${result.reason}`);
+  return result;
+}
+
+function writeGuardPath() {
+  // 打包後放在 app.asar.unpacked（瀏覽器工具是另一個程式，讀不到 asar 裡的檔案）
+  return join(app.getAppPath(), 'resources/write-guard.cjs').replace(/app\.asar([/\\])/, 'app.asar.unpacked$1');
 }
 
 /** 單列表上每張單的標記：審閱過了沒、在工作台上、分支已經存在 */
@@ -339,6 +393,13 @@ function registerIpc() {
   });
   ipcMain.handle('skills:list', () => listSkills(codex, loadSettings(settingsFile).folders[0]?.path ?? dataDir));
   ipcMain.handle('review:run', (_event, ticket: JiraTicket, force: boolean) => reviewTicket(ticket, force));
+  ipcMain.handle('review:setChecks', (_event, ticketKey: string, checks: ReviewChecks) => {
+    const saved = store.getReview(ticketKey);
+    if (!saved) throw new Error(`${ticketKey} 還沒有審閱`);
+    const review = { ...saved.review, checks };
+    store.saveReview(review, saved.threadId);
+    return review;
+  });
   ipcMain.handle('review:updateIssue', (_event, ticketKey: string, issueId: string, patch: { status: ReviewIssue['status']; answer?: string }) => updateIssue(ticketKey, issueId, patch));
   ipcMain.handle('review:discuss', (_event, ticketKey: string, text: string) => discussReview(ticketKey, text));
   ipcMain.handle('req:update', (_event, itemId: number) => requestRequirementUpdate(itemId));
@@ -419,6 +480,8 @@ function registerIpc() {
   ipcMain.handle('item:retest', (_event, id: number) => runner.retest(id));
   ipcMain.handle('item:rerunAutotest', (_event, id: number) => runner.rerunAutotest(id));
   ipcMain.handle('test:closeBrowsers', () => closeTestBrowsers());
+  ipcMain.handle('test:trialLogin', (_event, id: number) => trialLogin(id));
+  ipcMain.handle('test:setManualDone', (_event, id: number, index: number, done: boolean) => runner.setManualDone(id, index, done));
   ipcMain.handle('tickets:marks', (_event, keys: string[]) => ticketMarks(keys));
   ipcMain.handle('test:state', (_event, id: number) => runner.testState(id));
   ipcMain.handle('test:setEnvironment', (_event, id: number, env: Env) => {
@@ -441,6 +504,7 @@ app.whenReady().then(() => {
     notify,
     paused,
     dataDir,
+    writeGuard: writeGuardPath(),
     stopSite: (name) => folderTerminals.interrupt(name),
     ensureSite: (name) => {
       const settings = loadSettings(settingsFile);

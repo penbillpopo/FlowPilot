@@ -9,6 +9,23 @@ function errorText(e: unknown) {
   return e instanceof Error ? e.message.replace(/^Error invoking remote method '[^']+': (Error: )?/, '') : String(e);
 }
 
+/** 還沒處理的問題整理成給 PM 的留言：重要的在前，附原文與建議的做法 */
+export function pmDraft(review: Review): string {
+  const open = review.issues.filter((i) => i.status === 'open').sort((a, b) => (a.importance === b.importance ? 0 : a.importance === '重要' ? -1 : 1));
+  return [
+    `${review.ticketKey} 開發前有幾個地方想跟你確認：`,
+    '',
+    ...open.flatMap((i, n) => [
+      `${n + 1}. ${i.importance === '重要' ? '【重要】' : ''}${i.title}`,
+      ...(i.quote && i.quote !== '單上沒有提到' ? [`   單上寫：「${i.quote}」`] : []),
+      ...(i.detail ? [`   ${i.detail}`] : []),
+      ...(i.suggestion ? [`   我目前打算：${i.suggestion}，如果不對再麻煩告訴我。`] : []),
+      '',
+    ]),
+    '謝謝！',
+  ].join('\n');
+}
+
 const STATUS_TEXT: Record<ReviewIssue['status'], string> = { open: '還沒處理', answered: '已回答', assumed: '照建議做', dismissed: '不是問題' };
 
 function IssueCard({ issue, ticketKey, onChange }: { issue: ReviewIssue; ticketKey: string; onChange(review: Review): void }) {
@@ -82,6 +99,8 @@ export function ReviewIssues({ review, onChange }: { review: Review; onChange(re
     }
   }
 
+  const [draft, setDraft] = useState<string | null>(null);
+  const [copied, setCopied] = useState(false);
   // 還沒處理、而且 AI 有給建議的問題，可以一次全部照建議
   const openWithSuggestion = review.issues.filter((i) => i.status === 'open' && i.suggestion);
   async function assumeAll() {
@@ -102,12 +121,27 @@ export function ReviewIssues({ review, onChange }: { review: Review; onChange(re
         <span className="muted small review-meta">
           {review.level}單 · {review.codeChecked ? '有大略看程式碼' : '只看單的內容'} · 問題不會擋住開發，沒處理的會告訴開發的 AI 先跳過或照建議做
         </span>
+        {review.issues.some((i) => i.status === 'open') && (
+          <button className="link" onClick={() => setDraft(pmDraft(review))} title="把還沒處理的問題整理成一段留言，複製貼到 Jira 問 PM">
+            產生給 PM 的留言
+          </button>
+        )}
         {openWithSuggestion.length > 1 && (
           <button className="link" disabled={busy} onClick={assumeAll}>
             全部照 AI 建議（{openWithSuggestion.length}）
           </button>
         )}
       </div>
+      {draft !== null && (
+        <div className="pm-draft">
+          <div className="muted small">給 PM 的留言（可以先改，再複製貼到 Jira；FlowPilot 不會自己發到 Jira）</div>
+          <textarea rows={Math.min(14, draft.split('\n').length + 1)} value={draft} onChange={(e) => setDraft(e.target.value)} />
+          <div className="row">
+            <button className="primary" onClick={() => navigator.clipboard.writeText(draft).then(() => setCopied(true))}>{copied ? '已複製' : '複製'}</button>
+            <button onClick={() => (setDraft(null), setCopied(false))}>關閉</button>
+          </div>
+        </div>
+      )}
       {review.issues.length === 0 && <p className="muted small">AI 沒有發現明顯的問題。</p>}
       {review.issues.map((issue) => (
         <IssueCard key={`${issue.id}-${issue.status}`} issue={issue} ticketKey={review.ticketKey} onChange={onChange} />

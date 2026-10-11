@@ -13,6 +13,10 @@ export interface StructuredRequest {
   keep?: boolean;
   /** 接著這段對話問（不用 cwd 等開新對話的參數） */
   threadId?: string;
+  /** 一起給 AI 看的圖片（本機路徑） */
+  images?: string[];
+  /** 額外的對話設定（例如試登一次要帶上瀏覽器工具） */
+  config?: Record<string, unknown>;
 }
 
 /**
@@ -30,10 +34,12 @@ export async function runStructured<T>(rpc: CodexRpc, request: StructuredRequest
     const { thread } = await rpc.request<{ thread: { id: string } }>('thread/start', {
       cwd: request.cwd,
       ephemeral: !request.keep,
-      approvalPolicy: 'never',
+      // 不用 never：never 會把 MCP 工具（看 Figma、試登的瀏覽器）直接拒絕。
+      // on-request 下唯讀環境裡的指令照樣直接跑；要提升權限的指令由下面一律拒絕，工具確認由下面自動同意
+      approvalPolicy: 'on-request',
       sandbox: 'read-only',
       developerInstructions: request.developerInstructions ?? null,
-      config: { model_reasoning_effort: request.effort ?? 'low', features: { computer_use: false, browser_use: false, browser_use_external: false }, skills },
+      config: { model_reasoning_effort: request.effort ?? 'low', features: { computer_use: false, browser_use: false, browser_use_external: false }, skills, ...request.config },
     });
     threadId = thread.id;
   }
@@ -49,6 +55,11 @@ export async function runStructured<T>(rpc: CodexRpc, request: StructuredRequest
       if (message.id !== undefined && /requestApproval|execCommandApproval|applyPatchApproval/.test(message.method ?? '')) {
         rpc.reply(message.id, { decision: 'decline' });
       }
+      // MCP 工具（例如審閱時看 Figma 設計稿）要確認的：不需要填資料的直接同意，要填資料或開網址的拒絕
+      if (message.id !== undefined && message.method === 'mcpServer/elicitation/request') {
+        const fields = Object.keys(message.params?.requestedSchema?.properties ?? {});
+        rpc.reply(message.id, message.params?.mode !== 'url' && fields.length === 0 ? { action: 'accept', content: {}, _meta: null } : { action: 'decline', content: null, _meta: null });
+      }
       if (message.method === 'item/completed' && message.params.item?.type === 'agentMessage') lastMessage = message.params.item.text ?? '';
       if (message.method === 'turn/completed') {
         clearTimeout(timer);
@@ -60,7 +71,7 @@ export async function runStructured<T>(rpc: CodexRpc, request: StructuredRequest
   try {
     await rpc.request('turn/start', {
       threadId: id,
-      input: [{ type: 'text', text: request.prompt, text_elements: [] }],
+      input: [{ type: 'text', text: request.prompt, text_elements: [] }, ...(request.images ?? []).map((path) => ({ type: 'localImage', path }))],
       outputSchema: request.schema,
     });
     const done = await finished;

@@ -405,3 +405,19 @@ header .actions button { white-space: nowrap; }
 /* 標題列的按鈕：空間不夠時換行，不擠出中間欄 */
 .head-actions { flex-shrink: 1; flex-wrap: wrap; min-width: 0; }
 .center { min-width: 0; overflow-x: hidden; }
+.check-plan { margin: 0; padding: 0; list-style: none; display: flex; flex-direction: column; gap: 4px; }
+.check-plan li { display: flex; gap: 10px; align-items: baseline; flex-wrap: wrap; }
+.check-plan label { display: inline-flex; gap: 6px; align-items: center; cursor: pointer; }
+/* 測試結果：預期結果對照、手動測試清單 */
+.test-report ul { margin: 0 0 8px; padding: 0; list-style: none; display: flex; flex-direction: column; gap: 4px; }
+.acceptance li { display: flex; gap: 8px; align-items: baseline; }
+.ac-mark { width: 16px; flex-shrink: 0; font-weight: 700; text-align: center; }
+.ac-通過 .ac-mark { color: var(--ok-fg); }
+.ac-沒過 .ac-mark { color: var(--blocked); }
+.ac-沒測 .ac-mark { color: var(--muted); }
+.manual-list label { display: flex; gap: 8px; align-items: baseline; cursor: pointer; }
+.manual-list label.done { color: var(--muted); text-decoration: line-through; }
+.pm-draft { display: flex; flex-direction: column; gap: 6px; border: 1px solid var(--line); border-radius: 6px; padding: 8px 10px; }
+.pm-draft textarea { width: 100%; box-sizing: border-box; font: inherit; color: var(--fg); background: var(--bg); border: 1px solid var(--line); border-radius: 6px; padding: 6px 8px; }
+.trial-row { align-items: center; gap: 8px; flex-wrap: wrap; }
+.ok-text { color: var(--ok-fg); }

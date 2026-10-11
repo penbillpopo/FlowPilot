@@ -12,6 +12,7 @@ const api: FlowPilotApi = {
   planOptions: () => ipcRenderer.invoke('plan:options'),
   listSkills: () => ipcRenderer.invoke('skills:list'),
   reviewTicket: (ticket, force) => ipcRenderer.invoke('review:run', ticket, !!force),
+  setReviewChecks: (key, checks) => ipcRenderer.invoke('review:setChecks', key, checks),
   updateIssue: (ticketKey, issueId, patch) => ipcRenderer.invoke('review:updateIssue', ticketKey, issueId, patch),
   discussReview: (ticketKey, text) => ipcRenderer.invoke('review:discuss', ticketKey, text),
   requestRequirementUpdate: (itemId) => ipcRenderer.invoke('req:update', itemId),
@@ -91,6 +92,8 @@ const api: FlowPilotApi = {
     state: (id) => ipcRenderer.invoke('test:state', id),
     setEnvironment: (id, env) => ipcRenderer.invoke('test:setEnvironment', id, env),
     closeBrowsers: () => ipcRenderer.invoke('test:closeBrowsers'),
+    trialLogin: (id) => ipcRenderer.invoke('test:trialLogin', id),
+    setManualDone: (id, index, done) => ipcRenderer.invoke('test:setManualDone', id, index, done),
   },
 };
 

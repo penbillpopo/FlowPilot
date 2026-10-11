@@ -64,7 +64,7 @@ function setup({ account = true } = {}) {
   let backendUp = true;
   const runner = new Runner({
     dataDir: join(root, 'data'),
-    ensureSite: async (name) => (sites.push(name), 'http://localhost:4300/'),
+    writeGuard: 'resources/write-guard.cjs', ensureSite: async (name) => (sites.push(name), 'http://localhost:4300/'),
     canReach: async (url) => (reached.push(url), backendUp),
     stopSite: (name) => stopped.push(name),
     store, settings: () => settings, codex, vscode: {} as VSCode,
@@ -95,6 +95,10 @@ describe('流程階段', () => {
     expect(text).toContain('SIT');
     expect(text).not.toContain('sit-pass'); // 密碼不寫進指示
     expect(text).toContain('先用終端機指令讀');
+    // 寫入防護：可以測新增、儲存，送出的內容記在這張單的請求紀錄檔
+    expect(text).toContain('寫入一律會被擋下');
+    expect(text).toContain(join(t.root, 'data', '測試請求', `${t.id}.jsonl`));
+    expect(readFileSync(join(t.root, 'data', '測試請求', `${t.id}.jsonl`), 'utf8')).toBe('');
     // 登入資料寫在 FlowPilot 的資料夾，不在專案裡
     const file = text.match(/讀 (\S+\.json)（例如 cat）/)![1];
     expect(file.startsWith(join(t.root, 'data'))).toBe(true);
@@ -215,5 +219,46 @@ describe('流程階段', () => {
     await t.runner.finish(t.id, true);
     expect(t.stopped).toEqual(['PlatformAdmin']);
     expect(t.get().status).toBe('committed');
+  });
+
+  it('檢查計畫要自我審查：開發完先審查，審查完才自動測試', async () => {
+    const t = setup();
+    t.store.saveReview({ ticketKey: 'ALL-1', entries: [], prTitle: '', reason: '', summary: [], resources: [], level: '一般', codeChecked: true, issues: [], discussion: [], reviewedAt: '',
+      checks: { figma: { need: false, reason: '' }, codeReview: { need: true, reason: '改到表單驗證' }, designCompare: { need: false, reason: '' } } }, null);
+    await t.complete(); // 開發完
+    expect(t.get()).toMatchObject({ stage: 'selfcheck', status: 'running' });
+    expect(t.lastTurn().input[0].text).toContain('## 自我審查');
+    expect(t.sites).toEqual([]);
+    await t.complete(); // 審查完
+    expect(t.get().stage).toBe('autotest');
+    expect(t.sites).toEqual(['PlatformAdmin']);
+  });
+
+  it('檢查計畫要比對設計稿、單上有 Figma：測試指示加上比對要求；不需要就不加', async () => {
+    const t = setup();
+    const figma = { kind: 'figma' as const, title: 'Banner', url: 'https://www.figma.com/design/abc/Banner?node-id=1-2', from: 'ALL-1' };
+    const base = { ticketKey: 'ALL-1', entries: [], prTitle: '', reason: '', summary: [], resources: [figma], level: '一般' as const, codeChecked: true, issues: [], discussion: [], reviewedAt: '' };
+    t.store.saveReview({ ...base, checks: { figma: { need: false, reason: '' }, codeReview: { need: false, reason: '' }, designCompare: { need: true, reason: '新畫面' } } }, null);
+    await t.complete();
+    expect(t.lastTurn().input[1].text).toContain('比對設計稿：');
+    expect(t.lastTurn().input[1].text).toContain(figma.url);
+
+    const u = setup();
+    u.store.saveReview({ ...base, checks: { figma: { need: false, reason: '' }, codeReview: { need: false, reason: '' }, designCompare: { need: false, reason: '' } } }, null);
+    await u.complete();
+    expect(u.lastTurn().input[1].text).not.toContain('比對設計稿：');
+  });
+
+  it('測試做完存下報告；指示裡要求逐條對照預期結果並附報告；可以勾選手動項目', async () => {
+    const t = setup();
+    t.store.saveReview({ ticketKey: 'ALL-1', entries: [], prTitle: '', reason: '', summary: [], resources: [], level: '小', codeChecked: false, issues: [], discussion: [], reviewedAt: '', acceptance: ['預設選 All', '數值必填'] }, null);
+    await t.complete();
+    const text: string = t.lastTurn().input[1].text;
+    expect(text).toContain('1. 預設選 All');
+    expect(text).toContain('```flowpilot-test');
+    await t.complete('```flowpilot-test\n{"acceptance":[{"no":1,"text":"預設選 All","result":"通過","note":""}],"manual":["存檔後列表多一筆"]}\n```\n測試結果：通過');
+    expect(t.get().testReport).toEqual({ acceptance: [{ no: 1, text: '預設選 All', result: '通過', note: '' }], manual: [{ text: '存檔後列表多一筆', done: false }] });
+    t.runner.setManualDone(t.id, 0, true);
+    expect(t.get().testReport?.manual[0].done).toBe(true);
   });
 });

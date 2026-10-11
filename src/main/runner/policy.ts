@@ -1,4 +1,4 @@
-import type { TestResult } from '../../shared/types';
+import type { TestReport, TestResult } from '../../shared/types';
 // AI 要執行的指令：哪些自動同意、哪些要你確認。
 // 開發中的 AI 用「每個指令都先問」的模式，由這裡決定；只有危險的才真的轉給你。
 
@@ -21,6 +21,8 @@ export interface PolicyResult {
 }
 
 export function commandPolicy(command: string): PolicyResult {
+  // rebase 有衝突時讓 AI 自己解（使用者平常也是這樣做）：解完繼續 rebase 不用問
+  if (/\bgit\s+rebase\s+--continue\b/.test(command) && !/\bgit\s+(push|reset|clean)\b/.test(command)) return { ask: false, reason: '' };
   for (const { pattern, reason } of DANGEROUS) {
     if (pattern.test(command)) return { ask: true, reason };
   }
@@ -39,6 +41,32 @@ export function parseTestResult(message: string): TestResult {
   if (!last) return { kind: 'unknown' };
   const kind = last[1] === '通過' ? 'passed' : last[1] === '部分通過' ? 'partial' : 'failed';
   return last[2]?.trim() ? { kind, reason: last[2].trim() } : { kind };
+}
+
+/**
+ * 讀測試報告：AI 被要求在最後附一段 ```flowpilot-test 的 JSON（預期結果對照、要你手動測的項目），取最後一段。
+ * 讀不到或格式不對就回傳 null（畫面上就不顯示對照表）。
+ */
+export function parseTestReport(message: string, previous: TestReport | null = null): TestReport | null {
+  const blocks = [...message.matchAll(/```flowpilot-test\s*([\s\S]*?)```/g)];
+  const raw = blocks.at(-1)?.[1];
+  if (!raw) return null;
+  try {
+    const data = JSON.parse(raw);
+    const results = ['通過', '沒過', '沒測'];
+    const acceptance = (Array.isArray(data.acceptance) ? data.acceptance : []).map((a: any, i: number) => ({
+      no: Number(a?.no) || i + 1,
+      text: String(a?.text ?? '').trim(),
+      result: results.includes(a?.result) ? a.result : '沒測',
+      note: String(a?.note ?? '').trim(),
+    }));
+    // 同樣的手動測試項目，之前勾過的保留勾選
+    const done = new Set((previous?.manual ?? []).filter((m) => m.done).map((m) => m.text));
+    const manual = (Array.isArray(data.manual) ? data.manual : []).map((m: any) => String(m ?? '').trim()).filter(Boolean).map((text: string) => ({ text, done: done.has(text) }));
+    return { acceptance, manual };
+  } catch {
+    return null;
+  }
 }
 
 /** 講的是要 PM、後端確認的事（報告裡的「風險、待確認」），不是在問你 */

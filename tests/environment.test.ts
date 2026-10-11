@@ -1,5 +1,8 @@
+import { mkdirSync, mkdtempSync, writeFileSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 import { describe, expect, it } from 'vitest';
-import { activeValue, detectEnvironment, switchEnvironment } from '../src/main/environment';
+import { activeValue, apiHosts, detectEnvironment, switchEnvironment } from '../src/main/environment';
 
 const WEB = `import { commonEnvironment } from './environment.common';
 
@@ -75,5 +78,12 @@ describe('environment.ts 切換', () => {
     expect(activeValue(switchEnvironment(WEB, 'uat'), 'apiUrl')).toBe('https://uat8-newplatform.mxsyl.com');
     expect(activeValue(ADMIN, 'apiUrl')).toBe('http://20.198.251.181/api/v1');
     expect(activeValue('const a = 1;\n', 'apiUrl')).toBeNull();
+  });
+
+  it('讀出 SIT、UAT 兩組的後端主機（不管目前開哪一組）', () => {
+    const dir = mkdtempSync(join(tmpdir(), 'flowpilot-env-'));
+    mkdirSync(join(dir, 'src/environments'), { recursive: true });
+    writeFileSync(join(dir, 'src/environments/environment.ts'), ADMIN.replace("'http://uat-admin-api.mxsyl.com:5012/api/v1'", "'http://uat-admin-api.mxsyl.com:5012/api/v1'"));
+    expect(apiHosts(dir)).toEqual(['20.198.251.181', 'uat-admin-api.mxsyl.com:5012']);
   });
 });

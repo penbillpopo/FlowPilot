@@ -1,6 +1,6 @@
 // 審閱：讀懂單 → 判斷專案 → （一般、複雜的單）大略看一下程式碼 → 找出單子的問題。
 // 問題不會擋住開發；你可以回答、照 AI 建議、或標成不是問題，也可以跟 AI 討論。
-import type { IssueType, JiraTicket, Review, ReviewIssue } from '../../shared/types';
+import type { CheckDecision, IssueType, JiraTicket, Review, ReviewChecks, ReviewIssue } from '../../shared/types';
 import type { IssueContext } from '../jira';
 import type { Settings } from '../settings';
 import { buildJudgePrompt, JUDGE_INSTRUCTIONS, judgementSchema, sanitizeJudgement, type PastDecision } from './judge';
@@ -22,15 +22,37 @@ const issueSchema = {
   },
 };
 
+function checkSchema(description: string) {
+  return {
+    type: 'object',
+    additionalProperties: false,
+    required: ['need', 'reason'],
+    description,
+    properties: { need: { type: 'boolean' }, reason: { type: 'string', description: '為什麼要或不要（繁體中文，一句話）' } },
+  };
+}
+
 export function reviewSchema(settings: Settings) {
   const base = judgementSchema(settings) as { required: string[]; properties: Record<string, unknown> };
   return {
     ...base,
-    required: [...base.required, 'level', 'codeChecked', 'pages', 'apis', 'steps', 'issues', 'complete', 'problem'],
+    required: [...base.required, 'level', 'codeChecked', 'acceptance', 'pages', 'apis', 'steps', 'issues', 'complete', 'problem', 'checks'],
     properties: {
       ...base.properties,
       complete: { type: 'boolean', description: '這次審閱有沒有照要求完成（讀懂單、判斷專案；一般或複雜的單有看程式碼）' },
+      checks: {
+        type: 'object',
+        additionalProperties: false,
+        required: ['figma', 'codeReview', 'designCompare'],
+        description: '檢查計畫：這張單需要哪些額外檢查（不是每張單都要，依單的內容判斷）',
+        properties: {
+          figma: checkSchema('審閱時對照 Figma 設計稿：單上有設計稿，而且是新畫面或流程、文案的改動才需要'),
+          codeReview: checkSchema('開發完 AI 自我審查程式碼：改到多個檔案、牽涉 API、表單驗證或狀態邏輯才需要；單純的樣式、文字不用'),
+          designCompare: checkSchema('測試時截圖跟設計稿比對：新畫面或版面有明顯改動、而且有設計稿才需要'),
+        },
+      },
       problem: { type: 'string', description: '沒完成的話，原因是什麼（繁體中文，一句話）；完成就給空字串' },
+      acceptance: { type: 'array', items: { type: 'string' }, description: '預期結果逐條：把單上的「預期結果 / Acceptance Criteria」拆成一條一句（照原意，不要自己加）；單上沒有就從需求整理出可以驗證的幾條' },
       pages: { type: 'array', items: { type: 'string' }, description: '牽涉頁面：路由、選單、頁面或元件（看過程式碼就寫實際的路徑或元件名稱）' },
       apis: { type: 'array', items: { type: 'string' }, description: '後端 API 規格：單上（含內文、留言、文字附件）寫的方法、路徑、參數、回傳欄位；都沒寫就給空陣列，不要自己編' },
       steps: { type: 'array', items: { type: 'string' }, description: '預計執行內容：要改哪些地方、怎麼改，一項一句' },
@@ -58,6 +80,9 @@ export const REVIEW_INSTRUCTIONS = `${JUDGE_INSTRUCTIONS}
   - pages（牽涉頁面）：路由、選單、頁面或元件；看過程式碼就寫實際的路徑或元件名稱。
   - apis（後端 API 規格）：單上寫的方法、路徑、參數、回傳欄位。API 規格常寫在附件（.md、.txt）裡，資料中有「附件…的內容」時一定要看；都沒寫就給空陣列，不要自己編。
   - steps（預計執行內容）：要改哪些地方、怎麼改，一項一句。
+- 有附圖片時一起看：只比對流程和描述（單上寫的跟圖上畫的是不是同一件事、步驟有沒有對不上），間距、排版、顏色這類細節不用管；差很多才列成「跟設計稿不一致」的問題。
+- 看子單的狀態：需求要串的 API 是由 BE 子單（標題常有 [BE]、[API]、後端）提供的，如果那張子單還沒完成（不是完成、Done、已解決、UAT 之類的狀態），就列一個「前後端對不上」的問題說明後端可能還沒好，建議先把畫面接出來。
+- 檢查計畫（checks）：判斷這張單需不需要三種額外檢查，每項都要寫理由；不需要就填 false，不要每張都勾。
 - 不要使用任何技能（skills），也不要去讀任何 SKILL.md；照這裡的說明做就好。
 - 照實回報：沒有看程式碼就把 codeChecked 填 false；有任何一步沒做到（例如讀不到程式碼、資料不足），complete 填 false，problem 寫原因。不要把「我還沒做、需要你提供什麼」寫進 summary 或其他欄位。`;
 
@@ -124,9 +149,11 @@ export function sanitizeReview(raw: any, ticket: JiraTicket, settings: Settings,
     ticketKey: ticket.key,
     level,
     codeChecked: !!raw?.codeChecked,
+    checks: sanitizeChecks(raw?.checks, level),
     // 舊的結果沒有這個欄位，當成完成
     complete: raw?.complete !== false,
     problem: raw?.complete === false ? String(raw?.problem ?? '').trim() || '原因不明' : '',
+    acceptance: list(raw?.acceptance),
     pages: list(raw?.pages),
     apis: list(raw?.apis),
     steps: list(raw?.steps),
@@ -134,6 +161,22 @@ export function sanitizeReview(raw: any, ticket: JiraTicket, settings: Settings,
     discussion: [],
     reviewedAt: now.toISOString(),
   };
+}
+
+function sanitizeChecks(raw: any, level: Review['level']): ReviewChecks {
+  const one = (x: any, fallback: boolean): CheckDecision => ({ need: typeof x?.need === 'boolean' ? x.need : fallback, reason: String(x?.reason ?? '').trim() });
+  return { figma: one(raw?.figma, false), codeReview: one(raw?.codeReview, level !== '小'), designCompare: one(raw?.designCompare, false) };
+}
+
+/** 檢查計畫要對照 Figma、單上也有 Figma 連結時，追加的這一輪 */
+export function buildFigmaPrompt(figmaUrls: string[]): string {
+  return [
+    '請用 Figma 工具看下面的設計稿（最多查 3 次，例如取節點的截圖或結構），對照單上的需求，然後回傳完整的審閱結果（同樣的格式）：',
+    ...figmaUrls.map((u) => `- ${u}`),
+    '',
+    '只看流程和描述：單上寫的跟設計稿畫的是不是同一件事、流程步驟、欄位、按鈕、文案有沒有明顯對不上。間距、排版、顏色、字級這類細節一律不管。',
+    '差很多的地方列成「跟設計稿不一致」的問題（附上建議先照哪一個做）；一致就不用列。看不到設計稿（例如沒有權限）就照實在 problem 說明，complete 填 false。',
+  ].join('\n');
 }
 
 // ---- 討論 ----
@@ -213,6 +256,7 @@ export function reviewBrief(review: Review | null): string {
     '',
     '### 1. 開發內容重點',
     ...bullets(review.summary, '（見 Jira 單的需求與預期結果）'),
+    ...(review.acceptance?.length ? ['', '預期結果（逐條，完成時要一條一條對照）：', ...review.acceptance.map((a, i) => `${i + 1}. ${a}`)] : []),
     '',
     '### 2. 牽涉頁面',
     ...bullets(review.pages, '（審閱時沒有確定，請看程式碼找出來）'),

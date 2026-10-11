@@ -2,7 +2,7 @@
 import { createContext, useContext, useEffect, useState } from 'react';
 import type { BoardState, WorkItem, WorkStatus } from '../../shared/types';
 import { ChatPanel, errorText, STATUS_LABEL } from './ChatPanel';
-import { FolderTerminalPanel, GitPanel, TestPanel } from './SidePanels';
+import { FolderTerminalPanel, GitPanel, TestPanel, TestReportPanel } from './SidePanels';
 
 const api = window.flowpilot;
 
@@ -38,7 +38,8 @@ function Row({ item, selected, onSelect, extra }: { item: WorkItem; selected: bo
 
 /** 右邊：測試固定在上面；Git 改動和終端機用分頁切換（兩個都一直開著，切換不會中斷終端機） */
 function RightPanels({ item }: { item: WorkItem }) {
-  const [tab, setTab] = useState<'git' | 'term'>('git');
+  const [tab, setTab] = useState<'git' | 'term' | 'report'>('git');
+  const pendingManual = item.testReport?.manual.filter((m) => !m.done).length ?? 0;
   const [changes, setChanges] = useState(0);
   const [siteUrl, setSiteUrl] = useState<string | null>(null);
   return (
@@ -48,12 +49,18 @@ function RightPanels({ item }: { item: WorkItem }) {
         <button role="tab" className={tab === 'git' ? 'on' : ''} onClick={() => setTab('git')}>
           Git 改動{changes > 0 && <span className="tab-count">{changes}</span>}
         </button>
+        <button role="tab" className={tab === 'report' ? 'on' : ''} onClick={() => setTab('report')} title={pendingManual ? `還有 ${pendingManual} 個手動測試項目沒勾` : undefined}>
+          測試結果{pendingManual > 0 && <span className="tab-count">{pendingManual}</span>}
+        </button>
         <button role="tab" className={tab === 'term' ? 'on' : ''} onClick={() => setTab('term')} title={siteUrl ? `本機網站在跑：${siteUrl}` : undefined}>
           終端機{siteUrl && <span className="tab-dot" />}
         </button>
       </div>
       <div className="tab-body" hidden={tab !== 'git'}>
         <GitPanel item={item} onCount={setChanges} />
+      </div>
+      <div className="tab-body" hidden={tab !== 'report'}>
+        <TestReportPanel item={item} />
       </div>
       <div className="tab-body" hidden={tab !== 'term'}>
         <FolderTerminalPanel item={item} onSiteUrl={setSiteUrl} />

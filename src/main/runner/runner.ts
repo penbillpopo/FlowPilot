@@ -1,12 +1,12 @@
 // 執行器：把確認好的計畫變成工作項目，分配資料夾、建立並切換分支、啟動 Codex 執行技能，
 // 並追蹤每段對話的進度、提問與同意請求。
 import { execFile } from 'node:child_process';
-import { existsSync, readFileSync } from 'node:fs';
+import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { homedir } from 'node:os';
-import { join } from 'node:path';
-import type { BoardState, BranchInfo, ChatEvent, Env, RemoveResult, TestResult, PendingRequest, SkillInfo, TestState, TicketPlan, WorkStage } from '../../shared/types';
+import { dirname, join } from 'node:path';
+import type { BoardState, BranchInfo, ChatEvent, Env, RemoveResult, Review, TestReport, TestResult, PendingRequest, SkillInfo, TestState, TicketPlan, WorkStage } from '../../shared/types';
 import { toEntry } from '../chat';
-import { ENVIRONMENT_FILE, readApiUrl, readEnvironment, setEnvironment } from '../environment';
+import { apiHosts, ENVIRONMENT_FILE, readApiUrl, readEnvironment, setEnvironment } from '../environment';
 import { reviewBrief } from '../planner/review';
 import { configFile, resolveAccount, writeAccountFile } from '../testaccounts';
 import type { CodexRpc, RpcMessage } from '../codex/rpc';
@@ -31,7 +31,7 @@ import type { Settings } from '../settings';
 import { FINISHED, OCCUPYING, type StoredWorkItem, type Store } from '../store';
 import type { VSCode } from '../vscode';
 import { pickFolder } from './allocate';
-import { commandPolicy, looksLikeQuestion, parseTestResult } from './policy';
+import { commandPolicy, looksLikeQuestion, parseTestReport, parseTestResult } from './policy';
 
 export interface RunnerDeps {
   store: Store;
@@ -52,6 +52,8 @@ export interface RunnerDeps {
   dataDir: string;
   /** 確保資料夾的本機網站有在跑（沒在跑就在資料夾終端機啟動），回傳網址 */
   ensureSite: (folder: string) => Promise<string>;
+  /** 測試瀏覽器的寫入防護程式（resources/write-guard.cjs 的完整路徑） */
+  writeGuard: string;
   /** 停掉資料夾終端機裡的本機網站（完成這張單時） */
   stopSite?: (folder: string) => void;
   /** 連不連得到這個網址（瀏覽器測試前先確認後端，沒開 VPN 時馬上知道）；不給就用真的連線 */
@@ -72,6 +74,7 @@ const APPROVAL_METHODS = /requestApproval$|^execCommandApproval$|^applyPatchAppr
 
 /** 瀏覽器工具的名稱：自動測試用無頭的，重測用有頭的 */
 const HEADLESS_BROWSER = 'flowpilot_browser_headless';
+export const HEADLESS_BROWSER_NAME = HEADLESS_BROWSER;
 const HEADED_BROWSER = 'flowpilot_browser';
 
 /**
@@ -80,9 +83,19 @@ const HEADED_BROWSER = 'flowpilot_browser';
  * - 瀏覽器測試改用 FlowPilot 提供的兩套 Playwright：無頭（自動測試）與有頭（重測給你看），
  *   截圖紀錄放在 FlowPilot 的資料夾，不會弄髒專案；你原本的 playwright 在這些對話裡關掉，AI 才不會用錯。
  */
-function threadConfig(dataDir: string) {
+/** 這張單的測試瀏覽器把擋下、放行的請求記在這裡（每次測試開始時清空） */
+export function requestLogFile(dataDir: string, itemId: number): string {
+  return join(dataDir, '測試請求', `${itemId}.jsonl`);
+}
+
+export function threadConfig(dataDir: string, writeGuard: string, itemId: number, hosts: string[] = []) {
   const outputDir = join(dataDir, '瀏覽器測試紀錄');
-  const browser = (extra: string[]) => ({ command: 'npx', args: ['-y', '@playwright/mcp@latest', ...extra, '--isolated', '--caps', 'devtools', '--output-dir', outputDir] });
+  // 兩套測試瀏覽器都套上寫入防護（resources/write-guard.cjs）：會改資料的請求擋下、記下內容、回假的成功
+  const browser = (extra: string[]) => ({
+    command: 'npx',
+    args: ['-y', '@playwright/mcp@latest', ...extra, '--isolated', '--caps', 'devtools', '--output-dir', outputDir, '--init-page', writeGuard],
+    env: { FLOWPILOT_REQUEST_LOG: requestLogFile(dataDir, itemId), FLOWPILOT_API_HOSTS: hosts.join(',') },
+  });
   let hasOwnPlaywright = false;
   try {
     hasOwnPlaywright = /^\[mcp_servers\.playwright\]/m.test(readFileSync(join(homedir(), '.codex/config.toml'), 'utf8'));
@@ -103,6 +116,29 @@ const STAGE_DONE: Partial<Record<WorkStage, string>> = {
   retest: '重測完成，等你確認',
   manual: '需求比對完了，等你測試',
 };
+
+/** 要 AI 在最後附上的測試報告（預期結果對照、要你手動測的項目），FlowPilot 讀這段畫成對照表和清單 */
+function reportLines(review: Review | null): string[] {
+  const acceptance = review?.acceptance ?? [];
+  return [
+    acceptance.length
+      ? `- 預期結果要一條一條對照：${acceptance.map((a, i) => `${i + 1}. ${a}`).join('　')}`
+      : '- 預期結果要一條一條對照（照單上的「預期結果」拆成一條一句）。',
+    '- 回覆最後、在「測試結果」那一行之前，附上這段（FlowPilot 會讀它畫成對照表和手動測試清單；JSON 要合法）：',
+    '  ```flowpilot-test',
+    '  {"acceptance":[{"no":1,"text":"預期結果的內容","result":"通過、沒過或沒測","note":"證據或原因，一句話"}],"manual":["要我手動測的項目，一項一句"]}',
+    '  ```',
+  ];
+}
+
+/** 檢查計畫要比對設計稿、單上也有 Figma 連結時，加進測試指示的要求 */
+function designCompareLines(review: Review | null): string[] {
+  const figma = (review?.resources ?? []).filter((r) => r.kind === 'figma').map((r) => r.url).slice(0, 3);
+  if (!review?.checks?.designCompare.need || !figma.length) return [];
+  return [
+    `- 比對設計稿：測到新畫面時截圖，用 Figma 工具看設計稿（${figma.join('、')}），比對流程、欄位、按鈕、文案有沒有明顯不一樣；間距、排版、顏色這類細節不用管。差很多的列在結果裡。`,
+  ];
+}
 
 /** 測試做完後給人看的一句話 */
 function testActivity(label: string, result: TestResult): string {
@@ -150,7 +186,7 @@ export class Runner {
   /** 你在準備階段已經同意的事（接著未提交的修改做、用本機版本繼續） */
   private allowed = new Map<number, Set<'dirty' | 'diverged'>>();
   /** 準備好之後，交代給 AI 時要說明的現況 */
-  private prepared = new Map<number, { continuing: boolean; commits: number; dirty: number }>();
+  private prepared = new Map<number, { continuing: boolean; commits: number; dirty: number; rebase?: { behind: number; conflict: boolean } }>();
   private scheduling = false;
   private rescheduleRequested = false;
 
@@ -393,7 +429,20 @@ export class Runner {
         }
       }
 
+      // 基底有新的提交：開發前先 rebase 到最新（有沒提交的修改就先暫存、做完放回）。
+      // 有衝突就停在 rebase 中，交給 AI 先解完再開發（使用者平常也是自己解）
+      let rebase: { behind: number; conflict: boolean } | undefined;
+      const behindBase = Number((await runGit(cwd, ['rev-list', '--count', `HEAD..origin/${item.baseBranch}`])).stdout.trim() || 0);
+      if (continuing && behindBase > 0) {
+        this.update(id, { activity: `基底 ${item.baseBranch} 有 ${behindBase} 個新提交，rebase 到最新` });
+        const result = await runGit(cwd, ['-c', 'core.editor=true', 'rebase', '--autostash', `origin/${item.baseBranch}`], 120_000);
+        const inProgress = existsSync(join(cwd, '.git', 'rebase-merge')) || existsSync(join(cwd, '.git', 'rebase-apply'));
+        if (result.code !== 0 && !inProgress) throw new Error(`rebase 失敗：${result.stderr.trim().split('\n').slice(-2).join(' ')}`);
+        rebase = { behind: behindBase, conflict: result.code !== 0 };
+      }
+
       this.prepared.set(id, {
+        rebase,
         continuing,
         commits: continuing ? await commitsSinceBase(cwd, item.baseBranch) : 0,
         dirty: (await dirtyFiles(cwd)).length,
@@ -440,21 +489,37 @@ export class Runner {
     const cwd = this.folderPath(item.folder!);
     await codex.start();
     this.update(id, { activity: '啟動 Codex' });
-    const { thread } = await codex.request<{ thread: { id: string } }>(
-      'thread/start',
-      {
-        cwd,
-        // 每個指令都先問 FlowPilot，由 FlowPilot 決定自動同意或轉給你（見 policy.ts）
-        approvalPolicy: 'untrusted',
-        sandbox: 'danger-full-access',
-        config: threadConfig(this.deps.dataDir),
-      },
-      180_000, // 第一次要下載瀏覽器工具，比較久
-    );
+    // 這條分支在同一個資料夾以前做過：接回原本的對話（AI 記得之前跟你討論過的決定）；接不回來就開新的
+    const config = threadConfig(this.deps.dataDir, this.deps.writeGuard, id, apiHosts(cwd));
+    const previous = this.deps.store.previousThread(item.project, item.branch, item.folder!, id);
+    let resumed = false;
+    let thread: { id: string } | null = null;
+    if (previous) {
+      try {
+        await codex.request('thread/resume', { threadId: previous, excludeTurns: true, approvalPolicy: 'untrusted', sandbox: 'danger-full-access', config }, 180_000);
+        thread = { id: previous };
+        resumed = true;
+      } catch (error) {
+        this.deps.log(`${item.ticketKey} 接回之前的對話失敗，開新的：${(error as Error).message}`);
+      }
+    }
+    thread ??= (
+      await codex.request<{ thread: { id: string } }>(
+        'thread/start',
+        {
+          cwd,
+          // 每個指令都先問 FlowPilot，由 FlowPilot 決定自動同意或轉給你（見 policy.ts）
+          approvalPolicy: 'untrusted',
+          sandbox: 'danger-full-access',
+          config,
+        },
+        180_000, // 第一次要下載瀏覽器工具，比較久
+      )
+    ).thread;
     this.update(id, { threadId: thread.id, status: 'running', stage: 'develop', activity: '開發中' });
     await codex.request('thread/name/set', { threadId: thread.id, name: `${item.ticketKey}｜${item.merchant ? `m${item.merchant}｜` : ''}${item.folder}` }).catch(() => {});
 
-    const state = this.prepared.get(id) ?? { continuing: false, commits: 0, dirty: 0 };
+    const state: { continuing: boolean; commits: number; dirty: number; rebase?: { behind: number; conflict: boolean } } = this.prepared.get(id) ?? { continuing: false, commits: 0, dirty: 0 };
     this.prepared.delete(id);
     this.allowed.delete(id);
     const branchLine = state.continuing
@@ -463,14 +528,23 @@ export class Runner {
       : `- FlowPilot 已經在這個資料夾建立並切換到分支 ${item.branch}（從 origin/${item.baseBranch} 開出）。請直接在目前分支開發，不要切換分支。`;
     const skill = this.deps.settings().projects[item.project]?.devSkill ?? item.skill;
     const brief = reviewBrief(this.deps.store.getReview(item.ticketKey)?.review ?? null);
+    const rebaseLine = !state.rebase
+      ? ''
+      : state.rebase.conflict
+        ? `- 【先處理】FlowPilot 正在把分支 rebase 到最新的 origin/${item.baseBranch}（基底有 ${state.rebase.behind} 個新提交），遇到衝突停住了。請先解衝突：用 git status 看哪些檔案衝突，照兩邊的意圖合併好，git add 之後用 GIT_EDITOR=true git rebase --continue 繼續，直到 rebase 完成；不要 git rebase --abort。在回覆裡說明每個衝突怎麼解的。rebase 完成後再開始開發。`
+        : `- FlowPilot 已經把分支 rebase 到最新的 origin/${item.baseBranch}（基底有 ${state.rebase.behind} 個新提交），沒有衝突。`;
     const instructions = [
       `請使用 $${skill} 處理這張 Jira：${item.mainUrl}`,
+      resumed ? '- 這是接續之前的對話：之前跟我討論過、確認過的決定都還算數，接著做就好。' : '',
+      rebaseLine,
       '',
       `- 指派給我的子任務是 ${item.ticketKey}（${item.ticketSummary}）；需求內容寫在主單 ${item.mainKey}。`,
       '- 需求以單上的「需求 / Requirements」與「預期結果 / Acceptance Criteria」為準，完成時要對照預期結果逐項確認；不理會「原始需求 / Merchant Requirements」。',
       brief ? '' : '- 這張單沒有開發前的審閱結果：請自己讀 Jira 單，整理成開發內容重點、牽涉頁面、後端API規格、預計執行內容、疑問五段之後再開發，不用要我先跑 jira-frontend-analysis。',
       branchLine,
       '- 這次只做開發：開發完 FlowPilot 會接著安排瀏覽器測試，你不用自己開瀏覽器測試。',
+      // 提交時專案會跑 lint，開發時就先檢查，不要等到提交才冒出來（也不要 --fix，那會改到無關的檔案）
+      '- 開發完跑一次跟提交時一樣的 lint，但只檢查這次改到的檔案，不要加 --fix 去動到其他檔案；有問題就修。',
       `- 不要修改 ${ENVIRONMENT_FILE}（SIT／UAT 由 FlowPilot 切換）。`,
       '- 不要提交、不要推送；完成後由我審查並提交。',
       item.targetMerchants.length ? `- 這張單之後還要移植到商戶 ${item.targetMerchants.join('、')}，那是下一階段的事，這次只做目前這個商戶。` : '',
@@ -521,13 +595,22 @@ export class Runner {
       if (!account.password) throw new Error(`${where} 的測試帳號 ${account.username} 還沒有密碼，請在 ${configFile(settings.testConfigDir, item.project)} 補上`);
       const url = await this.deps.ensureSite(item.folder);
       const accountFile = writeAccountFile(join(this.deps.dataDir, '測試帳號'), id, { project: item.project, merchant: item.merchant, environment: env, url, account });
+      const requestLog = requestLogFile(this.deps.dataDir, id);
+      mkdirSync(dirname(requestLog), { recursive: true });
+      writeFileSync(requestLog, ''); // 每次測試從空的紀錄開始
       const common = [
+        `- 寫入防護：這個測試瀏覽器會擋下所有會新增、修改、刪除資料的請求（PUT、PATCH、DELETE，以及網址看起來會改資料的 POST），不會送到後端，並回一個假的成功（success: true）。登入和查詢會正常放行。`,
+        `  每個被擋下或放行的請求（含送出的內容）都記在 ${requestLog}，一行一筆 JSON。按下儲存、送出之後，用終端機讀這個檔案（例如 cat），逐欄對照預期的 payload（欄位、值、不該送的欄位、null）。`,
+        '  因為回的是假的成功，存檔之後的畫面（例如列表多一筆、詳情變成新的值）不會跟真的一樣，這部分列進要我手動測的項目。不要用任何方式繞過防護（例如用 curl 或腳本直接打後端）。',
         `- 本機網站已經由 FlowPilot 啟動：${url}，直接用；不要自己啟動、重啟或關掉網站。`,
         `- 環境：FlowPilot 已經切到 ${env.toUpperCase()}，不要修改 ${ENVIRONMENT_FILE}。`,
         // 實測：AI 曾試著在瀏覽器裡讀這個檔案（讀不到）就放棄登入，所以寫清楚用終端機讀
         `- 登入：先用終端機指令讀 ${accountFile}（例如 cat）取得帳號密碼，再用瀏覽器工具填進登入表單自動登入（登入畫面要 OTP 時，填檔案裡的 otp）。這個檔案在電腦上，瀏覽器裡讀不到，不要在瀏覽器裡讀。不要停下來等我登入，也不要把密碼印出來或寫進任何檔案、回覆。`,
-        '- 失敗時先判斷原因：是前端程式的問題就直接修正，然後重測失敗的部分，最多 3 輪；不是前端的問題（後端、資料、權限、環境）就記下來，不要修。',
+        '- 第一步先登入：登入失敗（帳號密碼錯、OTP、被擋）就立刻停止，不要再試別的，直接回報「測試結果：沒測成（登入失敗：原因）」。',
+        '- 失敗時先判斷原因：是前端程式的問題就直接修正，然後重測失敗的部分，最多 3 輪；不是前端的問題（後端、資料、權限、環境）就記下來，不要修。API 回 404 通常是後端還沒部署這支 API，不是前端的錯。',
         '- 不要提交、不要推送。',
+        ...designCompareLines(this.deps.store.getReview(item.ticketKey)?.review ?? null),
+        ...reportLines(this.deps.store.getReview(item.ticketKey)?.review ?? null),
         '- 回覆的最後一行一定要照這個格式寫結果（FlowPilot 會讀這一行）：「測試結果：通過」、「測試結果：部分通過（原因）」或「測試結果：沒測成（原因）」。主要功能一個都沒測到（例如登入失敗、網站打不開）就是「沒測成」；有測到但有些項目沒測或沒過是「部分通過」。',
       ];
       const text = headed
@@ -536,7 +619,7 @@ export class Runner {
             '',
             `- 這次是有頭模式：只能用 ${HEADED_BROWSER} 這個瀏覽器工具（會開出視窗讓我看）；不要用 ${HEADLESS_BROWSER}，也不要另外寫 Playwright 腳本開瀏覽器。`,
             '- 先列出測試計畫（要測的頁面、操作、預期的 API），等我確認後才開始。重點放在我在這段對話裡要求修改的部分，再加上這張單的主要流程。',
-            '- 會新增、修改、刪除資料的操作，照技能的規則，每一步做之前都要先問我。',
+            '- 新增、儲存這類操作可以直接做，不用每一步問我：寫入一律會被擋下（見下面），資料不會寫進後端。',
             ...common,
           ]
         : [
@@ -544,7 +627,7 @@ export class Runner {
             '',
             `- 我已經授權這次用無頭模式：只能用 ${HEADLESS_BROWSER} 這個瀏覽器工具（不會開出視窗）；不要用 ${HEADED_BROWSER}，也不要另外寫 Playwright 腳本開有頭的瀏覽器。`,
             '- 不用先給我確認測試計畫：列出測試案例後直接開始測，中途也不要停下來問我。',
-            '- 只做不會新增、修改、刪除資料的操作（瀏覽、搜尋、篩選、看詳情、切換語言、匯出下載）；會新增或修改資料的步驟（新增、送出、儲存、核准、拒絕、刪除、狀態變更、資金相關…）一律跳過，在結果裡列出來給我手動測。',
+            '- 新增、編輯、儲存的流程也要測（這通常是最容易出錯的地方）：寫入一律會被擋下（見下面），不用跳過，也不用問我。',
             ...common,
             '- 最後照技能的結果格式回報，並另外列出「跳過、要你手動測的項目」。',
           ];
@@ -568,6 +651,34 @@ export class Runner {
     }
   }
 
+  /**
+   * AI 自我審查（檢查計畫要做時）：對照需求分析與團隊慣例，看一次自己的改動，有問題直接修。
+   * 開始不了就直接進自動測試，不擋流程。
+   */
+  private async startSelfCheck(id: number): Promise<void> {
+    const item = this.deps.store.getWorkItem(id)!;
+    try {
+      if (!item.threadId) throw new Error('沒有 AI 對話');
+      this.update(id, { stage: 'selfcheck', status: 'running', activity: 'AI 自我審查中', pending: null });
+      const text = [
+        '## 自我審查',
+        '',
+        `請審查你這次的改動（git diff origin/${item.baseBranch}...HEAD，以及還沒提交的修改），發現問題就直接修正：`,
+        '- 對照上面需求分析的「預期結果」：每一條都有做到嗎？有沒有做了需求沒要的東西？',
+        '- 團隊慣例：多語系的文字有沒有都加到翻譯檔、有沒有重複的程式、命名和既有的寫法一不一致、錯誤處理和型別有沒有漏。',
+        '- 跑跟提交時一樣的 lint，但只檢查這次改到的檔案，而且不要加 --fix 去動到其他檔案。',
+        `- 不要提交、不要推送，不要修改 ${ENVIRONMENT_FILE}。`,
+        '最後簡短列出：審查了什麼、修正了什麼、還有什麼風險。',
+      ].join('\n');
+      await this.deps.codex.start();
+      const { turn } = await this.deps.codex.request<{ turn: { id: string } }>('turn/start', { threadId: item.threadId, input: [{ type: 'text', text, text_elements: [] }] });
+      this.turns.set(item.threadId, turn.id);
+    } catch (error) {
+      this.deps.log(`${item.ticketKey} 自我審查開始不了，直接進自動測試：${(error as Error).message}`);
+      await this.startTest(id, false);
+    }
+  }
+
   /** 開瀏覽器測給我看（你按了才做） */
   async retest(id: number) {
     this.assertIdle(id, '重測');
@@ -585,6 +696,32 @@ export class Runner {
     if (!item.threadId) throw new Error('這張單還沒有 AI 對話');
     if (this.turns.has(item.threadId) || item.status === 'running' || item.status === 'preparing') throw new Error(`AI 還在執行，請等它停下來（或中斷）再${what}`);
     if (item.pending) throw new Error(`AI 有事在等你回答，先處理再${what}`);
+  }
+
+  /** 勾選或取消手動測試清單的一項 */
+  setManualDone(id: number, index: number, done: boolean) {
+    const item = this.deps.store.getWorkItem(id)!;
+    if (!item.testReport?.manual[index]) throw new Error('找不到這個手動測試項目');
+    const manual = item.testReport.manual.map((m, i) => (i === index ? { ...m, done } : m));
+    this.update(id, { testReport: { ...item.testReport, manual } });
+  }
+
+  /** 試登一次要用的東西：網站網址、環境、這次的登入資料檔（沒辦法試就丟出原因） */
+  async prepareTrialLogin(id: number): Promise<{ url: string; env: Env; accountFile: string; username: string; hosts: string[] }> {
+    const item = this.deps.store.getWorkItem(id)!;
+    if (!item.folder) throw new Error('這張單還沒有分配資料夾');
+    const settings = this.deps.settings();
+    const cwd = this.folderPath(item.folder);
+    const env = readEnvironment(cwd);
+    if (env !== 'sit' && env !== 'uat') throw new Error(`${ENVIRONMENT_FILE} 的環境看不出來，請先在上面選 SIT 或 UAT`);
+    const account = resolveAccount(settings.testConfigDir, item.project, item.merchant, env);
+    if (!account) throw new Error(`帳號檔裡沒有 ${env.toUpperCase()} 的帳號`);
+    if (!account.password) throw new Error(`${account.username} 還沒有密碼`);
+    const apiUrl = readApiUrl(cwd);
+    if (apiUrl && !(await (this.deps.canReach ?? reachable)(apiUrl))) throw new Error(`連不到 ${env.toUpperCase()} 的後端（${apiUrl}），VPN 有開嗎？`);
+    const url = await this.deps.ensureSite(item.folder);
+    const accountFile = writeAccountFile(join(this.deps.dataDir, '測試帳號'), id, { project: item.project, merchant: item.merchant, environment: env, url, account });
+    return { url, env, accountFile, username: account.username, hosts: apiHosts(cwd) };
   }
 
   /** 工作台右邊「測試」區塊：目前的環境、會用哪個帳號（不含密碼） */
@@ -693,13 +830,18 @@ export class Runner {
           this.update(item.id, { status: 'waiting', activity: 'AI 在問你問題', pending: null });
           this.notify(item.id, `${item.ticketKey} 在等你回答`, short(latest.lastMessage.slice(-200)));
         } else if (latest.stage === 'develop') {
-          // 開發完自動接著做無頭測試
+          // 開發完：檢查計畫要自我審查就先審查，否則直接做無頭測試
+          if (this.deps.store.getReview(latest.ticketKey)?.review.checks?.codeReview.need) void this.startSelfCheck(item.id);
+          else void this.startTest(item.id, false);
+        } else if (latest.stage === 'selfcheck') {
           void this.startTest(item.id, false);
         } else {
           let activity = STAGE_DONE[latest.stage] ?? '等你測試';
-          const tested: { autotestResult?: TestResult } = {};
+          const tested: { autotestResult?: TestResult; testReport?: TestReport } = {};
           if (latest.stage === 'autotest' || latest.stage === 'retest') {
             const result = parseTestResult(latest.lastMessage);
+            const report = parseTestReport(latest.lastMessage, latest.testReport);
+            if (report) tested.testReport = report;
             activity = testActivity(latest.stage === 'autotest' ? '自動測試' : '重測', result);
             if (latest.stage === 'autotest') tested.autotestResult = result;
           }
@@ -939,7 +1081,7 @@ export class Runner {
     if (active.length) await this.deps.codex.start();
     for (const item of active) {
       try {
-        const { thread } = await this.deps.codex.request<{ thread: { status?: { type: string } } }>('thread/resume', { threadId: item.threadId, excludeTurns: true, config: threadConfig(this.deps.dataDir) });
+        const { thread } = await this.deps.codex.request<{ thread: { status?: { type: string } } }>('thread/resume', { threadId: item.threadId, excludeTurns: true, config: threadConfig(this.deps.dataDir, this.deps.writeGuard, item.id, item.folder ? apiHosts(this.folderPath(item.folder)) : []) });
         if (item.status === 'running' && thread.status?.type === 'idle') {
           this.update(item.id, { status: 'waiting', activity: 'FlowPilot 重新啟動時這一輪已經結束，看一下最後的回覆', pending: null });
         }

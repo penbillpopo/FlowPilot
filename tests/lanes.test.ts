@@ -17,7 +17,7 @@ function setup() {
     }])[0];
   const fakeCodex = { on: () => () => {}, setDisconnectHandler: () => {} } as unknown as CodexRpc;
   const runner = new Runner({
-    dataDir: '/nonexistent/flowpilot', ensureSite: async () => 'http://localhost:4200/',
+    dataDir: '/nonexistent/flowpilot', writeGuard: 'resources/write-guard.cjs', ensureSite: async () => 'http://localhost:4200/',
     store, settings: () => settings, codex: fakeCodex, vscode: {} as VSCode,
     notify: () => {}, onChange: () => {}, onStream: () => {}, log: () => {},
   });
@@ -50,7 +50,7 @@ describe('暫停', () => {
       targetMerchants: [], branch: 'ban/ALL-1', baseBranch: 'version/0.0.1', skill: 'x', prTitle: 'feat(ALL-1) x', preferredFolder: null,
     }]);
     const runner = new Runner({
-    dataDir: '/nonexistent/flowpilot', ensureSite: async () => 'http://localhost:4200/',
+    dataDir: '/nonexistent/flowpilot', writeGuard: 'resources/write-guard.cjs', ensureSite: async () => 'http://localhost:4200/',
       store, settings: () => settings, codex: { on: () => () => {}, setDisconnectHandler: () => {} } as unknown as CodexRpc, vscode: {} as VSCode,
       notify: () => {}, onChange: () => {}, onStream: () => {}, log: () => {}, paused: true,
     });

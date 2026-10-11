@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { commandPolicy, looksLikeQuestion, parseTestResult } from '../src/main/runner/policy';
+import { commandPolicy, looksLikeQuestion, parseTestReport, parseTestResult } from '../src/main/runner/policy';
 
 describe('指令同意規則', () => {
   it.each([
@@ -59,5 +59,34 @@ describe('瀏覽器測試的結果', () => {
     expect(parseTestResult('測試結果: 沒測成(登入失敗)')).toEqual({ kind: 'failed', reason: '登入失敗' });
     expect(parseTestResult('格式說明：測試結果：通過\n…\n測試結果：沒測成（網站打不開）')).toEqual({ kind: 'failed', reason: '網站打不開' });
     expect(parseTestResult('目前 Playwright 驗證通過。')).toEqual({ kind: 'unknown' });
+  });
+});
+
+describe('測試報告', () => {
+  const block = (json: object) => '報告…\n```flowpilot-test\n' + JSON.stringify(json) + '\n```\n測試結果：部分通過（有些沒測）';
+  it('讀最後一段，結果不認得的當成沒測；重測後同樣的手動項目保留勾選', () => {
+    const first = parseTestReport(block({ acceptance: [{ no: 1, text: '選存款次數時只顯示次數框', result: '通過', note: '畫面正確' }, { no: 2, text: 'X', result: '怪怪的' }], manual: ['存檔後列表多一筆', '中英文切換'] }));
+    expect(first).toEqual({
+      acceptance: [
+        { no: 1, text: '選存款次數時只顯示次數框', result: '通過', note: '畫面正確' },
+        { no: 2, text: 'X', result: '沒測', note: '' },
+      ],
+      manual: [{ text: '存檔後列表多一筆', done: false }, { text: '中英文切換', done: false }],
+    });
+    const checked = { ...first!, manual: [{ text: '存檔後列表多一筆', done: true }, { text: '中英文切換', done: false }] };
+    expect(parseTestReport(block({ acceptance: [], manual: ['存檔後列表多一筆', '新的項目'] }), checked)?.manual).toEqual([{ text: '存檔後列表多一筆', done: true }, { text: '新的項目', done: false }]);
+  });
+
+  it('沒有報告或格式不對就是 null', () => {
+    expect(parseTestReport('測試結果：通過')).toBeNull();
+    expect(parseTestReport('```flowpilot-test\n{壞掉的 JSON\n```')).toBeNull();
+  });
+});
+
+describe('rebase 衝突讓 AI 自己解', () => {
+  it('git rebase --continue 不用問；其他 rebase、merge 還是要問', () => {
+    expect(commandPolicy('GIT_EDITOR=true git rebase --continue').ask).toBe(false);
+    expect(commandPolicy('git rebase origin/master-1').ask).toBe(true);
+    expect(commandPolicy('git rebase --continue && git push -f').ask).toBe(true);
   });
 });

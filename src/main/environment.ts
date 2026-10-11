@@ -83,6 +83,24 @@ export function activeValue(text: string, key: string): string | null {
   return null;
 }
 
+/** SIT、UAT 兩組設定裡的後端主機（例如 sit-newplatform.mxsyl.com），給測試瀏覽器分辨哪些是專案自己的 API */
+export function apiHosts(folder: string): string[] {
+  const file = join(folder, ENVIRONMENT_FILE);
+  if (!existsSync(file)) return [];
+  const lines = readFileSync(file, 'utf8').split('\n');
+  const b = blocks(lines);
+  if (!b) return [];
+  const hosts = new Set<string>();
+  for (const i of [...b.sit, ...b.uat]) {
+    if (keyOf(lines[i]) !== 'apiUrl') continue;
+    const url = lines[i].match(/[:=]\s*['"`]([^'"`]+)['"`]/)?.[1];
+    try {
+      if (url) hosts.add(new URL(url).host);
+    } catch {}
+  }
+  return [...hosts];
+}
+
 /** 讀資料夾目前開著的後端網址；讀不到就是 null */
 export function readApiUrl(folder: string): string | null {
   const file = join(folder, ENVIRONMENT_FILE);

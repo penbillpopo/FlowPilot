@@ -138,8 +138,30 @@ export interface RequirementChange {
 }
 
 /** 審閱結果：判斷（專案、要做什麼、參考資料）＋問題清單＋你們的討論 */
+/** 一項額外檢查：要不要做、為什麼 */
+export interface CheckDecision {
+  need: boolean;
+  reason: string;
+}
+
+/**
+ * 檢查計畫：審閱時 AI 判斷這張單需要哪些額外檢查（不是每張單都要），你可以在計畫表改。
+ * - figma：審閱時對照 Figma 設計稿（只看流程與描述，不管排版細節）
+ * - codeReview：開發完 AI 先自我審查程式碼
+ * - designCompare：測試時截圖跟設計稿比對
+ */
+export interface ReviewChecks {
+  figma: CheckDecision;
+  codeReview: CheckDecision;
+  designCompare: CheckDecision;
+}
+
 export interface Review extends Judgement {
   ticketKey: string;
+  /** 檢查計畫（舊的審閱結果沒有） */
+  checks?: ReviewChecks;
+  /** 這次審閱有沒有實際對照 Figma 設計稿 */
+  figmaChecked?: boolean;
   /** 小單只看單；一般和複雜的單會大略看程式碼 */
   level: '小' | '一般' | '複雜';
   codeChecked: boolean;
@@ -152,6 +174,8 @@ export interface Review extends Judgement {
   complete?: boolean;
   /** 沒完成的原因 */
   problem?: string;
+  /** 預期結果逐條（測試時一條一條對照） */
+  acceptance?: string[];
   /** 牽涉頁面（路由、選單、元件） */
   pages?: string[];
   /** 後端 API 規格（單上寫的；沒寫就是空的） */
@@ -190,14 +214,23 @@ export type WorkLane = 'waiting' | 'conversation' | 'development' | 'done';
 /**
  * 這張單走到流程的哪一步：
  * - develop：AI 開發中
+ * - selfcheck：AI 自我審查程式碼（檢查計畫要做時，開發完接著做）
  * - autotest：AI 用無頭瀏覽器自動測試（開發完自動接著做）
  * - manual：等你手動測試；你在對話裡要求修改，或按「開瀏覽器測給我看」
  * - fix：AI 照你的要求修改中
  * - retest：AI 開瀏覽器重測給你看
  */
-export type WorkStage = 'develop' | 'autotest' | 'manual' | 'fix' | 'retest';
+export type WorkStage = 'develop' | 'selfcheck' | 'autotest' | 'manual' | 'fix' | 'retest';
 
 export type Env = 'sit' | 'uat';
+
+/** 瀏覽器測試的報告（AI 回覆最後附的 flowpilot-test 區塊） */
+export interface TestReport {
+  /** 每一條預期結果的測試結果 */
+  acceptance: { no: number; text: string; result: '通過' | '沒過' | '沒測'; note: string }[];
+  /** 要你手動測的項目 */
+  manual: { text: string; done: boolean }[];
+}
 
 /** 瀏覽器測試的結果：通過、部分通過、沒測成（主要功能一個都沒測到）、看不出來 */
 export interface TestResult {
@@ -263,6 +296,8 @@ export interface WorkItem {
   autotested: boolean;
   /** 自動測試的結果（AI 回覆最後一行的「測試結果：…」；沒開始成也算沒測成） */
   autotestResult: TestResult | null;
+  /** 最近一次瀏覽器測試的報告：預期結果對照、要你手動測的清單（勾選狀態會保留） */
+  testReport: TestReport | null;
   updatedAt: string;
 }
 
@@ -328,6 +363,8 @@ export interface GitState {
   hasRemote: boolean;
   /** 比基底分支多幾個提交 */
   ahead: number;
+  /** 遠端有本機沒有的提交（通常是 rebase 過），推送會用 --force-with-lease 強制推送 */
+  needsForce: boolean;
   /** 資料夾目前設定的提交身分（提交時預設用這個） */
   identity: GitIdentity;
   /** 提交時可以選的身分（設定檔的 gitIdentities） */
@@ -361,6 +398,8 @@ export interface FlowPilotApi {
   listSkills(): Promise<SkillInfo[]>;
   /** 審閱一張單（已經審過就直接回傳上次的結果；force 為 true 時重新審閱） */
   reviewTicket(ticket: JiraTicket, force?: boolean): Promise<Review>;
+  /** 改檢查計畫（要不要對照 Figma、自我審查、比對設計稿） */
+  setReviewChecks(ticketKey: string, checks: ReviewChecks): Promise<Review>;
   /** 處理一個問題：回答、照建議、不是問題、重新打開 */
   updateIssue(ticketKey: string, issueId: string, patch: { status: ReviewIssue['status']; answer?: string }): Promise<Review>;
   /** 跟 AI 討論這張單，AI 會一併更新問題清單 */
@@ -437,6 +476,10 @@ export interface FlowPilotApi {
     state(itemId: number): Promise<TestState>;
     /** 切換 SIT／UAT（只切換 environment.ts 裡的註解） */
     setEnvironment(itemId: number, env: Env): Promise<TestState>;
+    /** 試登一次：用無頭瀏覽器照帳號檔登入看看（獨立的臨時對話，約一兩分鐘） */
+    trialLogin(itemId: number): Promise<{ ok: boolean; reason: string }>;
+    /** 勾選或取消手動測試清單的一項 */
+    setManualDone(itemId: number, index: number, done: boolean): Promise<void>;
     /** 關掉瀏覽器測試開出來的瀏覽器（不會關到你自己的 Chrome），回傳關掉幾個 */
     closeBrowsers(): Promise<number>;
   };

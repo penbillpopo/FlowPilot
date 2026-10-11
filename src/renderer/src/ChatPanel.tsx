@@ -24,8 +24,8 @@ const REDUNDANT_ACTIVITY = /^(AI 在問你問題|執行中|執行技能|開發�
 
 /** 流程：審閱 ✓ → 開發 → 自動測試 → 等你測試（修改、重測都算在等你測試這一步） */
 const STEPS = ['審閱', '開發', '自動測試', '等你測試'];
-const STEP_OF: Record<WorkStage, number> = { develop: 1, autotest: 2, manual: 3, fix: 3, retest: 3 };
-const RUNNING_NOTE: Record<WorkStage, string> = { develop: 'AI 開發中', autotest: 'AI 測試中', manual: 'AI 處理中', fix: 'AI 修改中', retest: 'AI 重測中' };
+const STEP_OF: Record<WorkStage, number> = { develop: 1, selfcheck: 1, autotest: 2, manual: 3, fix: 3, retest: 3 };
+const RUNNING_NOTE: Record<WorkStage, string> = { develop: 'AI 開發中', selfcheck: 'AI 自我審查中', autotest: 'AI 測試中', manual: 'AI 處理中', fix: 'AI 修改中', retest: 'AI 重測中' };
 
 /** 目前這一步在等什麼（合併原本的狀態標籤）；空字串代表不用多說明 */
 function stepNote(item: WorkItem): string {
@@ -83,6 +83,7 @@ function flowPilotLabel(text: string): string | null {
     return `${kind}（${skill}）`;
   }
   if (text.startsWith('## 更新需求')) return '更新需求';
+  if (text.startsWith('## 自我審查')) return '自我審查指示';
   if (text.trim() === '請從剛才中斷的地方繼續。') return '請 AI 從中斷的地方繼續';
   return null;
 }
@@ -380,7 +381,10 @@ export function ChatPanel({ item }: { item: WorkItem }) {
       const git = await api.git.state(item.id);
       unpushed = git.hasRemote ? (git.unpushed ?? 0) : git.ahead;
     } catch {}
-    const warning = unpushed > 0 ? `\n\n⚠️ 還有 ${unpushed} 個提交沒推送。完成之後還是可以推送，但要記得。` : '';
+    const pendingManual = item.testReport?.manual.filter((m) => !m.done) ?? [];
+    const warning =
+      (unpushed > 0 ? `\n\n⚠️ 還有 ${unpushed} 個提交沒推送。完成之後還是可以推送，但要記得。` : '') +
+      (pendingManual.length ? `\n\n⚠️ 還有 ${pendingManual.length} 個手動測試項目沒勾：\n${pendingManual.slice(0, 5).map((m) => `・${m.text}`).join('\n')}` : '');
     const ok = window.confirm(
       `完成 ${item.ticketKey}，讓出 ${item.folder} 給下一張？${warning}\n\n資料夾要乾淨（改動都提交或捨棄了）；environment.ts（瀏覽器測試切 SIT／UAT 用的）會順便還原，本機網站也會停掉。`,
     );

@@ -9,12 +9,53 @@ import { DiffView } from './DiffView';
 
 const api = window.flowpilot;
 
+const RESULT_MARK = { 通過: '✓', 沒過: '✗', 沒測: '—' } as const;
+
+/** 測試結果：預期結果一條一條的對照，以及要你手動測的清單（勾選會存起來，重測後同樣的項目保留勾選） */
+export function TestReportPanel({ item }: { item: WorkItem }) {
+  const [error, setError] = useState<string | null>(null);
+  const report = item.testReport;
+  if (!report) return <div className="panel"><p className="muted small">瀏覽器測試做完後，這裡會列出每一條預期結果有沒有通過，以及要你手動測的項目。</p></div>;
+  return (
+    <div className="panel test-report">
+      <div className="plan-block-title">預期結果對照</div>
+      {report.acceptance.length === 0 && <p className="muted small">這次測試沒有逐條回報。</p>}
+      <ul className="acceptance">
+        {report.acceptance.map((a) => (
+          <li key={a.no} className={`ac-${a.result}`}>
+            <span className="ac-mark">{RESULT_MARK[a.result]}</span>
+            <span>
+              {a.no}. {a.text}
+              {a.note && <span className="muted small">（{a.note}）</span>}
+            </span>
+          </li>
+        ))}
+      </ul>
+      <div className="plan-block-title">要你手動測的項目</div>
+      {report.manual.length === 0 && <p className="muted small">沒有。</p>}
+      <ul className="manual-list">
+        {report.manual.map((m, i) => (
+          <li key={i}>
+            <label className={m.done ? 'done' : ''}>
+              <input type="checkbox" checked={m.done} onChange={(e) => api.test.setManualDone(item.id, i, e.target.checked).catch((err) => setError(errorText(err)))} />
+              {m.text}
+            </label>
+          </li>
+        ))}
+      </ul>
+      {error && <div className="error small">{error}</div>}
+    </div>
+  );
+}
+
 /**
  * 測試：資料夾目前連 SIT 還是 UAT（只切換 environment.ts 的註解）、這次測試會用哪個帳號。
  * 帳號一律用帳號檔（~/.codex/local-test-configs）；畫面上只顯示帳號，不顯示密碼。
  */
 export function TestPanel({ item }: { item: WorkItem }) {
   const [state, setState] = useState<TestState | null>(null);
+  const [trying, setTrying] = useState(false);
+  const [trial, setTrial] = useState<{ ok: boolean; reason: string } | null>(null);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
@@ -75,6 +116,28 @@ export function TestPanel({ item }: { item: WorkItem }) {
       {state && (!state.account || !state.account.hasPassword) && (env === 'sit' || env === 'uat') && (
         <p className="muted small">請在 {state.accountFile} 補上{state.account ? '密碼（passwordSource）' : ''}。</p>
       )}
+      <div className="row trial-row">
+        <button
+          className="link small"
+          disabled={trying || !(state?.account?.hasPassword)}
+          title="用無頭瀏覽器照帳號檔登入看看（獨立的臨時對話，約一兩分鐘；本機網站沒在跑會先啟動）"
+          onClick={async () => {
+            setTrying(true);
+            setTrial(null);
+            setError(null);
+            try {
+              setTrial(await api.test.trialLogin(item.id));
+            } catch (e) {
+              setError(errorText(e));
+            } finally {
+              setTrying(false);
+            }
+          }}
+        >
+          {trying ? '試登中…（約一兩分鐘）' : '試登一次'}
+        </button>
+        {trial && <span className={`small ${trial.ok ? 'ok-text' : 'warn'}`}>{trial.ok ? '登入成功' : '登入失敗'}：{trial.reason}</span>}
+      </div>
       <button
         className="link small close-browsers"
         title="關掉瀏覽器測試開出來的瀏覽器視窗（不會關到你自己的 Chrome）"
@@ -385,11 +448,13 @@ export function GitPanel({ item, onCount }: { item: WorkItem; onCount?(changes: 
           className="push-button"
           disabled={busy || !onBranch}
           onClick={() => {
-            const what = state.hasRemote ? `推送 ${state.unpushed} 個提交到遠端的 ${state.branch}？` : `遠端還沒有 ${state.branch}，要建立並推送 ${state.ahead} 個提交嗎？`;
+            const what = state.needsForce
+              ? `遠端的 ${state.branch} 跟本機的歷史不一樣（通常是 rebase 過），要強制推送嗎？\n\n會用 --force-with-lease：如果遠端在你上次推送後被別人推了新的提交，會拒絕覆蓋。`
+              : state.hasRemote ? `推送 ${state.unpushed} 個提交到遠端的 ${state.branch}？` : `遠端還沒有 ${state.branch}，要建立並推送 ${state.ahead} 個提交嗎？`;
             if (window.confirm(what)) act(() => api.git.push(item.id), '已推送');
           }}
         >
-          {state.hasRemote ? `推送 ${state.unpushed} 個提交` : `推送（建立遠端分支，${state.ahead} 個提交）`}
+          {state.needsForce ? '強制推送（rebase 過）' : state.hasRemote ? `推送 ${state.unpushed} 個提交` : `推送（建立遠端分支，${state.ahead} 個提交）`}
         </button>
       )}
     </div>

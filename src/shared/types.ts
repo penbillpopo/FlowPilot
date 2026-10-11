@@ -429,10 +429,16 @@ export interface FlowPilotApi {
   openInVSCode(itemId: number): Promise<void>;
   /** 開瀏覽器測給我看：AI 先列測試計畫給你確認，再開有頭的瀏覽器測 */
   retest(itemId: number): Promise<void>;
+  /** 重跑自動測試（無頭）：上次沒測成時用 */
+  rerunAutotest(itemId: number): Promise<void>;
+  /** 單列表的標記：審閱過了沒、在工作台上、分支已經存在 */
+  ticketMarks(keys: string[]): Promise<Record<string, { reviewed: boolean; active: boolean; branch: boolean }>>;
   test: {
     state(itemId: number): Promise<TestState>;
     /** 切換 SIT／UAT（只切換 environment.ts 裡的註解） */
     setEnvironment(itemId: number, env: Env): Promise<TestState>;
+    /** 關掉瀏覽器測試開出來的瀏覽器（不會關到你自己的 Chrome），回傳關掉幾個 */
+    closeBrowsers(): Promise<number>;
   };
 }
 

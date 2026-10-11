@@ -48,7 +48,7 @@ export function App() {
         <TicketList onConfirmed={() => setTab('board')} />
       </div>
       <div hidden={tab !== 'board'}>
-        <Workbench />
+        <Workbench onGoTickets={() => setTab('tickets')} />
       </div>
     </div>
   );
@@ -57,6 +57,7 @@ export function App() {
 function TicketList({ onConfirmed }: { onConfirmed(): void }) {
   const [tickets, setTickets] = useState<JiraTicket[] | null>(null);
   const [selected, setSelected] = useState<Set<string>>(new Set());
+  const [marks, setMarks] = useState<Record<string, { reviewed: boolean; active: boolean; branch: boolean }>>({});
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [planning, setPlanning] = useState<{ run: RunSummary; tickets: JiraTicket[] } | null>(null);
@@ -70,6 +71,8 @@ function TicketList({ onConfirmed }: { onConfirmed(): void }) {
     try {
       const list = await api.listTickets(chosen);
       setTickets(list);
+      // 標記：審閱過了沒、在工作台上、分支已經存在（讀不到就不顯示，不影響列表）
+      api.ticketMarks(list.map((t) => t.key)).then(setMarks).catch(() => setMarks({}));
       // 重新整理後，已經不在清單上的單取消勾選
       setSelected((prev) => new Set([...prev].filter((key) => list.some((t) => t.key === key))));
     } catch (e) {
@@ -183,6 +186,11 @@ function TicketList({ onConfirmed }: { onConfirmed(): void }) {
                 <td className="key">
                   <a href={t.url} onClick={(e) => { e.preventDefault(); e.stopPropagation(); api.openExternal(t.url); }}>{t.key}</a>
                   <span className="tag">{t.issueType}</span>
+                  <span className="marks">
+                    {marks[t.key]?.active && <span className="mark active" title="這張單正在工作台上">工作台上</span>}
+                    {marks[t.key]?.branch && <span className="mark" title="本機已經有這張單的分支，確認後會切換過去繼續開發">有分支</span>}
+                    {marks[t.key]?.reviewed && <span className="mark" title="已經審閱過，確認後直接沿用上次的結果">已審閱</span>}
+                  </span>
                 </td>
                 <td>{t.summary}</td>
                 <td className="parent">
@@ -204,7 +212,7 @@ function TicketList({ onConfirmed }: { onConfirmed(): void }) {
       )}
 
       <footer>
-        <span className="muted">確認後，AI 會讀每張單判斷專案與商戶，產生計畫表給你確認。</span>
+        <span className="muted">確認後，AI 會審閱每張單：整理要做什麼、找出單子的問題、判斷專案與商戶，產生計畫表給你確認。</span>
         <button className="primary" disabled={selected.size === 0} onClick={confirm}>
           確認這 {selected.size} 張，產生計畫
         </button>

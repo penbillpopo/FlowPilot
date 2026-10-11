@@ -85,9 +85,12 @@ const api: FlowPilotApi = {
   retry: (id) => ipcRenderer.invoke('item:retry', id),
   openInVSCode: (id) => ipcRenderer.invoke('item:openInVSCode', id),
   retest: (id) => ipcRenderer.invoke('item:retest', id),
+  rerunAutotest: (id) => ipcRenderer.invoke('item:rerunAutotest', id),
+  ticketMarks: (keys) => ipcRenderer.invoke('tickets:marks', keys),
   test: {
     state: (id) => ipcRenderer.invoke('test:state', id),
     setEnvironment: (id, env) => ipcRenderer.invoke('test:setEnvironment', id, env),
+    closeBrowsers: () => ipcRenderer.invoke('test:closeBrowsers'),
   },
 };
 

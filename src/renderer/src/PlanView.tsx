@@ -245,38 +245,8 @@ export function PlanView({ run, tickets, onBack, onConfirmed }: Props) {
                       <button className="link" onClick={() => window.confirm('重新審閱這張單？目前的問題、你的回答和討論都會被新的結果取代。') && judge(ticket, true)}>重新審閱</button>。
                     </div>
                   )}
-                  <div className="plan-block">
-                    <div className="plan-block-title">要做什麼</div>
-                    {plan.summary?.length ? (
-                      <ul className="summary">{plan.summary.map((line, i) => <li key={i}>{line}</li>)}</ul>
-                    ) : (
-                      <p className="muted small">AI 沒有整理出重點，請點單號看原文。</p>
-                    )}
-                  </div>
-
-                  {judgements[ticket.key] && <BriefBlocks review={judgements[ticket.key]} />}
-
-                  <div className="plan-block">
-                    <div className="plan-block-title">參考資料（{plan.resources?.length ?? 0}）</div>
-                    {plan.resources?.length ? (
-                      <ul className="resources">
-                        {plan.resources.map((r) => (
-                          <li key={r.url}>
-                            <span className={`res-kind res-${r.kind}`}>{RESOURCE_LABEL[r.kind]}</span>
-                            <a href={r.url} onClick={(e) => { e.preventDefault(); api.openExternal(r.url); }}>{r.title}</a>
-                            <span className="muted small">（{r.from}）</span>
-                          </li>
-                        ))}
-                      </ul>
-                    ) : (
-                      <p className="muted small">單上沒有附 Figma、文件或連結。</p>
-                    )}
-                  </div>
-
-                  {judgements[ticket.key] && (
-                    <ReviewIssues review={judgements[ticket.key]} onChange={(r) => setJudgements((prev) => ({ ...prev, [ticket.key]: r }))} />
-                  )}
-
+                  {/* 最重要的「做在哪裡」放最上面，先確認這個再看細節 */}
+                  <div className="plan-project">
                   <div className="plan-block-title">專案判斷</div>
                   {plan.reason && <p className="reason">{plan.reason}</p>}
 
@@ -392,6 +362,40 @@ export function PlanView({ run, tickets, onBack, onConfirmed }: Props) {
                   {continuing(ticket.key) && (
                     <p className="reason">分支已存在：會切換過去，請 AI 先看過現有的差異再接著開發。資料夾有未提交的修改、或本機與遠端分歧時，會先問你。</p>
                   )}
+                  </div>
+
+                  <div className="plan-block">
+                    <div className="plan-block-title">要做什麼</div>
+                    {plan.summary?.length ? (
+                      <ul className="summary">{plan.summary.map((line, i) => <li key={i}>{line}</li>)}</ul>
+                    ) : (
+                      <p className="muted small">AI 沒有整理出重點，請點單號看原文。</p>
+                    )}
+                  </div>
+
+                  {judgements[ticket.key] && <BriefBlocks review={judgements[ticket.key]} />}
+
+                  <div className="plan-block">
+                    <div className="plan-block-title">參考資料（{plan.resources?.length ?? 0}）</div>
+                    {plan.resources?.length ? (
+                      <ul className="resources">
+                        {plan.resources.map((r) => (
+                          <li key={r.url}>
+                            <span className={`res-kind res-${r.kind}`}>{RESOURCE_LABEL[r.kind]}</span>
+                            <a href={r.url} onClick={(e) => { e.preventDefault(); api.openExternal(r.url); }}>{r.title}</a>
+                            <span className="muted small">（{r.from}）</span>
+                          </li>
+                        ))}
+                      </ul>
+                    ) : (
+                      <p className="muted small">單上沒有附 Figma、文件或連結。</p>
+                    )}
+                  </div>
+
+                  {judgements[ticket.key] && (
+                    <ReviewIssues review={judgements[ticket.key]} onChange={(r) => setJudgements((prev) => ({ ...prev, [ticket.key]: r }))} />
+                  )}
+
                 </>
               )}
             </section>

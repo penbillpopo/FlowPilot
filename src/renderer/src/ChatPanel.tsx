@@ -373,11 +373,22 @@ export function ChatPanel({ item }: { item: WorkItem }) {
 
   const running = item.status === 'running';
 
-  function finish() {
-    const ok = window.confirm(`完成 ${item.ticketKey}，讓出 ${item.folder} 給下一張？\n\n資料夾要乾淨（改動都提交或捨棄了）；environment.ts（瀏覽器測試切 SIT／UAT 用的）會順便還原。`);
+  async function finish() {
+    // 還有提交沒推送就先提醒（照平常的流程，推送後才算完成）
+    let unpushed = 0;
+    try {
+      const git = await api.git.state(item.id);
+      unpushed = git.hasRemote ? (git.unpushed ?? 0) : git.ahead;
+    } catch {}
+    const warning = unpushed > 0 ? `\n\n⚠️ 還有 ${unpushed} 個提交沒推送。完成之後還是可以推送，但要記得。` : '';
+    const ok = window.confirm(
+      `完成 ${item.ticketKey}，讓出 ${item.folder} 給下一張？${warning}\n\n資料夾要乾淨（改動都提交或捨棄了）；environment.ts（瀏覽器測試切 SIT／UAT 用的）會順便還原，本機網站也會停掉。`,
+    );
     if (ok) act(() => api.finish(item.id, true));
   }
   const active = !['committed', 'removed'].includes(item.status);
+  // 自動測試沒測成或看不出結果時，處理好之後可以再跑一次
+  const canRerun = active && !!item.threadId && item.stage === 'manual' && ['review', 'waiting'].includes(item.status) && !item.pending && !!item.autotestResult && item.autotestResult.kind !== 'passed';
   const canRetest = active && !!item.threadId && item.stage === 'manual' && ['review', 'waiting'].includes(item.status) && !item.pending;
   // AI 在等你回話（問問題、被中斷、或有事要你處理）：輸入框加醒目外框
   const awaitingYou = item.status === 'waiting' && (!item.pending || item.pending.kind === 'userInput');
@@ -396,6 +407,18 @@ export function ChatPanel({ item }: { item: WorkItem }) {
         </div>
         <div className="row head-actions">
           {running && <button disabled={busy} onClick={() => act(() => api.interrupt(item.id))}>中斷這一輪</button>}
+          {canRerun && (
+            <button
+              disabled={busy}
+              title="用無頭瀏覽器再跑一次自動測試（例如處理好帳號、開了 VPN 之後）"
+              onClick={() => act(async () => {
+                stick.current = true;
+                await api.rerunAutotest(item.id);
+              })}
+            >
+              重跑自動測試
+            </button>
+          )}
           {canRetest && (
             <button
               disabled={busy}
@@ -542,7 +565,6 @@ export function ChatPanel({ item }: { item: WorkItem }) {
             }}
           />
           <div className="row composer-actions">
-            {running && <button disabled={busy} onClick={() => act(() => api.interrupt(item.id))}>中斷</button>}
             <button className="primary" disabled={busy || (!text.trim() && images.length === 0)} onClick={send}>
               送出
             </button>

@@ -7,7 +7,7 @@ import { join } from 'node:path';
 import type { Env, JiraTicket, Judgement, PlanOptions, Review, ReviewIssue, TicketPlan, TicketSnapshot } from '../shared/types';
 import { CodexRpc } from './codex/rpc';
 import { listSkills, runStructured } from './codex/structured';
-import { checkExisting } from './git';
+import { checkExisting, localBranchExists } from './git';
 import { buildJql, getIssueContext, loadCredentials, searchTickets, statusIdsByName } from './jira';
 import { applyDiscussion, buildCodeCheckPrompt, buildDiscussionPrompt, buildReviewPrompt, discussionSchema, REVIEW_INSTRUCTIONS, reviewSchema, sanitizeReview } from './planner/review';
 import { deriveBranches, planProblem } from './planner/rules';
@@ -186,7 +186,7 @@ async function requestRequirementUpdate(itemId: number): Promise<void> {
   const fresh: TicketSnapshot[] = [];
   for (const key of keys) fresh.push((await getIssueContext(credentials, key)).snapshot);
   const changes = saved?.review.snapshot?.length ? diffSnapshots(saved.review.snapshot, fresh, item.ticketKey) : null;
-  await runner.reply(itemId, updateMessage(changes, fresh));
+  await runner.reply(itemId, updateMessage(changes, fresh), [], { asFix: false, activity: '請 AI 比對需求變更' });
   if (saved) {
     store.saveReview({ ...saved.review, snapshot: fresh }, saved.threadId);
     // 有變更時在背景更新審閱的問題清單（變更可能回答了之前沒確認的問題）
@@ -218,6 +218,49 @@ async function discussReview(ticketKey: string, text: string): Promise<Review> {
   const review = applyDiscussion(saved.review, text.trim(), result);
   store.saveReview(review, threadId);
   return review;
+}
+
+/**
+ * 關掉瀏覽器測試開出來的瀏覽器：只找 FlowPilot 提供的瀏覽器工具（輸出位置在 FlowPilot 資料夾）底下開的，
+ * 你自己開的 Chrome 不會被關。回傳關掉幾個。
+ */
+function closeTestBrowsers(): number {
+  const rows = execFileSync('ps', ['-axo', 'pid=,ppid=,command='], { encoding: 'utf8' })
+    .split('\n')
+    .map((line) => line.trim().match(/^(\d+)\s+(\d+)\s+(.*)$/))
+    .filter((m): m is RegExpMatchArray => !!m)
+    .map((m) => ({ pid: Number(m[1]), ppid: Number(m[2]), command: m[3] }));
+  const tools = new Set(rows.filter((r) => r.command.includes(join(dataDir, '瀏覽器測試紀錄'))).map((r) => r.pid));
+  const browsers = rows.filter((r) => tools.has(r.ppid) && /chrom/i.test(r.command));
+  for (const b of browsers) {
+    try {
+      process.kill(b.pid);
+    } catch {}
+  }
+  return browsers.length;
+}
+
+/** 單列表上每張單的標記：審閱過了沒、在工作台上、分支已經存在 */
+async function ticketMarks(keys: string[]): Promise<Record<string, { reviewed: boolean; active: boolean; branch: boolean }>> {
+  const settings = loadSettings(settingsFile);
+  const items = store.listWorkItems().filter((i) => !['failed', 'stopped', 'removed', 'committed'].includes(i.status));
+  const marks: Record<string, { reviewed: boolean; active: boolean; branch: boolean }> = {};
+  for (const key of keys) {
+    const review = store.getReview(key)?.review;
+    let branch = false;
+    if (review) {
+      // 用審閱判斷的專案推出分支名稱，看本機資料夾有沒有
+      const plan = { ticket: { key, summary: '', status: '', issueType: '', updated: '', url: '', parent: null }, entries: review.entries, prTitle: review.prTitle, reason: '' };
+      const names = deriveBranches(plan, settings).filter((b) => b.role !== 'target');
+      for (const b of names) {
+        for (const f of settings.folders.filter((x) => x.project === b.project)) {
+          if (await localBranchExists(f.path, b.branch).catch(() => false)) branch = true;
+        }
+      }
+    }
+    marks[key] = { reviewed: !!review, active: items.some((i) => i.ticketKey === key), branch };
+  }
+  return marks;
 }
 
 function validatePlans(plans: TicketPlan[]) {
@@ -374,6 +417,9 @@ function registerIpc() {
   });
   ipcMain.handle('item:retry', (_event, id: number) => runner.retry(id));
   ipcMain.handle('item:retest', (_event, id: number) => runner.retest(id));
+  ipcMain.handle('item:rerunAutotest', (_event, id: number) => runner.rerunAutotest(id));
+  ipcMain.handle('test:closeBrowsers', () => closeTestBrowsers());
+  ipcMain.handle('tickets:marks', (_event, keys: string[]) => ticketMarks(keys));
   ipcMain.handle('test:state', (_event, id: number) => runner.testState(id));
   ipcMain.handle('test:setEnvironment', (_event, id: number, env: Env) => {
     if (env !== 'sit' && env !== 'uat') throw new Error('環境只能是 SIT 或 UAT');
@@ -395,6 +441,7 @@ app.whenReady().then(() => {
     notify,
     paused,
     dataDir,
+    stopSite: (name) => folderTerminals.interrupt(name),
     ensureSite: (name) => {
       const settings = loadSettings(settingsFile);
       const folder = settings.folders.find((f) => f.name === name);

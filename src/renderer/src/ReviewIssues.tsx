@@ -82,6 +82,19 @@ export function ReviewIssues({ review, onChange }: { review: Review; onChange(re
     }
   }
 
+  // 還沒處理、而且 AI 有給建議的問題，可以一次全部照建議
+  const openWithSuggestion = review.issues.filter((i) => i.status === 'open' && i.suggestion);
+  async function assumeAll() {
+    setBusy(true);
+    try {
+      let latest = review;
+      for (const issue of openWithSuggestion) latest = await api.updateIssue(review.ticketKey, issue.id, { status: 'assumed' });
+      onChange(latest);
+    } finally {
+      setBusy(false);
+    }
+  }
+
   return (
     <div className="plan-block">
       <div className="plan-block-title">
@@ -89,6 +102,11 @@ export function ReviewIssues({ review, onChange }: { review: Review; onChange(re
         <span className="muted small review-meta">
           {review.level}單 · {review.codeChecked ? '有大略看程式碼' : '只看單的內容'} · 問題不會擋住開發，沒處理的會告訴開發的 AI 先跳過或照建議做
         </span>
+        {openWithSuggestion.length > 1 && (
+          <button className="link" disabled={busy} onClick={assumeAll}>
+            全部照 AI 建議（{openWithSuggestion.length}）
+          </button>
+        )}
       </div>
       {review.issues.length === 0 && <p className="muted small">AI 沒有發現明顯的問題。</p>}
       {review.issues.map((issue) => (

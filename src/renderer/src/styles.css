@@ -385,3 +385,23 @@ button.danger-solid { background: var(--blocked); border-color: var(--blocked); 
 .review-incomplete strong { color: var(--blocked); }
 .stages li.partial { color: var(--warn); background: color-mix(in srgb, var(--warn) 15%, transparent); }
 .stages li.failed { color: var(--blocked); background: color-mix(in srgb, var(--blocked) 15%, transparent); font-weight: 600; }
+.git-files li.noted .file-name { opacity: 0.55; }
+button.push-button { align-self: flex-start; font-size: 12px; padding: 4px 10px; }
+.empty-state button { margin-top: 8px; }
+.finished-note p { margin: 0; }
+/* 計畫表：做在哪裡（專案、分支）放最上面 */
+.plan-project { display: flex; flex-direction: column; gap: 10px; padding-bottom: 12px; border-bottom: 1px solid var(--line); }
+/* 頁首右邊的按鈕不要被擠成直排 */
+header .actions { flex-shrink: 0; }
+header .actions button { white-space: nowrap; }
+/* 對話裡太長的指令：在欄位內截斷並顯示省略號 */
+.fold-head { min-width: 0; overflow: hidden; }
+.fold-head > span { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.fold-head code { max-width: 100%; }
+/* 單列表：已審閱、有分支、工作台上 */
+.marks { display: flex; gap: 4px; flex-wrap: wrap; margin-top: 2px; }
+.mark { font-size: 11px; padding: 0 6px; border-radius: 8px; background: var(--hover); color: var(--muted); white-space: nowrap; }
+.mark.active { background: var(--selected); color: var(--accent); font-weight: 600; }
+/* 標題列的按鈕：空間不夠時換行，不擠出中間欄 */
+.head-actions { flex-shrink: 1; flex-wrap: wrap; min-width: 0; }
+.center { min-width: 0; overflow-x: hidden; }

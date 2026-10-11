@@ -75,6 +75,13 @@ export function TestPanel({ item }: { item: WorkItem }) {
       {state && (!state.account || !state.account.hasPassword) && (env === 'sit' || env === 'uat') && (
         <p className="muted small">請在 {state.accountFile} 補上{state.account ? '密碼（passwordSource）' : ''}。</p>
       )}
+      <button
+        className="link small close-browsers"
+        title="關掉瀏覽器測試開出來的瀏覽器視窗（不會關到你自己的 Chrome）"
+        onClick={() => api.test.closeBrowsers().then((n) => setError(n ? null : '目前沒有測試開出來的瀏覽器')).catch((e) => setError(errorText(e)))}
+      >
+        關掉測試開的瀏覽器
+      </button>
       {error && <div className="error small">{error}</div>}
     </div>
   );
@@ -156,13 +163,13 @@ export function FolderTerminalPanel({ item, onSiteUrl }: { item: WorkItem; onSit
   );
 }
 
-function FileRow({ file, actions, onOpen, open }: { file: GitFile; actions: React.ReactNode; onOpen(): void; open: boolean }) {
+function FileRow({ file, actions, onOpen, open, note }: { file: GitFile; actions: React.ReactNode; onOpen(): void; open: boolean; note?: string }) {
   const name = file.path.split('/').pop();
   const dir = file.path.slice(0, file.path.length - (name?.length ?? 0));
   return (
-    <li className={open ? 'open' : ''}>
+    <li className={`${open ? 'open' : ''} ${note ? 'noted' : ''}`} title={note}>
       <button className="file-name" onClick={onOpen} title={file.path}>
-        <span className={`code c-${file.code}`}>{file.code}</span> {name} <span className="muted small">{dir}</span>
+        <span className={`code c-${file.code}`}>{file.code}</span> {name} <span className="muted small">{note ? '提交前檢查改的' : dir}</span>
       </button>
       <span className="file-actions">{actions}</span>
     </li>
@@ -180,6 +187,15 @@ export function GitPanel({ item, onCount }: { item: WorkItem; onCount?(changes: 
   const [notice, setNotice] = useState<string | null>(null);
   /** 上次提交時，被專案的提交前檢查順手改到的無關檔案 */
   const [hookChanged, setHookChanged] = useState<string[]>([]);
+  /** 提交中（專案的提交前檢查可能要等幾十秒） */
+  const [committing, setCommitting] = useState(false);
+
+  // 「已提交」「已捨棄」這類回饋幾秒後自動消失，不會一直殘留
+  useEffect(() => {
+    if (!notice) return;
+    const timer = setTimeout(() => setNotice(null), 4000);
+    return () => clearTimeout(timer);
+  }, [notice]);
 
   async function refresh() {
     if (!item.folder) return;
@@ -249,6 +265,7 @@ export function GitPanel({ item, onCount }: { item: WorkItem; onCount?(changes: 
   // 還留在資料夾裡的（你自己捨棄或提交了就不再提示）
   const dirtyPaths = new Set([...state.staged, ...state.unstaged].map((f) => f.path));
   const pendingHook = hookChanged.filter((p) => dirtyPaths.has(p));
+  const ownChanges = state.unstaged.filter((f) => !pendingHook.includes(f.path));
   const canPush = state.hasRemote ? (state.unpushed ?? 0) > 0 : state.ahead > 0;
   const diffBlock = (path: string, staged: boolean) => diff?.path === path && diff.staged === staged && <li className="diff-row"><DiffView diff={diff.text} /></li>;
 
@@ -259,6 +276,27 @@ export function GitPanel({ item, onCount }: { item: WorkItem; onCount?(changes: 
         <code className="small">{state.branch || '（不在分支上）'}</code>
       </div>
       {!onBranch && <p className="warn">資料夾目前在 {state.branch}，不是這張單的 {item.branch}。</p>}
+      {notice && <div className="notice-ok">{notice}</div>}
+      {error && <div className="error">{error}</div>}
+      {pendingHook.length > 0 && (
+        <div className="hook-notice warn small">
+          提交前的檢查（專案設定的 lint 等）順手改了 {pendingHook.length} 個跟這次無關的檔案，它們沒有被提交，還留在資料夾裡：
+          <ul>{pendingHook.slice(0, 5).map((p) => <li key={p} title={p}><code>{p.split('/').pop()}</code></li>)}{pendingHook.length > 5 && <li>…等 {pendingHook.length} 個</li>}</ul>
+          <div className="row">
+            <button
+              className="danger"
+              disabled={busy}
+              onClick={() => window.confirm(`捨棄這 ${pendingHook.length} 個檔案的修改？只會還原這些被檢查改到的檔案。`) && act(async () => {
+                await api.git.discard(item.id, pendingHook);
+                setHookChanged([]);
+              }, '已捨棄')}
+            >
+              全部捨棄
+            </button>
+            <button disabled={busy} onClick={() => setHookChanged([])}>先不管</button>
+          </div>
+        </div>
+      )}
 
       <div className="git-section">
         <div className="git-section-head">
@@ -276,11 +314,12 @@ export function GitPanel({ item, onCount }: { item: WorkItem; onCount?(changes: 
       <div className="git-section">
         <div className="git-section-head">
           <span>變更（{state.unstaged.length}）</span>
-          {state.unstaged.length > 0 && <button className="link" disabled={busy} onClick={() => act(() => api.git.stage(item.id, state.unstaged.map((f) => f.path)))}>全部暫存</button>}
+          {ownChanges.length > 0 && <button className="link" disabled={busy} onClick={() => act(() => api.git.stage(item.id, ownChanges.map((f) => f.path)))} title={pendingHook.length ? '不含提交前檢查改到的檔案' : undefined}>全部暫存</button>}
         </div>
         <ul className="git-files">
           {state.unstaged.map((file) => (
             <FileRowWithDiff key={`u-${file.path}`} file={file} staged={false} diffBlock={diffBlock} open={diff?.path === file.path && !diff.staged} onOpen={() => showDiff(file.path, false)}
+              note={pendingHook.includes(file.path) ? `提交前的檢查改到的，跟這次無關：${file.path}` : undefined}
               actions={
                 <>
                   <button
@@ -325,18 +364,25 @@ export function GitPanel({ item, onCount }: { item: WorkItem; onCount?(changes: 
             className="primary"
             disabled={busy || !onBranch || state.staged.length === 0 || !message.trim()}
             onClick={() => act(async () => {
-              const result = await api.git.commit(item.id, message, who ?? undefined);
-              setWho(null); // 下次提交回到資料夾預設
-              setHookChanged(result.hookChanged);
+              setCommitting(true);
+              try {
+                const result = await api.git.commit(item.id, message, who ?? undefined);
+                setWho(null); // 下次提交回到資料夾預設
+                setHookChanged(result.hookChanged);
+              } finally {
+                setCommitting(false);
+              }
             }, '已提交')}
           >
-            {state.staged.length === 0 ? '先把要提交的檔案暫存（＋）' : `提交 ${state.staged.length} 個檔案`}
+            {committing ? '提交中…（專案的提交前檢查可能要等幾十秒）' : state.staged.length === 0 ? '先把要提交的檔案暫存（＋）' : `提交 ${state.staged.length} 個檔案`}
           </button>
         </div>
       )}
       {state.staged.length === 0 && state.unstaged.length === 0 && <p className="muted small">沒有未提交的改動。</p>}
-      {canPush && (
+      {/* AI 還在改的時候不放推送，避免誤按 */}
+      {canPush && !['running', 'preparing'].includes(item.status) && (
         <button
+          className="push-button"
           disabled={busy || !onBranch}
           onClick={() => {
             const what = state.hasRemote ? `推送 ${state.unpushed} 個提交到遠端的 ${state.branch}？` : `遠端還沒有 ${state.branch}，要建立並推送 ${state.ahead} 個提交嗎？`;
@@ -346,32 +392,11 @@ export function GitPanel({ item, onCount }: { item: WorkItem; onCount?(changes: 
           {state.hasRemote ? `推送 ${state.unpushed} 個提交` : `推送（建立遠端分支，${state.ahead} 個提交）`}
         </button>
       )}
-      {pendingHook.length > 0 && (
-        <div className="hook-notice warn small">
-          提交前的檢查（專案設定的 lint 等）順手改了 {pendingHook.length} 個跟這次無關的檔案，它們沒有被提交，還留在資料夾裡：
-          <ul>{pendingHook.slice(0, 5).map((p) => <li key={p}><code>{p}</code></li>)}{pendingHook.length > 5 && <li>…等 {pendingHook.length} 個</li>}</ul>
-          <div className="row">
-            <button
-              className="danger"
-              disabled={busy}
-              onClick={() => window.confirm(`捨棄這 ${pendingHook.length} 個檔案的修改？只會還原這些被檢查改到的檔案。`) && act(async () => {
-                await api.git.discard(item.id, pendingHook);
-                setHookChanged([]);
-              }, '已捨棄')}
-            >
-              全部捨棄
-            </button>
-            <button disabled={busy} onClick={() => setHookChanged([])}>先不管</button>
-          </div>
-        </div>
-      )}
-      {notice && <div className="notice-ok">{notice}</div>}
-      {error && <div className="error">{error}</div>}
     </div>
   );
 }
 
-function FileRowWithDiff({ file, staged, diffBlock, ...rest }: { file: GitFile; staged: boolean; diffBlock: (path: string, staged: boolean) => React.ReactNode; actions: React.ReactNode; onOpen(): void; open: boolean }) {
+function FileRowWithDiff({ file, staged, diffBlock, ...rest }: { file: GitFile; staged: boolean; diffBlock: (path: string, staged: boolean) => React.ReactNode; actions: React.ReactNode; onOpen(): void; open: boolean; note?: string }) {
   return (
     <>
       <FileRow file={file} {...rest} />

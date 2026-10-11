@@ -1,4 +1,5 @@
 // 流程階段：開發 → 自動測試（無頭）→ 等你測試 → 修改／重測（有頭）。用假的 Codex，不會啟動真正的 AI。
+import { execFileSync } from 'node:child_process';
 import { mkdirSync, mkdtempSync, readFileSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -59,11 +60,13 @@ function setup({ account = true } = {}) {
   store.updateWorkItem(item.id, { lane: 'development', status: 'running', stage: 'develop', folder: 'PlatformAdmin', threadId: 'th' });
   const sites: string[] = [];
   const reached: string[] = [];
+  const stopped: string[] = [];
   let backendUp = true;
   const runner = new Runner({
     dataDir: join(root, 'data'),
     ensureSite: async (name) => (sites.push(name), 'http://localhost:4300/'),
     canReach: async (url) => (reached.push(url), backendUp),
+    stopSite: (name) => stopped.push(name),
     store, settings: () => settings, codex, vscode: {} as VSCode,
     notify: () => {}, onChange: () => {}, onStream: () => {}, log: () => {},
   });
@@ -74,7 +77,7 @@ function setup({ account = true } = {}) {
     await new Promise((r) => setTimeout(r, 20));
   };
   const lastTurn = () => requests.filter((r) => r.method === 'turn/start').at(-1)!.params;
-  return { root, folder, store, runner, id: item.id, requests, sites, reached, setBackendUp: (v: boolean) => (backendUp = v), complete, lastTurn, get: () => store.getWorkItem(item.id)! };
+  return { root, folder, store, runner, id: item.id, requests, sites, reached, stopped, setBackendUp: (v: boolean) => (backendUp = v), complete, lastTurn, get: () => store.getWorkItem(item.id)! };
 }
 
 describe('流程階段', () => {
@@ -183,5 +186,34 @@ describe('流程階段', () => {
     expect(t.get()).toMatchObject({ stage: 'manual', status: 'waiting' });
     expect(t.get().activity).toContain('VPN 有開嗎');
     expect(t.sites).toEqual([]);
+  });
+
+  it('自動測試沒測成，處理好之後可以重跑（無頭），AI 執行中不行', async () => {
+    const t = setup();
+    t.store.updateWorkItem(t.id, { stage: 'manual', status: 'review', autotestResult: { kind: 'failed', reason: '登入失敗' } });
+    await t.runner.rerunAutotest(t.id);
+    expect(t.get()).toMatchObject({ stage: 'autotest', status: 'running' });
+    expect(t.lastTurn().input[1].text).toContain('flowpilot_browser_headless');
+    await expect(t.runner.rerunAutotest(t.id)).rejects.toThrow('AI 還在執行');
+  });
+
+  it('更新需求不算要求修改：做完不會寫「改好了」', async () => {
+    const t = setup();
+    t.store.updateWorkItem(t.id, { stage: 'manual', status: 'review' });
+    await t.runner.reply(t.id, '## 更新需求…', [], { asFix: false, activity: '請 AI 比對需求變更' });
+    expect(t.get()).toMatchObject({ stage: 'manual', activity: '請 AI 比對需求變更' });
+    await t.complete('這個需求沒有變更');
+    expect(t.get().activity).toBe('需求比對完了，等你測試');
+  });
+
+  it('完成這張單時停掉本機網站', async () => {
+    const t = setup();
+    execFileSync('git', ['init', '-q'], { cwd: t.folder });
+    execFileSync('git', ['-c', 'user.name=t', '-c', 'user.email=t@t', 'add', '.'], { cwd: t.folder });
+    execFileSync('git', ['-c', 'user.name=t', '-c', 'user.email=t@t', 'commit', '-qm', 'init'], { cwd: t.folder });
+    t.store.updateWorkItem(t.id, { stage: 'manual', status: 'review' });
+    await t.runner.finish(t.id, true);
+    expect(t.stopped).toEqual(['PlatformAdmin']);
+    expect(t.get().status).toBe('committed');
   });
 });

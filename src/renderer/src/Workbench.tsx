@@ -62,7 +62,7 @@ function RightPanels({ item }: { item: WorkItem }) {
   );
 }
 
-export function Workbench() {
+export function Workbench({ onGoTickets }: { onGoTickets(): void }) {
   const [board, setBoard] = useState<BoardState | null>(null);
   const [selected, setSelected] = useState<number | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -159,17 +159,28 @@ export function Workbench() {
           <ChatPanel key={current.id} item={current} />
         ) : (
           <div className="empty-state">
-            <p>還沒有正在處理的單。到上方的「單列表」勾選單、確認計畫後就會出現在這裡。</p>
+            <p>還沒有正在處理的單。到「單列表」勾選單、確認計畫後就會出現在這裡。</p>
+            <button className="primary" onClick={onGoTickets}>到單列表</button>
           </div>
         )}
       </main>
 
       <aside className="right">
-        {current?.folder ? (
+        {current && FINISHED.includes(current.status) ? (
+          // 已結束的單：資料夾可能已經是別張單在用，這裡不再提供會動到資料夾的操作
+          <div className="panel finished-note">
+            <strong>這張單已結束</strong>
+            <p className="muted small">
+              {current.status === 'committed' ? '已完成，' : ''}資料夾 {current.folder ?? '—'} 已經讓出，可能正在做別張單，所以這裡不再顯示環境切換、終端機和 Git 操作。
+            </p>
+            <p className="small">分支：<code>{current.branch}</code></p>
+            {current.activity && <p className="muted small">{current.activity}</p>}
+          </div>
+        ) : current?.folder ? (
           <RightPanels key={current.id} item={current} />
-        ) : (
+        ) : current ? (
           <p className="muted small">這張單分配到資料夾之後，這裡會顯示終端機與 Git 改動。</p>
-        )}
+        ) : null}
       </aside>
     </div>
     </SideContext.Provider>

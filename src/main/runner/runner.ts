@@ -52,6 +52,8 @@ export interface RunnerDeps {
   dataDir: string;
   /** 確保資料夾的本機網站有在跑（沒在跑就在資料夾終端機啟動），回傳網址 */
   ensureSite: (folder: string) => Promise<string>;
+  /** 停掉資料夾終端機裡的本機網站（完成這張單時） */
+  stopSite?: (folder: string) => void;
   /** 連不連得到這個網址（瀏覽器測試前先確認後端，沒開 VPN 時馬上知道）；不給就用真的連線 */
   canReach?: (url: string) => Promise<boolean>;
 }
@@ -99,7 +101,7 @@ const STAGE_DONE: Partial<Record<WorkStage, string>> = {
   autotest: '自動測試完成，等你手動測試',
   fix: '改好了，等你測試',
   retest: '重測完成，等你確認',
-  manual: '等你測試',
+  manual: '需求比對完了，等你測試',
 };
 
 /** 測試做完後給人看的一句話 */
@@ -568,11 +570,21 @@ export class Runner {
 
   /** 開瀏覽器測給我看（你按了才做） */
   async retest(id: number) {
+    this.assertIdle(id, '重測');
+    await this.startTest(id, true);
+  }
+
+  /** 重跑自動測試（無頭）：上次沒測成（例如登入失敗、沒開 VPN）處理好之後用 */
+  async rerunAutotest(id: number) {
+    this.assertIdle(id, '重跑自動測試');
+    await this.startTest(id, false);
+  }
+
+  private assertIdle(id: number, what: string) {
     const item = this.deps.store.getWorkItem(id)!;
     if (!item.threadId) throw new Error('這張單還沒有 AI 對話');
-    if (this.turns.has(item.threadId) || item.status === 'running' || item.status === 'preparing') throw new Error('AI 還在執行，請等它停下來（或中斷）再重測');
-    if (item.pending) throw new Error('AI 有事在等你回答，先處理再重測');
-    await this.startTest(id, true);
+    if (this.turns.has(item.threadId) || item.status === 'running' || item.status === 'preparing') throw new Error(`AI 還在執行，請等它停下來（或中斷）再${what}`);
+    if (item.pending) throw new Error(`AI 有事在等你回答，先處理再${what}`);
   }
 
   /** 工作台右邊「測試」區塊：目前的環境、會用哪個帳號（不含密碼） */
@@ -756,7 +768,8 @@ export class Runner {
     this.update(id, { status: 'running', activity: accept ? '已同意，繼續執行' : '已拒絕，繼續執行', pending: null });
   }
 
-  async reply(id: number, text: string, images: string[] = []) {
+  /** asFix 為 false 時不當成「要求修改」（例如更新需求），做完說明不會寫「改好了」 */
+  async reply(id: number, text: string, images: string[] = [], options: { asFix?: boolean; activity?: string } = {}) {
     const { codex } = this.deps;
     const item = this.deps.store.getWorkItem(id)!;
     if (!item.threadId) throw new Error('這張單還沒有 AI 對話');
@@ -781,8 +794,8 @@ export class Runner {
       this.turns.set(item.threadId, turn.id);
     }
     // 等你測試時你在對話裡說的話，當成要求修改；改完回到等你測試（不會再自動測試，要重測按「開瀏覽器測給我看」）
-    const stage = !turnId && item.stage === 'manual' ? { stage: 'fix' as const } : {};
-    this.update(id, { status: 'running', activity: '已送出，繼續執行', pending: null, ...stage });
+    const stage = !turnId && item.stage === 'manual' && options.asFix !== false ? { stage: 'fix' as const } : {};
+    this.update(id, { status: 'running', activity: options.activity ?? '已送出，繼續執行', pending: null, ...stage });
   }
 
   /** 中斷 AI 這一輪：單不停止，之後可以再補充指示讓它繼續 */
@@ -822,6 +835,8 @@ export class Runner {
       }
     }
     const sha = item.folder ? (await runGit(this.folderPath(item.folder), ['rev-parse', '--short', 'HEAD'])).stdout.trim() : null;
+    // 讓出資料夾時順便停掉本機網站（下一張單會自己重新啟動）
+    if (item.folder) this.deps.stopSite?.(item.folder);
     this.update(id, {
       status: 'committed',
       lane: 'done',

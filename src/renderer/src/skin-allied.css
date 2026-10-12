@@ -3,7 +3,7 @@
  * 只在 <html data-skin="allied"> 時生效；內容區（對話、驗收表、改動）維持深色玻璃底＋清楚的字，風格放在外框與控制項。
  */
 
-:root[data-skin='allied'] {
+:root[data-skin] {
   --bg: #06101c;
   --fg: #d8ecff;
   --muted: #7d9ab6;
@@ -29,19 +29,48 @@
   --glass: linear-gradient(180deg, rgba(14, 34, 56, 0.96), rgba(6, 16, 28, 0.96));
   --glow: 0 0 6px rgba(70, 200, 255, 0.55), 0 0 18px rgba(70, 200, 255, 0.18);
   --rivet: radial-gradient(circle at 35% 35%, #f2f7fb 0 18%, #8ea2b7 30%, #34465b 62%, transparent 66%);
+  /* 陣營色（蘇聯在 skin-soviet 換一組） */
+  --fx: #46c8ff;
+  --fx-rgb: 70, 200, 255;
+  --fx-hi: #7fe9ff;
+  --fx-pale: #bff0ff;
+  --fx-mid: #2a9be0;
+  --fx-deep: #0b4f8a;
+  --fx-line: #23415f;
+  --fx-line-hi: #2a5580;
+  --fx-line-dark: #12283f;
+  --fx-well: #030a12;
+  --fx-dim: #5f9ccc;
+  --fx-tag: #0b2a48;
+  --knob-in: #0b3a63;
+  --knob-out: #04182b;
+  --fx-chip: #0c1c2e;
+  --fx-text: #e9f6ff;
+  --rim: #8ea3b9;
+  --tab-btn: linear-gradient(180deg, #2d6fae 0%, #123a66 48%, #0a2645 52%, #1b5590 100%);
+  --tab-btn-hover: linear-gradient(180deg, #3d87cc 0%, #18497e 48%, #0d2f55 52%, #2366a8 100%);
+  --btn: linear-gradient(180deg, #34506e 0%, #1a2e45 50%, #12233a 51%, #213a57 100%);
+  --btn-hover: linear-gradient(180deg, #3f6489 0%, #20395a 50%, #172c48 51%, #29496d 100%);
+  --card: linear-gradient(180deg, rgba(30, 60, 95, 0.55), rgba(8, 20, 34, 0.75));
+  --card-hover: linear-gradient(180deg, rgba(45, 85, 130, 0.6), rgba(10, 26, 44, 0.8));
+  --head-bar: linear-gradient(180deg, rgba(40, 80, 125, 0.55), rgba(10, 24, 40, 0.6));
+  --bubble: linear-gradient(180deg, rgba(31, 100, 170, 0.45), rgba(14, 50, 90, 0.55));
+  --composer-bg: linear-gradient(180deg, rgba(20, 44, 70, 0.7), rgba(6, 16, 28, 0.9));
+  --tab-off: linear-gradient(180deg, #1a3350, #0c1c2e);
+  --panel-bg: linear-gradient(180deg, rgba(16, 36, 58, 0.7), rgba(6, 15, 26, 0.7));
+  --door-stops: #1c2a3b 0%, #4c6079 18%, #7d93ab 40%, #4f647d 62%, #253447 100%;
+  --page-bg:
+    radial-gradient(1200px 600px at 70% -10%, rgba(40, 120, 200, 0.18), transparent 60%),
+    linear-gradient(rgba(70, 200, 255, 0.035) 1px, transparent 1px) 0 0 / 100% 24px,
+    linear-gradient(90deg, rgba(70, 200, 255, 0.035) 1px, transparent 1px) 0 0 / 24px 100%,
+    #050c16;
   --hud-font: 'DIN Condensed', 'Avenir Next Condensed', 'DIN Alternate', 'PingFang TC', sans-serif;
   color-scheme: dark;
 }
 
 /* ---- 底：深藍、細網格、掃描線 ---- */
-[data-skin='allied'] body {
-  background:
-    radial-gradient(1200px 600px at 70% -10%, rgba(40, 120, 200, 0.18), transparent 60%),
-    linear-gradient(rgba(70, 200, 255, 0.035) 1px, transparent 1px) 0 0 / 100% 24px,
-    linear-gradient(90deg, rgba(70, 200, 255, 0.035) 1px, transparent 1px) 0 0 / 24px 100%,
-    #050c16;
-}
-[data-skin='allied'] body::after {
+[data-skin] body { background: var(--page-bg); }
+[data-skin] body::after {
   content: '';
   position: fixed;
   inset: 0;
@@ -52,7 +81,7 @@
 }
 
 /* ---- 上方指揮列：鋼條、發光分頁、計數器、雷達 ---- */
-[data-skin='allied'] nav {
+[data-skin] nav {
   position: relative;
   align-items: center;
   gap: 6px;
@@ -61,7 +90,7 @@
   background: var(--steel);
   box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.6), inset 0 -2px 0 rgba(0, 0, 0, 0.5), 0 3px 10px rgba(0, 0, 0, 0.6);
 }
-[data-skin='allied'] nav::after {
+[data-skin] nav::after {
   /* 指揮列下緣的藍色光條 */
   content: '';
   position: absolute;
@@ -69,89 +98,129 @@
   right: 0;
   bottom: -3px;
   height: 3px;
-  background: linear-gradient(90deg, transparent, #46c8ff 20%, #bff0ff 50%, #46c8ff 80%, transparent);
+  background: linear-gradient(90deg, transparent, var(--fx) 20%, var(--fx-pale) 50%, var(--fx) 80%, transparent);
   box-shadow: var(--glow);
 }
-[data-skin='allied'] .emblem { display: flex; align-items: center; gap: 8px; margin-right: 14px; filter: drop-shadow(0 0 4px rgba(70, 200, 255, 0.6)); }
-[data-skin='allied'] .emblem-name {
+[data-skin] .emblem { display: flex; align-items: center; gap: 8px; margin-right: 14px; filter: drop-shadow(0 0 4px rgba(var(--fx-rgb), 0.6)); }
+[data-skin] .emblem-name {
   font-family: var(--hud-font);
   font-size: 20px;
   letter-spacing: 3px;
   font-weight: 700;
-  color: #eaf8ff;
-  text-shadow: 0 0 8px rgba(70, 200, 255, 0.9), 0 1px 0 #0a2a4a, 0 -1px 0 rgba(255, 255, 255, 0.4);
+  color: var(--fx-text);
+  text-shadow: 0 0 8px rgba(var(--fx-rgb), 0.9), 0 1px 0 var(--fx-tag), 0 -1px 0 rgba(255, 255, 255, 0.4);
 }
-[data-skin='allied'] nav > button {
+[data-skin] nav > button {
   font-family: var(--hud-font);
   font-size: 15px;
   letter-spacing: 2px;
-  color: #cfeaff;
+  color: var(--fx-text);
   padding: 7px 22px 5px;
   border-radius: 14px 14px 4px 4px;
   border: 1px solid #0b1a2a;
-  background: linear-gradient(180deg, #2d6fae 0%, #123a66 48%, #0a2645 52%, #1b5590 100%);
+  background: var(--tab-btn);
   box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.45), inset 0 -1px 0 rgba(0, 0, 0, 0.6), 0 1px 0 rgba(255, 255, 255, 0.4);
   text-shadow: 0 1px 0 #000;
 }
-[data-skin='allied'] nav > button:hover:not(:disabled) { background: linear-gradient(180deg, #3d87cc 0%, #18497e 48%, #0d2f55 52%, #2366a8 100%); }
-[data-skin='allied'] nav > button.on {
+[data-skin] nav > button:hover:not(:disabled) { background: var(--tab-btn-hover); }
+[data-skin] nav > button.on {
   color: #ffffff;
-  border-color: #7fe0ff;
-  background: linear-gradient(180deg, #7fe0ff 0%, #2a9be0 48%, #0f6db8 52%, #45bdf5 100%);
+  border-color: var(--fx-hi);
+  background: linear-gradient(180deg, var(--fx-hi) 0%, var(--fx-mid) 48%, var(--fx-deep) 52%, var(--fx-mid) 100%);
   box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.8), var(--glow);
   text-shadow: 0 0 6px rgba(255, 255, 255, 0.7), 0 1px 0 #003;
 }
 .nav-right { margin-left: auto; display: flex; align-items: center; gap: 12px; padding-bottom: 6px; }
-[data-skin='allied'] .nav-right { padding-bottom: 0; }
-.skin-menu .more-menu label { display: flex; gap: 6px; align-items: center; padding: 6px 10px; font-size: 13px; cursor: pointer; }
-.skin-menu .more-menu { z-index: 50; }
+[data-skin] .nav-right { padding-bottom: 0; }
+/* 外觀設定：圓形按鈕＋齒輪（兩種外觀都用） */
+.skin-menu { position: relative; }
+.skin-menu > summary { list-style: none; cursor: pointer; width: 34px; height: 34px; border-radius: 50%; display: grid; place-items: center; color: var(--muted); border: 1px solid var(--line); background: var(--bg); }
+.skin-menu > summary::-webkit-details-marker { display: none; }
+.skin-menu > summary:hover { color: var(--accent); }
+.skin-menu .gear { transition: transform 0.6s ease; }
+.skin-menu > summary:hover .gear, .skin-menu[open] .gear { transform: rotate(90deg); }
+.skin-panel { position: absolute; z-index: 50; top: calc(100% + 8px); right: 0; width: 240px; padding: 10px; border-radius: 10px; background: var(--bg); border: 1px solid var(--line); box-shadow: 0 10px 28px rgba(0, 0, 0, 0.35); display: flex; flex-direction: column; gap: 8px; }
+.skin-title { font-size: 12px; font-weight: 700; color: var(--muted); letter-spacing: 1px; }
+.skin-themes { display: grid; grid-template-columns: 1fr 1fr; gap: 6px; }
+.skin-themes button { display: flex; flex-direction: column; align-items: center; gap: 6px; padding: 8px 6px; }
+nav .skin-panel button { border: 1px solid var(--line); border-radius: 6px; color: var(--fg); font-weight: 400; }
+nav .skin-panel button.on { border-color: var(--accent); background: var(--selected); color: var(--accent); font-weight: 600; }
+.skin-swatch { width: 100%; height: 30px; border-radius: 4px; border: 1px solid var(--line); }
+.skin-swatch.standard { background: linear-gradient(135deg, #ffffff 50%, #1c1c1e 50%); }
+.skin-swatch.allied { background: linear-gradient(180deg, #a8bbcf, #2b394c 52%, var(--fx-deep)), #06101c; box-shadow: inset 0 -3px 0 var(--fx); }
+.skin-toggles { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 4px; }
+.skin-toggle { width: 100%; display: flex; align-items: center; gap: 8px; text-align: left; }
+.skin-toggle .muted { margin-left: auto; }
+.skin-toggle .led { width: 8px; height: 8px; border-radius: 50%; background: #3a4a5c; flex-shrink: 0; }
+.skin-toggle.on .led { background: #6cf0a0; box-shadow: 0 0 6px #6cf0a0; }
+
+/* 盟軍：跟雷達同一套的圓形鋼框，中間藍色玻璃、齒輪發光 */
+[data-skin] .skin-menu > summary {
+  width: 40px;
+  height: 40px;
+  border: none;
+  color: var(--fx-hi);
+  background: radial-gradient(circle, var(--knob-in) 0 38%, var(--knob-out) 62%);
+  box-shadow: inset 0 0 8px rgba(0, 0, 0, 0.9), inset 0 0 0 1px rgba(var(--fx-rgb), 0.35), 0 0 0 2px var(--fx-line-dark), 0 0 0 3px var(--rim), 0 1px 0 3px rgba(255, 255, 255, 0.35);
+  filter: drop-shadow(0 0 4px rgba(var(--fx-rgb), 0.45));
+}
+[data-skin] .skin-menu > summary:hover,
+[data-skin] .skin-menu[open] > summary { color: #ffffff; background: radial-gradient(circle, var(--fx-mid) 0 38%, var(--fx-deep) 66%); }
+[data-skin] .skin-panel {
+  border: 2px solid transparent;
+  border-radius: 8px;
+  background: var(--glass) padding-box, var(--steel) border-box;
+  box-shadow: 0 10px 28px rgba(0, 0, 0, 0.7), 0 0 14px rgba(var(--fx-rgb), 0.2);
+}
+[data-skin] .skin-title { font-family: var(--hud-font); color: var(--fx-pale); letter-spacing: 3px; text-shadow: 0 0 6px rgba(var(--fx-rgb), 0.5); }
+[data-skin] .skin-swatch { border-color: var(--fx-line); }
 
 /* 計數器：凹進去的黑色視窗、青色數字 */
-[data-skin='allied'] .counter {
+[data-skin] .counter {
   display: flex;
   flex-direction: column;
   align-items: flex-end;
   padding: 2px 10px 1px;
   border-radius: 4px;
-  background: linear-gradient(180deg, #000 0%, #04121f 100%);
-  box-shadow: inset 0 2px 6px rgba(0, 0, 0, 0.9), 0 1px 0 rgba(255, 255, 255, 0.5), 0 0 0 2px #1b2c3f;
+  background: linear-gradient(180deg, #000 0%, var(--fx-well) 100%);
+  box-shadow: inset 0 2px 6px rgba(0, 0, 0, 0.9), 0 1px 0 rgba(255, 255, 255, 0.5), 0 0 0 2px var(--fx-line-dark);
   min-width: 108px;
 }
-[data-skin='allied'] .counter-label { font-family: var(--hud-font); font-size: 9px; letter-spacing: 2px; color: #4f86b0; line-height: 1; margin-top: 2px; }
-[data-skin='allied'] .counter-digits {
+[data-skin] .counter-label { font-family: var(--hud-font); font-size: 9px; letter-spacing: 2px; color: var(--fx-dim); line-height: 1; margin-top: 2px; }
+[data-skin] .counter-digits {
   font-family: 'SF Mono', Menlo, monospace;
   font-size: 20px;
   font-weight: 700;
   line-height: 1.1;
   letter-spacing: 3px;
-  color: #7fe9ff;
-  text-shadow: 0 0 6px rgba(70, 200, 255, 0.9), 0 0 14px rgba(70, 200, 255, 0.4);
+  color: var(--fx-hi);
+  text-shadow: 0 0 6px rgba(var(--fx-rgb), 0.9), 0 0 14px rgba(var(--fx-rgb), 0.4);
 }
 
 /* 雷達：圓形螢幕、轉動的掃描、每張單一個光點 */
-[data-skin='allied'] .radar {
+[data-skin] .radar {
   position: relative;
   width: 40px;
   height: 40px;
   border-radius: 50%;
   overflow: hidden;
   background:
-    radial-gradient(circle, transparent 0 30%, rgba(70, 200, 255, 0.25) 31% 32%, transparent 33% 62%, rgba(70, 200, 255, 0.25) 63% 64%, transparent 65%),
-    linear-gradient(rgba(70, 200, 255, 0.2), rgba(70, 200, 255, 0.2)) center / 1px 100% no-repeat,
-    linear-gradient(rgba(70, 200, 255, 0.2), rgba(70, 200, 255, 0.2)) center / 100% 1px no-repeat,
-    radial-gradient(circle, #072238, #01080f);
-  box-shadow: inset 0 0 8px rgba(0, 0, 0, 0.9), 0 0 0 2px #1b2c3f, 0 0 0 3px #8ea3b9, 0 1px 0 3px rgba(255, 255, 255, 0.35);
+    radial-gradient(circle, transparent 0 30%, rgba(var(--fx-rgb), 0.25) 31% 32%, transparent 33% 62%, rgba(var(--fx-rgb), 0.25) 63% 64%, transparent 65%),
+    linear-gradient(rgba(var(--fx-rgb), 0.2), rgba(var(--fx-rgb), 0.2)) center / 1px 100% no-repeat,
+    linear-gradient(rgba(var(--fx-rgb), 0.2), rgba(var(--fx-rgb), 0.2)) center / 100% 1px no-repeat,
+    radial-gradient(circle, var(--knob-out), #000);
+  box-shadow: inset 0 0 8px rgba(0, 0, 0, 0.9), 0 0 0 2px var(--fx-line-dark), 0 0 0 3px var(--rim), 0 1px 0 3px rgba(255, 255, 255, 0.35);
 }
-[data-skin='allied'] .radar .sweep {
+[data-skin] .radar .sweep {
   position: absolute;
   inset: 0;
   border-radius: 50%;
-  background: conic-gradient(from 0deg, rgba(70, 200, 255, 0.55), rgba(70, 200, 255, 0) 70deg, transparent 360deg);
+  background: conic-gradient(from 0deg, rgba(var(--fx-rgb), 0.55), rgba(var(--fx-rgb), 0) 70deg, transparent 360deg);
   animation: fp-sweep 4s linear infinite;
   opacity: 0.35;
 }
-[data-skin='allied'] .radar.live .sweep { opacity: 1; animation-duration: 2s; }
-[data-skin='allied'] .blip {
+[data-skin] .radar.live .sweep { opacity: 1; animation-duration: 2s; }
+[data-skin] .blip {
   position: absolute;
   left: 50%;
   top: 50%;
@@ -159,51 +228,51 @@
   height: 4px;
   margin: -2px;
   border-radius: 50%;
-  background: #7fe9ff;
-  box-shadow: 0 0 4px #7fe9ff;
+  background: var(--fx-hi);
+  box-shadow: 0 0 4px var(--fx-hi);
   transform: rotate(var(--a)) translateY(calc(var(--r) * -0.18));
 }
-[data-skin='allied'] .blip.s-waiting, [data-skin='allied'] .blip.s-review { background: #ffd35a; box-shadow: 0 0 5px #ffd35a; animation: fp-blink 1s steps(2) infinite; }
-[data-skin='allied'] .blip.s-failed, [data-skin='allied'] .blip.s-blocked { background: #ff5a5a; box-shadow: 0 0 5px #ff5a5a; }
-[data-skin='allied'] .blip.s-committed { background: #6cf0a0; box-shadow: 0 0 4px #6cf0a0; }
+[data-skin] .blip.s-waiting, [data-skin] .blip.s-review { background: #ffd35a; box-shadow: 0 0 5px #ffd35a; animation: fp-blink 1s steps(2) infinite; }
+[data-skin] .blip.s-failed, [data-skin] .blip.s-blocked { background: #ff5a5a; box-shadow: 0 0 5px #ff5a5a; }
+[data-skin] .blip.s-committed { background: #6cf0a0; box-shadow: 0 0 4px #6cf0a0; }
 @keyframes fp-sweep { to { transform: rotate(360deg); } }
 @keyframes fp-blink { 50% { opacity: 0.2; } }
 
 /* ---- 按鈕：鋼藍立體按鈕；主要按鈕發光 ---- */
-[data-skin='allied'] button,
-[data-skin='allied'] details.more > summary {
+[data-skin] button,
+[data-skin] details.more > summary {
   font-family: var(--hud-font), inherit;
   letter-spacing: 0.5px;
-  color: #d8ecff;
+  color: var(--fg);
   border: 1px solid #08131f;
   border-radius: 4px;
-  background: linear-gradient(180deg, #34506e 0%, #1a2e45 50%, #12233a 51%, #213a57 100%);
+  background: var(--btn);
   box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.28), inset 0 -1px 0 rgba(0, 0, 0, 0.5), 0 0 0 1px rgba(120, 160, 200, 0.25);
   text-shadow: 0 1px 0 rgba(0, 0, 0, 0.8);
 }
-[data-skin='allied'] button:hover:not(:disabled),
-[data-skin='allied'] details.more > summary:hover {
-  background: linear-gradient(180deg, #3f6489 0%, #20395a 50%, #172c48 51%, #29496d 100%);
-  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.35), 0 0 0 1px rgba(70, 200, 255, 0.6), 0 0 10px rgba(70, 200, 255, 0.25);
+[data-skin] button:hover:not(:disabled),
+[data-skin] details.more > summary:hover {
+  background: var(--btn-hover);
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.35), 0 0 0 1px rgba(var(--fx-rgb), 0.6), 0 0 10px rgba(var(--fx-rgb), 0.25);
 }
-[data-skin='allied'] button.primary {
+[data-skin] button.primary {
   color: #fff;
-  border-color: #6fdcff;
-  background: linear-gradient(180deg, #6fdcff 0%, #1f8fd8 48%, #0b5fa8 52%, #2fa9ec 100%);
+  border-color: var(--fx-hi);
+  background: linear-gradient(180deg, var(--fx-hi) 0%, var(--fx-mid) 48%, var(--fx-deep) 52%, var(--fx-mid) 100%);
   box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.75), var(--glow);
   text-shadow: 0 0 4px rgba(255, 255, 255, 0.6), 0 1px 0 #002;
 }
-[data-skin='allied'] button.primary:hover:not(:disabled) { filter: brightness(1.12); background: linear-gradient(180deg, #6fdcff 0%, #1f8fd8 48%, #0b5fa8 52%, #2fa9ec 100%); }
-[data-skin='allied'] button.on { color: #7fe9ff; border-color: #46c8ff; box-shadow: inset 0 0 8px rgba(70, 200, 255, 0.35); }
-[data-skin='allied'] .segmented { border-color: #23415f; }
-[data-skin='allied'] .segmented button { border-radius: 0; }
-[data-skin='allied'] .segmented button.on { color: #fff; opacity: 1; background: linear-gradient(180deg, #4fc8f5 0%, #1a7fc8 48%, #0b5fa8 52%, #2a9be0 100%); text-shadow: 0 0 4px rgba(255, 255, 255, 0.6), 0 1px 0 #002; box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.6), 0 0 8px rgba(70, 200, 255, 0.5); }
-[data-skin='allied'] button.link,
-[data-skin='allied'] .fold-head,
-[data-skin='allied'] .file-name,
-[data-skin='allied'] .ac-head,
-[data-skin='allied'] .right-tabs button,
-[data-skin='allied'] .more-menu button {
+[data-skin] button.primary:hover:not(:disabled) { filter: brightness(1.12); background: linear-gradient(180deg, var(--fx-hi) 0%, var(--fx-mid) 48%, var(--fx-deep) 52%, var(--fx-mid) 100%); }
+[data-skin] button.on { color: var(--fx-hi); border-color: var(--fx); box-shadow: inset 0 0 8px rgba(var(--fx-rgb), 0.35); }
+[data-skin] .segmented { border-color: var(--fx-line); }
+[data-skin] .segmented button { border-radius: 0; }
+[data-skin] .segmented button.on { color: #fff; opacity: 1; background: linear-gradient(180deg, var(--fx-mid) 0%, var(--fx-mid) 48%, var(--fx-deep) 52%, var(--fx-mid) 100%); text-shadow: 0 0 4px rgba(255, 255, 255, 0.6), 0 1px 0 #002; box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.6), 0 0 8px rgba(var(--fx-rgb), 0.5); }
+[data-skin] button.link,
+[data-skin] .fold-head,
+[data-skin] .file-name,
+[data-skin] .ac-head,
+[data-skin] .right-tabs button,
+[data-skin] .more-menu button {
   font-family: inherit;
   letter-spacing: normal;
   background: none;
@@ -211,50 +280,50 @@
   box-shadow: none;
   text-shadow: none;
 }
-[data-skin='allied'] button.link { color: #6fd6ff; }
-[data-skin='allied'] button.link:hover:not(:disabled) { background: none; box-shadow: none; color: #bff0ff; text-shadow: 0 0 6px rgba(70, 200, 255, 0.7); }
-[data-skin='allied'] button.danger:not(.link),
-[data-skin='allied'] .more-menu button.danger { color: #ff8d8d; }
-[data-skin='allied'] .more-menu button:hover:not(:disabled) { background: rgba(70, 200, 255, 0.12); box-shadow: inset 2px 0 0 #46c8ff; }
+[data-skin] button.link { color: #6fd6ff; }
+[data-skin] button.link:hover:not(:disabled) { background: none; box-shadow: none; color: var(--fx-pale); text-shadow: 0 0 6px rgba(var(--fx-rgb), 0.7); }
+[data-skin] button.danger:not(.link),
+[data-skin] .more-menu button.danger { color: #ff8d8d; }
+[data-skin] .more-menu button:hover:not(:disabled) { background: rgba(var(--fx-rgb), 0.12); box-shadow: inset 2px 0 0 var(--fx); }
 
 /* 下拉選單：鋼框玻璃 */
-[data-skin='allied'] .more-menu {
+[data-skin] .more-menu {
   border: 2px solid transparent;
   border-radius: 6px;
   background: var(--glass) padding-box, var(--steel) border-box;
-  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.7), 0 0 12px rgba(70, 200, 255, 0.15);
+  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.7), 0 0 12px rgba(var(--fx-rgb), 0.15);
 }
 
 /* 輸入框：凹槽 */
-[data-skin='allied'] select,
-[data-skin='allied'] input:not([type='checkbox']),
-[data-skin='allied'] textarea {
-  background: #030a12 !important;
-  border: 1px solid #23415f !important;
+[data-skin] select,
+[data-skin] input:not([type='checkbox']),
+[data-skin] textarea {
+  background: var(--fx-well) !important;
+  border: 1px solid var(--fx-line) !important;
   box-shadow: inset 0 2px 4px rgba(0, 0, 0, 0.8);
-  color: #d8ecff !important;
+  color: var(--fg) !important;
 }
-[data-skin='allied'] select:focus,
-[data-skin='allied'] input:focus,
-[data-skin='allied'] textarea:focus { outline: none; border-color: #46c8ff !important; box-shadow: inset 0 2px 4px rgba(0, 0, 0, 0.8), 0 0 0 1px #46c8ff, 0 0 10px rgba(70, 200, 255, 0.3); }
-[data-skin='allied'] input[type='checkbox'] { accent-color: #46c8ff; }
+[data-skin] select:focus,
+[data-skin] input:focus,
+[data-skin] textarea:focus { outline: none; border-color: var(--fx) !important; box-shadow: inset 0 2px 4px rgba(0, 0, 0, 0.8), 0 0 0 1px var(--fx), 0 0 10px rgba(var(--fx-rgb), 0.3); }
+[data-skin] input[type='checkbox'] { accent-color: var(--fx); }
 
 /* ---- 工作台三欄：鋼框 ---- */
-[data-skin='allied'] .workbench { gap: 0; padding: 8px 8px 0; }
-[data-skin='allied'] .sidebar,
-[data-skin='allied'] .right,
-[data-skin='allied'] .center {
+[data-skin] .workbench { gap: 0; padding: 8px 8px 0; }
+[data-skin] .sidebar,
+[data-skin] .right,
+[data-skin] .center {
   position: relative;
   border: 3px solid transparent !important;
   border-radius: 8px 8px 0 0;
   background: var(--glass) padding-box, var(--steel) border-box;
   box-shadow: 0 0 0 1px #000, inset 0 0 30px rgba(0, 0, 0, 0.5);
 }
-[data-skin='allied'] .center { margin: 0 6px; }
+[data-skin] .center { margin: 0 6px; }
 /* 四角鉚釘 */
-[data-skin='allied'] .sidebar::before,
-[data-skin='allied'] .right::before,
-[data-skin='allied'] .center::before {
+[data-skin] .sidebar::before,
+[data-skin] .right::before,
+[data-skin] .center::before {
   content: '';
   position: absolute;
   inset: 3px;
@@ -265,9 +334,9 @@
   z-index: 2;
 }
 
-/* 左欄右緣：電力條（一格一格的綠燈） */
-[data-skin='allied'] .sidebar { padding-right: 18px; }
-[data-skin='allied'] .sidebar::after {
+/* 左欄右緣：電力條（滿格，由下往上紅、橘、綠） */
+[data-skin] .sidebar { padding-right: 18px; }
+[data-skin] .sidebar::after {
   content: '';
   position: absolute;
   top: 10px;
@@ -275,69 +344,70 @@
   right: 4px;
   width: 6px;
   border-radius: 2px;
+  /* 跟紅警一樣滿格，由下往上是紅、橘、綠 */
   background:
     repeating-linear-gradient(180deg, transparent 0 4px, rgba(0, 0, 0, 0.85) 4px 6px),
-    linear-gradient(180deg, #ff5a5a 0 6%, #ffc24a 6% 14%, #4ff08a 14% 100%);
+    linear-gradient(0deg, #ff5a5a 0 6%, #ffa03a 6% 14%, #4ff08a 14% 100%);
   box-shadow: 0 0 6px rgba(79, 240, 138, 0.5), inset 0 0 0 1px rgba(0, 0, 0, 0.6);
   opacity: 0.85;
 }
 
 /* 區塊標題：HUD 字型、左邊一條光 */
-[data-skin='allied'] .side-section,
-[data-skin='allied'] .plan-block-title,
-[data-skin='allied'] .git-section-head {
+[data-skin] .side-section,
+[data-skin] .plan-block-title,
+[data-skin] .git-section-head {
   font-family: var(--hud-font);
   font-size: 13px;
   letter-spacing: 2px;
-  color: #8fd8ff;
+  color: var(--fx-pale);
   text-transform: uppercase;
-  text-shadow: 0 0 6px rgba(70, 200, 255, 0.45);
+  text-shadow: 0 0 6px rgba(var(--fx-rgb), 0.45);
 }
-[data-skin='allied'] .side-section { border-left: 3px solid #46c8ff; padding-left: 6px; box-shadow: -3px 0 8px -4px #46c8ff; }
+[data-skin] .side-section { border-left: 3px solid var(--fx); padding-left: 6px; box-shadow: -3px 0 8px -4px var(--fx); }
 
 /* 左欄的單：像建造欄的小卡，選到的發光；執行中有跑動的進度條 */
-[data-skin='allied'] li.ticket {
+[data-skin] li.ticket {
   position: relative;
-  border: 1px solid #1d3b5a;
-  border-left: 3px solid #1d3b5a;
+  border: 1px solid var(--fx-line);
+  border-left: 3px solid var(--fx-line);
   border-radius: 4px;
-  background: linear-gradient(180deg, rgba(30, 60, 95, 0.55), rgba(8, 20, 34, 0.75));
+  background: var(--card);
   box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.08);
   overflow: hidden;
 }
-[data-skin='allied'] li.ticket:hover { background: linear-gradient(180deg, rgba(45, 85, 130, 0.6), rgba(10, 26, 44, 0.8)); }
-[data-skin='allied'] li.ticket.selected { border-color: #46c8ff; box-shadow: inset 0 0 12px rgba(70, 200, 255, 0.25), 0 0 8px rgba(70, 200, 255, 0.35); }
-[data-skin='allied'] li.ticket.status-running::after,
-[data-skin='allied'] li.ticket.status-preparing::after {
+[data-skin] li.ticket:hover { background: var(--card-hover); }
+[data-skin] li.ticket.selected { border-color: var(--fx); box-shadow: inset 0 0 12px rgba(var(--fx-rgb), 0.25), 0 0 8px rgba(var(--fx-rgb), 0.35); }
+[data-skin] li.ticket.status-running::after,
+[data-skin] li.ticket.status-preparing::after {
   content: '';
   position: absolute;
   left: 0;
   right: 0;
   bottom: 0;
   height: 3px;
-  background: repeating-linear-gradient(90deg, #46c8ff 0 10px, transparent 10px 14px);
-  box-shadow: 0 0 6px #46c8ff;
+  background: repeating-linear-gradient(90deg, var(--fx) 0 10px, transparent 10px 14px);
+  box-shadow: 0 0 6px var(--fx);
   animation: fp-build 0.8s linear infinite;
 }
-[data-skin='allied'] li.ticket.status-waiting { border-left-color: #ffc24a; animation: fp-pulse 1.6s ease-in-out infinite; }
-[data-skin='allied'] li.ticket.status-review { border-left-color: #6cf0a0; }
-[data-skin='allied'] li.ticket.status-failed,
-[data-skin='allied'] li.ticket.status-blocked { border-left-color: #ff5a5a; }
-[data-skin='allied'] li.ticket strong { font-family: var(--hud-font); font-size: 15px; letter-spacing: 1px; color: #e9f6ff; }
+[data-skin] li.ticket.status-waiting { border-left-color: #ffc24a; animation: fp-pulse 1.6s ease-in-out infinite; }
+[data-skin] li.ticket.status-review { border-left-color: #6cf0a0; }
+[data-skin] li.ticket.status-failed,
+[data-skin] li.ticket.status-blocked { border-left-color: #ff5a5a; }
+[data-skin] li.ticket strong { font-family: var(--hud-font); font-size: 15px; letter-spacing: 1px; color: var(--fx-text); }
 @keyframes fp-build { from { background-position: 0 0; } to { background-position: 14px 0; } }
 @keyframes fp-pulse { 50% { box-shadow: inset 0 0 14px rgba(255, 194, 74, 0.25), 0 0 8px rgba(255, 194, 74, 0.3); } }
 
 /* 狀態：LED 小燈 */
-[data-skin='allied'] .status {
+[data-skin] .status {
   font-family: var(--hud-font);
   letter-spacing: 1px;
-  background: #030a12;
-  border: 1px solid #1d3b5a;
+  background: var(--fx-well);
+  border: 1px solid var(--fx-line);
   border-radius: 3px;
   padding: 0 6px 0 14px;
   position: relative;
 }
-[data-skin='allied'] .status::before {
+[data-skin] .status::before {
   content: '';
   position: absolute;
   left: 4px;
@@ -349,107 +419,107 @@
   background: currentColor;
   box-shadow: 0 0 5px currentColor;
 }
-[data-skin='allied'] .status.running::before,
-[data-skin='allied'] .status.preparing::before,
-[data-skin='allied'] .status.waiting::before { animation: fp-blink 1s steps(2) infinite; }
-[data-skin='allied'] .status.queued, [data-skin='allied'] .status.stopped, [data-skin='allied'] .status.committed { color: #7d9ab6; }
-[data-skin='allied'] .status.committed { color: #6cf0a0; }
+[data-skin] .status.running::before,
+[data-skin] .status.preparing::before,
+[data-skin] .status.waiting::before { animation: fp-blink 1s steps(2) infinite; }
+[data-skin] .status.queued, [data-skin] .status.stopped, [data-skin] .status.committed { color: var(--muted); }
+[data-skin] .status.committed { color: #6cf0a0; }
 
 /* 中間標題列：鋼條 */
-[data-skin='allied'] .chat-head {
-  background: linear-gradient(180deg, rgba(40, 80, 125, 0.55), rgba(10, 24, 40, 0.6));
-  border-bottom: 1px solid #2a5580;
-  box-shadow: 0 1px 0 rgba(70, 200, 255, 0.25);
+[data-skin] .chat-head {
+  background: var(--head-bar);
+  border-bottom: 1px solid var(--fx-line-hi);
+  box-shadow: 0 1px 0 rgba(var(--fx-rgb), 0.25);
 }
-[data-skin='allied'] .chat-title strong { font-family: var(--hud-font); font-size: 20px; letter-spacing: 1.5px; color: #fff; text-shadow: 0 0 8px rgba(70, 200, 255, 0.6); }
+[data-skin] .chat-title strong { font-family: var(--hud-font); font-size: 20px; letter-spacing: 1.5px; color: #fff; text-shadow: 0 0 8px rgba(var(--fx-rgb), 0.6); }
 
 /* 階段：像超級武器倒數那樣的 HUD 標籤，現在這一步發光 */
-[data-skin='allied'] .stages li {
+[data-skin] .stages li {
   font-family: var(--hud-font);
   letter-spacing: 1px;
   border-radius: 2px;
-  background: #030a12;
-  border: 1px solid #1d3b5a;
-  color: #4f6f8f;
+  background: var(--fx-well);
+  border: 1px solid var(--fx-line);
+  color: var(--fx-dim);
 }
-[data-skin='allied'] .stages li + li::before { border-top: 1px dashed #2a5580; }
-[data-skin='allied'] .stages li.done { color: #6cf0a0; background: rgba(13, 51, 34, 0.7); border-color: #1f6b45; }
-[data-skin='allied'] .stages li.now { color: #fff; background: linear-gradient(180deg, #1f8fd8, #0b5fa8); border-color: #6fdcff; box-shadow: var(--glow); }
-[data-skin='allied'] .stages li.now.attn { background: linear-gradient(180deg, #d99a1f, #8a5a00); border-color: #ffd35a; box-shadow: 0 0 8px rgba(255, 194, 74, 0.5); }
-[data-skin='allied'] .stages li.now.bad { background: linear-gradient(180deg, #d83a3a, #7a1010); border-color: #ff8d8d; box-shadow: 0 0 8px rgba(255, 90, 90, 0.5); }
+[data-skin] .stages li + li::before { border-top: 1px dashed var(--fx-line-hi); }
+[data-skin] .stages li.done { color: #6cf0a0; background: rgba(13, 51, 34, 0.7); border-color: #1f6b45; }
+[data-skin] .stages li.now { color: #fff; background: linear-gradient(180deg, var(--fx-mid), var(--fx-deep)); border-color: var(--fx-hi); box-shadow: var(--glow); }
+[data-skin] .stages li.now.attn { background: linear-gradient(180deg, #d99a1f, #8a5a00); border-color: #ffd35a; box-shadow: 0 0 8px rgba(255, 194, 74, 0.5); }
+[data-skin] .stages li.now.bad { background: linear-gradient(180deg, #d83a3a, #7a1010); border-color: #ff8d8d; box-shadow: 0 0 8px rgba(255, 90, 90, 0.5); }
 
 /* 對話：AI 的話是玻璃，你的話是藍色訊號框（四角括弧） */
-[data-skin='allied'] .msg.user {
-  background: linear-gradient(180deg, rgba(31, 100, 170, 0.45), rgba(14, 50, 90, 0.55));
-  border: 1px solid rgba(70, 200, 255, 0.4);
+[data-skin] .msg.user {
+  background: var(--bubble);
+  border: 1px solid rgba(var(--fx-rgb), 0.4);
   border-radius: 3px;
-  box-shadow: inset 0 0 12px rgba(70, 200, 255, 0.12);
+  box-shadow: inset 0 0 12px rgba(var(--fx-rgb), 0.12);
   position: relative;
 }
-[data-skin='allied'] .msg.user::before {
+[data-skin] .msg.user::before {
   content: '';
   position: absolute;
   inset: -3px;
   pointer-events: none;
   background:
-    linear-gradient(#46c8ff, #46c8ff) left top / 8px 2px no-repeat,
-    linear-gradient(#46c8ff, #46c8ff) left top / 2px 8px no-repeat,
-    linear-gradient(#46c8ff, #46c8ff) right bottom / 8px 2px no-repeat,
-    linear-gradient(#46c8ff, #46c8ff) right bottom / 2px 8px no-repeat;
+    linear-gradient(var(--fx), var(--fx)) left top / 8px 2px no-repeat,
+    linear-gradient(var(--fx), var(--fx)) left top / 2px 8px no-repeat,
+    linear-gradient(var(--fx), var(--fx)) right bottom / 8px 2px no-repeat,
+    linear-gradient(var(--fx), var(--fx)) right bottom / 2px 8px no-repeat;
 }
-[data-skin='allied'] .fold.flowpilot { border-color: #23415f; background: rgba(3, 10, 18, 0.5); }
-[data-skin='allied'] .fp-tag { background: #0b2a48; color: #7fe9ff; border: 1px solid #23517d; font-family: var(--hud-font); letter-spacing: 1px; }
-[data-skin='allied'] .typing { color: #7fe9ff; font-family: var(--hud-font); letter-spacing: 2px; animation: fp-blink 1.2s steps(2) infinite; }
-[data-skin='allied'] .pending { border-color: #ffc24a; background: rgba(60, 40, 0, 0.25); box-shadow: inset 0 0 14px rgba(255, 194, 74, 0.15); }
+[data-skin] .fold.flowpilot { border-color: var(--fx-line); background: rgba(3, 10, 18, 0.5); }
+[data-skin] .fp-tag { background: var(--fx-tag); color: var(--fx-hi); border: 1px solid var(--fx-line-hi); font-family: var(--hud-font); letter-spacing: 1px; }
+[data-skin] .typing { color: var(--fx-hi); font-family: var(--hud-font); letter-spacing: 2px; animation: fp-blink 1.2s steps(2) infinite; }
+[data-skin] .pending { border-color: #ffc24a; background: rgba(60, 40, 0, 0.25); box-shadow: inset 0 0 14px rgba(255, 194, 74, 0.15); }
 
 /* 輸入區：底部指令列 */
-[data-skin='allied'] .composer {
+[data-skin] .composer {
   border-top: none;
-  background: linear-gradient(180deg, rgba(20, 44, 70, 0.7), rgba(6, 16, 28, 0.9));
-  box-shadow: inset 0 2px 0 rgba(70, 200, 255, 0.25);
+  background: var(--composer-bg);
+  box-shadow: inset 0 2px 0 rgba(var(--fx-rgb), 0.25);
 }
-[data-skin='allied'] .composer.attention textarea { border-color: #ffc24a !important; box-shadow: inset 0 2px 4px rgba(0, 0, 0, 0.8), 0 0 10px rgba(255, 194, 74, 0.35); }
+[data-skin] .composer.attention textarea { border-color: #ffc24a !important; box-shadow: inset 0 2px 4px rgba(0, 0, 0, 0.8), 0 0 10px rgba(255, 194, 74, 0.35); }
 
 /* 右欄：分頁像建造欄上方的發光頁籤 */
-[data-skin='allied'] .right-tabs { border-bottom: 2px solid #2a5580; gap: 4px; }
-[data-skin='allied'] .right-tabs button {
+[data-skin] .right-tabs { border-bottom: 2px solid var(--fx-line-hi); gap: 4px; }
+[data-skin] .right-tabs button {
   font-family: var(--hud-font);
   letter-spacing: 1.5px;
   font-size: 14px;
-  color: #7d9ab6;
+  color: var(--muted);
   border-radius: 6px 6px 0 0;
-  background: linear-gradient(180deg, #1a3350, #0c1c2e);
-  border: 1px solid #23415f;
+  background: var(--tab-off);
+  border: 1px solid var(--fx-line);
   border-bottom: none;
 }
-[data-skin='allied'] .right-tabs button.on { color: #fff; background: linear-gradient(180deg, #2a9be0, #0b4f8a); border-color: #6fdcff; box-shadow: 0 0 10px rgba(70, 200, 255, 0.35); text-shadow: 0 0 6px rgba(255, 255, 255, 0.6); }
-[data-skin='allied'] .tab-count { background: #ffc24a; color: #1a1000; box-shadow: 0 0 6px rgba(255, 194, 74, 0.6); }
-[data-skin='allied'] .tab-dot { background: #6cf0a0; box-shadow: 0 0 6px #6cf0a0; }
+[data-skin] .right-tabs button.on { color: #fff; background: linear-gradient(180deg, var(--fx-mid), var(--fx-deep)); border-color: var(--fx-hi); box-shadow: 0 0 10px rgba(var(--fx-rgb), 0.35); text-shadow: 0 0 6px rgba(255, 255, 255, 0.6); }
+[data-skin] .tab-count { background: #ffc24a; color: #1a1000; box-shadow: 0 0 6px rgba(255, 194, 74, 0.6); }
+[data-skin] .tab-dot { background: #6cf0a0; box-shadow: 0 0 6px #6cf0a0; }
 
 /* 面板：細鋼框＋玻璃 */
-[data-skin='allied'] .panel,
-[data-skin='allied'] .plan,
-[data-skin='allied'] .notice,
-[data-skin='allied'] .ac-item {
-  border: 1px solid #23415f;
-  background: linear-gradient(180deg, rgba(16, 36, 58, 0.7), rgba(6, 15, 26, 0.7));
+[data-skin] .panel,
+[data-skin] .plan,
+[data-skin] .notice,
+[data-skin] .ac-item {
+  border: 1px solid var(--fx-line);
+  background: var(--panel-bg);
   box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.06);
 }
-[data-skin='allied'] .ac-item.mine { border-color: #46c8ff; box-shadow: inset 0 0 10px rgba(70, 200, 255, 0.15); }
-[data-skin='allied'] .ac-attention { border-color: #ffc24a; background: rgba(60, 40, 0, 0.25); }
-[data-skin='allied'] .ac-badge.you { background: #0b4f8a; color: #fff; box-shadow: 0 0 6px rgba(70, 200, 255, 0.5); }
-[data-skin='allied'] .ac-how { background: #030a12; border: 1px solid #1d3b5a; }
-[data-skin='allied'] .ac-label { font-family: var(--hud-font); letter-spacing: 1px; color: #5f9ccc; }
-[data-skin='allied'] .acceptance-panel .ac-summary strong { font-family: var(--hud-font); font-size: 16px; letter-spacing: 1px; color: #7fe9ff; text-shadow: 0 0 6px rgba(70, 200, 255, 0.5); }
+[data-skin] .ac-item.mine { border-color: var(--fx); box-shadow: inset 0 0 10px rgba(var(--fx-rgb), 0.15); }
+[data-skin] .ac-attention { border-color: #ffc24a; background: rgba(60, 40, 0, 0.25); }
+[data-skin] .ac-badge.you { background: var(--fx-deep); color: #fff; box-shadow: 0 0 6px rgba(var(--fx-rgb), 0.5); }
+[data-skin] .ac-how { background: var(--fx-well); border: 1px solid var(--fx-line); }
+[data-skin] .ac-label { font-family: var(--hud-font); letter-spacing: 1px; color: var(--fx-dim); }
+[data-skin] .acceptance-panel .ac-summary strong { font-family: var(--hud-font); font-size: 16px; letter-spacing: 1px; color: var(--fx-hi); text-shadow: 0 0 6px rgba(var(--fx-rgb), 0.5); }
 
 /* 程式碼、輸出、差異：終端機綠 */
-[data-skin='allied'] code { background: #030a12; color: #9fe6ff; border: 1px solid #12283f; }
-[data-skin='allied'] pre.output,
-[data-skin='allied'] pre.diff,
-[data-skin='allied'] .markdown pre { background: #020810; border: 1px solid #12283f; }
+[data-skin] code { background: var(--fx-well); color: #9fe6ff; border: 1px solid var(--fx-line-dark); }
+[data-skin] pre.output,
+[data-skin] pre.diff,
+[data-skin] .markdown pre { background: var(--fx-well); border: 1px solid var(--fx-line-dark); }
 
 /* 單列表（任務簡報）：整頁一個鋼框 */
-[data-skin='allied'] .shell > div > main {
+[data-skin] .shell > div > main {
   position: relative;
   margin: 8px 8px 0;
   height: calc(100% - 8px);
@@ -459,36 +529,36 @@
   background: var(--glass) padding-box, var(--steel) border-box;
   box-shadow: 0 0 0 1px #000, inset 0 0 40px rgba(0, 0, 0, 0.5);
 }
-[data-skin='allied'] .shell > div > main::before {
+[data-skin] .shell > div > main::before {
   content: '';
   position: absolute;
   inset: 3px;
   pointer-events: none;
   background: var(--rivet) left top / 9px 9px no-repeat, var(--rivet) right top / 9px 9px no-repeat;
 }
-[data-skin='allied'] main > header h1 { font-family: var(--hud-font); letter-spacing: 3px; font-size: 26px; color: #fff; text-shadow: 0 0 10px rgba(70, 200, 255, 0.6); }
-[data-skin='allied'] th { font-family: var(--hud-font); letter-spacing: 1.5px; color: #8fd8ff; border-bottom: 2px solid #2a5580; }
-[data-skin='allied'] td { border-bottom: 1px solid #12283f; }
-[data-skin='allied'] tbody tr:hover { background: rgba(70, 200, 255, 0.07); }
-[data-skin='allied'] tbody tr.selected { background: rgba(70, 200, 255, 0.16); box-shadow: inset 3px 0 0 #46c8ff; }
-[data-skin='allied'] tbody tr.locked { opacity: 0.6; }
-[data-skin='allied'] .mark { font-family: var(--hud-font); letter-spacing: 1px; border-radius: 2px; border: 1px solid #23415f; background: #030a12; }
-[data-skin='allied'] .mark.active { color: #7fe9ff; border-color: #46c8ff; box-shadow: 0 0 6px rgba(70, 200, 255, 0.4); }
-[data-skin='allied'] .mark.done { color: #6cf0a0; border-color: #1f6b45; }
-[data-skin='allied'] .chip { border-radius: 3px; background: #0c1c2e; }
-[data-skin='allied'] .chip.on { background: linear-gradient(180deg, #2a9be0, #0b4f8a); border-color: #6fdcff; box-shadow: 0 0 6px rgba(70, 200, 255, 0.5); }
-[data-skin='allied'] footer { border-top: 2px solid #2a5580; }
+[data-skin] main > header h1 { font-family: var(--hud-font); letter-spacing: 3px; font-size: 26px; color: #fff; text-shadow: 0 0 10px rgba(var(--fx-rgb), 0.6); }
+[data-skin] th { font-family: var(--hud-font); letter-spacing: 1.5px; color: var(--fx-pale); border-bottom: 2px solid var(--fx-line-hi); }
+[data-skin] td { border-bottom: 1px solid var(--fx-line-dark); }
+[data-skin] tbody tr:hover { background: rgba(var(--fx-rgb), 0.07); }
+[data-skin] tbody tr.selected { background: rgba(var(--fx-rgb), 0.16); box-shadow: inset 3px 0 0 var(--fx); }
+[data-skin] tbody tr.locked { opacity: 0.6; }
+[data-skin] .mark { font-family: var(--hud-font); letter-spacing: 1px; border-radius: 2px; border: 1px solid var(--fx-line); background: var(--fx-well); }
+[data-skin] .mark.active { color: var(--fx-hi); border-color: var(--fx); box-shadow: 0 0 6px rgba(var(--fx-rgb), 0.4); }
+[data-skin] .mark.done { color: #6cf0a0; border-color: #1f6b45; }
+[data-skin] .chip { border-radius: 3px; background: var(--fx-chip); }
+[data-skin] .chip.on { background: linear-gradient(180deg, var(--fx-mid), var(--fx-deep)); border-color: var(--fx-hi); box-shadow: 0 0 6px rgba(var(--fx-rgb), 0.5); }
+[data-skin] footer { border-top: 2px solid var(--fx-line-hi); }
 
 /* 空的工作台：等待指令 */
-[data-skin='allied'] .empty-state p { font-family: var(--hud-font); letter-spacing: 1.5px; font-size: 16px; color: #7fb8e0; }
+[data-skin] .empty-state p { font-family: var(--hud-font); letter-spacing: 1.5px; font-size: 16px; color: var(--fx-dim); }
 
 /* 錯誤：紅色警報框 */
-[data-skin='allied'] .error { border: 1px solid #ff5a5a; box-shadow: inset 0 0 12px rgba(255, 90, 90, 0.25), 0 0 8px rgba(255, 90, 90, 0.25); }
+[data-skin] .error { border: 1px solid #ff5a5a; box-shadow: inset 0 0 12px rgba(255, 90, 90, 0.25), 0 0 8px rgba(255, 90, 90, 0.25); }
 
 /* 捲軸：細鋼條 */
-[data-skin='allied'] ::-webkit-scrollbar { width: 10px; height: 10px; }
-[data-skin='allied'] ::-webkit-scrollbar-track { background: #030a12; }
-[data-skin='allied'] ::-webkit-scrollbar-thumb { background: var(--steel-v); border-radius: 5px; border: 2px solid #030a12; }
+[data-skin] ::-webkit-scrollbar { width: 10px; height: 10px; }
+[data-skin] ::-webkit-scrollbar-track { background: var(--fx-well); }
+[data-skin] ::-webkit-scrollbar-thumb { background: var(--steel-v); border-radius: 5px; border: 2px solid var(--fx-well); }
 
 /* ---- 換場：防爆門 ---- */
 .shell { position: relative; }
@@ -502,19 +572,19 @@
     var(--rivet) 14px 14px / 10px 10px no-repeat,
     var(--rivet) 14px calc(100% - 24px) / 10px 10px no-repeat,
     repeating-linear-gradient(180deg, rgba(255, 255, 255, 0.07) 0 2px, transparent 2px 46px, rgba(0, 0, 0, 0.35) 46px 48px),
-    linear-gradient(90deg, #1c2a3b 0%, #4c6079 18%, #7d93ab 40%, #4f647d 62%, #253447 100%);
+    linear-gradient(90deg, var(--door-stops));
   box-shadow: inset 0 0 40px rgba(0, 0, 0, 0.6);
 }
-.blast-doors .door.left { left: 0; transform: translateX(-101%); border-right: 3px solid #0b1520; }
+.blast-doors .door.left { left: 0; transform: translateX(-101%); border-right: 3px solid var(--fx-line-dark); }
 .blast-doors .door.right {
   right: 0;
   transform: translateX(101%);
-  border-left: 3px solid #0b1520;
+  border-left: 3px solid var(--fx-line-dark);
   background:
     var(--rivet) calc(100% - 14px) 14px / 10px 10px no-repeat,
     var(--rivet) calc(100% - 14px) calc(100% - 24px) / 10px 10px no-repeat,
     repeating-linear-gradient(180deg, rgba(255, 255, 255, 0.07) 0 2px, transparent 2px 46px, rgba(0, 0, 0, 0.35) 46px 48px),
-    linear-gradient(270deg, #1c2a3b 0%, #4c6079 18%, #7d93ab 40%, #4f647d 62%, #253447 100%);
+    linear-gradient(270deg, var(--door-stops));
 }
 /* 門上的斜紋警示帶（藍色，盟軍） */
 .blast-doors .door::after {
@@ -524,8 +594,8 @@
   right: 0;
   top: 46%;
   height: 8%;
-  background: repeating-linear-gradient(135deg, #0f6db8 0 18px, #0a1a2a 18px 36px);
-  box-shadow: 0 0 0 2px #0b1520, inset 0 0 12px rgba(0, 0, 0, 0.6);
+  background: repeating-linear-gradient(135deg, var(--fx-deep) 0 18px, #0a1a2a 18px 36px);
+  box-shadow: 0 0 0 2px var(--fx-line-dark), inset 0 0 12px rgba(0, 0, 0, 0.6);
   opacity: 0.9;
 }
 .blast-doors .door-seam {
@@ -535,8 +605,8 @@
   left: 50%;
   width: 4px;
   margin-left: -2px;
-  background: linear-gradient(180deg, transparent, #bff0ff 20%, #ffffff 50%, #bff0ff 80%, transparent);
-  box-shadow: 0 0 12px #46c8ff, 0 0 32px #46c8ff;
+  background: linear-gradient(180deg, transparent, var(--fx-pale) 20%, #ffffff 50%, var(--fx-pale) 80%, transparent);
+  box-shadow: 0 0 12px var(--fx), 0 0 32px var(--fx);
   opacity: 0;
 }
 .blast-doors .door-emblem {
@@ -549,9 +619,9 @@
   display: grid;
   place-items: center;
   border-radius: 50%;
-  color: #bff0ff;
-  background: radial-gradient(circle, #0b2a48 0 60%, #1b2c3f 61% 66%, #8ea3b9 67% 70%, transparent 71%);
-  filter: drop-shadow(0 0 10px rgba(70, 200, 255, 0.8));
+  color: var(--fx-pale);
+  background: radial-gradient(circle, var(--fx-tag) 0 60%, var(--fx-line-dark) 61% 66%, var(--rim) 67% 70%, transparent 71%);
+  filter: drop-shadow(0 0 10px rgba(var(--fx-rgb), 0.8));
   opacity: 0;
   transform: scale(0.6);
 }
@@ -568,7 +638,7 @@
   content: '';
   position: absolute;
   inset: 0;
-  background: linear-gradient(180deg, transparent 0 45%, rgba(70, 200, 255, 0.35) 50%, transparent 55% 100%);
+  background: linear-gradient(180deg, transparent 0 45%, rgba(var(--fx-rgb), 0.35) 50%, transparent 55% 100%);
   background-size: 100% 300%;
   animation: fp-scan 0.5s 0.22s ease-out forwards;
   pointer-events: none;
@@ -583,5 +653,5 @@
 @keyframes fp-scan { from { background-position: 0 100%; } to { background-position: 0 0; opacity: 0; } }
 
 @media (prefers-reduced-motion: reduce) {
-  [data-skin='allied'] *, [data-skin='allied'] *::before, [data-skin='allied'] *::after { animation: none !important; }
+  [data-skin] *, [data-skin] *::before, [data-skin] *::after { animation: none !important; }
 }

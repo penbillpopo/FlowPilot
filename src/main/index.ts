@@ -4,7 +4,8 @@ import { execFileSync } from 'node:child_process';
 import { appendFileSync, mkdirSync, writeFileSync } from 'node:fs';
 import { randomUUID } from 'node:crypto';
 import { join } from 'node:path';
-import type { Env, JiraTicket, Judgement, PlanOptions, Review, ReviewChecks, ReviewIssue, TicketMark, TicketPlan, TicketSnapshot } from '../shared/types';
+import { AzureRepo, defaultPrTitle, prDescription, prIdFromUrl } from './azure';
+import type { Env, JiraTicket, PrOptions, PrRecord, WorkItem, Judgement, PlanOptions, Review, ReviewChecks, ReviewIssue, TicketMark, TicketPlan, TicketSnapshot } from '../shared/types';
 import { CodexRpc } from './codex/rpc';
 import { listSkills, runStructured } from './codex/structured';
 import { checkExisting, runGit } from './git';
@@ -302,6 +303,78 @@ async function trialLogin(itemId: number): Promise<{ ok: boolean; reason: string
   return result;
 }
 
+/** 這張單的專案資料夾（用來讀遠端網址和 git 憑證；已完成的單資料夾可能在做別張，但遠端是同一個） */
+function projectFolder(item: WorkItem): string {
+  const folders = loadSettings(settingsFile).folders;
+  const folder = folders.find((f) => f.name === item.folder) ?? folders.find((f) => f.project === item.project);
+  if (!folder) throw new Error(`設定檔裡沒有 ${item.project} 的資料夾`);
+  return folder.path;
+}
+
+/** 把 Azure 上還開著的 PR 補進這張單的紀錄（例如在 Azure 網頁上自己發的）；同一個 PR 不重複記 */
+function rememberPrs(itemId: number, prs: PrRecord[]) {
+  const item = store.getWorkItem(itemId)!;
+  // 照原本的順序更新（舊資料沒有目標分支，用 Azure 上的補上），新的接在後面
+  const merged = [...item.prs.map((p) => prs.find((x) => x.url === p.url) ?? p), ...prs.filter((x) => !item.prs.some((p) => p.url === x.url))];
+  const sameAsBefore = merged.length === item.prs.length && merged.every((p) => item.prs.some((x) => x.url === p.url && x.target === p.target));
+  if (!sameAsBefore) {
+    store.updateWorkItem(itemId, { prs: merged });
+    runner.notifyChanged();
+  }
+}
+
+/** 讀回這張單發過的 PR 現在的狀態、目標分支、審核人（舊資料只有網址，也一起補齊） */
+async function refreshPrs(itemId: number): Promise<void> {
+  const item = store.getWorkItem(itemId);
+  if (!item?.prs.length) return;
+  const repo = await AzureRepo.open(projectFolder(item));
+  const fresh = await Promise.all(item.prs.map((p) => repo.getPr(p.id || prIdFromUrl(p.url)).catch(() => p)));
+  const changed = JSON.stringify(fresh) !== JSON.stringify(item.prs);
+  if (changed) {
+    store.updateWorkItem(itemId, { prs: fresh });
+    runner.notifyChanged();
+  }
+}
+
+async function prOptions(itemId: number): Promise<PrOptions> {
+  const item = store.getWorkItem(itemId);
+  if (!item) throw new Error('找不到這張單');
+  const repo = await AzureRepo.open(projectFolder(item));
+  const [branches, reviewers, existing, pushed] = await Promise.all([repo.targetBranches(), repo.recentReviewers(), repo.activePrs(item.branch), repo.branchExists(item.branch)]);
+  rememberPrs(itemId, existing);
+  return {
+    title: defaultPrTitle(item),
+    description: prDescription(item),
+    source: item.branch,
+    target: branches.includes(item.baseBranch) ? item.baseBranch : branches[0] ?? item.baseBranch,
+    branches,
+    reviewers,
+    existing,
+    notPushed: !pushed,
+  };
+}
+
+async function createPr(itemId: number, input: { title: string; description: string; target: string; reviewerIds: string[] }): Promise<{ url: string }> {
+  const item = store.getWorkItem(itemId);
+  if (!item) throw new Error('找不到這張單');
+  if (!input.title.trim()) throw new Error('PR 名稱不能空白');
+  const repo = await AzureRepo.open(projectFolder(item));
+  if (!(await repo.branchExists(item.branch))) throw new Error(`遠端還沒有 ${item.branch}，請先推送`);
+  // 送出前再查一次：同一個目標分支已經有開著的 PR 就不重複建立（Azure 也不允許），直接給那個 PR
+  const active = await repo.activePrs(item.branch);
+  rememberPrs(itemId, active);
+  const same = active.find((p) => p.target === input.target);
+  if (same) return { url: same.url };
+  const pr = await repo.createPr({ source: item.branch, target: input.target, title: input.title.trim(), description: input.description, reviewerIds: input.reviewerIds });
+  // 讀回 Azure 上的樣子（審核人、狀態），讀不到就先記送出的內容
+  const record = await repo.getPr(pr.id).catch(() => ({ id: pr.id, url: pr.url, target: input.target, title: input.title.trim() }));
+  const latest = store.getWorkItem(itemId)!;
+  store.updateWorkItem(itemId, { prs: [...latest.prs, record] });
+  runner.notifyChanged();
+  log(`${item.ticketKey}：發了 PR #${pr.id}（${item.branch} → ${input.target}）`);
+  return { url: pr.url };
+}
+
 function writeGuardPath() {
   // 打包後放在 app.asar.unpacked（瀏覽器工具是另一個程式，讀不到 asar 裡的檔案）
   return join(app.getAppPath(), 'resources/write-guard.cjs').replace(/app\.asar([/\\])/, 'app.asar.unpacked$1');
@@ -380,6 +453,9 @@ function registerIpc() {
     const { statuses, defaultStatuses } = loadSettings(settingsFile).jira;
     return { statuses, defaultStatuses };
   });
+  ipcMain.handle('pr:options', (_event, id: number) => prOptions(id));
+  ipcMain.handle('pr:refresh', (_event, id: number) => refreshPrs(id));
+  ipcMain.handle('pr:create', (_event, id: number, input: { title: string; description: string; target: string; reviewerIds: string[] }) => createPr(id, input));
   ipcMain.handle('plan:drafts', () => store.listDrafts());
   ipcMain.handle('plan:add', (_event, tickets: JiraTicket[]) => {
     // 已經在工作台上的單不能再進一次（要等它在工作台移除）

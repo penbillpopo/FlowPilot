@@ -336,6 +336,8 @@ export interface WorkItem {
   stage: WorkStage;
   /** 自動測試有沒有真的跑過（沒跑過的顯示「略過」） */
   autotested: boolean;
+  /** 發出去的 PR（一張單可以發好幾個，例如同一條分支發到 sit、uat、master） */
+  prs: PrRecord[];
   /** 自動測試的結果（AI 回覆最後一行的「測試結果：…」；沒開始成也算沒測成） */
   autotestResult: TestResult | null;
   /** 最近一次瀏覽器測試的報告：預期結果對照、要你手動測的清單（勾選狀態會保留） */
@@ -423,6 +425,41 @@ export interface TicketMark {
   planning: boolean;
   /** 本機已經有這張單的分支 */
   branch: boolean;
+}
+
+/** 發過的一個 PR */
+export interface PrRecord {
+  id: number;
+  url: string;
+  /** 目標分支（舊資料是空字串） */
+  target: string;
+  title: string;
+  /** 審核人（信箱） */
+  reviewers?: string[];
+  /** 在 Azure 上的狀態：審核中、已合併、已放棄 */
+  status?: 'active' | 'completed' | 'abandoned';
+}
+
+/** PR 的審核人（從最近的 PR 抓出來的） */
+export interface PrReviewer {
+  id: string;
+  name: string;
+  email: string;
+}
+
+/** 發 PR 視窗要的東西 */
+export interface PrOptions {
+  title: string;
+  description: string;
+  source: string;
+  /** 預設的目標分支（開分支時的基底） */
+  target: string;
+  branches: string[];
+  reviewers: PrReviewer[];
+  /** 這條分支在 Azure 上還開著的 PR（同一個目標分支不能再發） */
+  existing: PrRecord[];
+  /** 遠端沒有這條分支（要先推送） */
+  notPushed: boolean;
 }
 
 export interface CommitResult {
@@ -537,6 +574,14 @@ export interface FlowPilotApi {
   /** 單列表的標記：在工作台上（不能再選）、分支已經存在 */
   ticketMarks(keys: string[]): Promise<Record<string, TicketMark>>;
   /** 在計畫表返回、沒有確認的單：審閱紀錄不留 */
+  pr: {
+    /** 發 PR 視窗的預設值、可選的目標分支和審核人 */
+    options(itemId: number): Promise<PrOptions>;
+    /** 從 Azure 讀回這張單發過的 PR 現在的狀態、目標分支、審核人 */
+    refresh(itemId: number): Promise<void>;
+    /** 在 Azure 建立 PR，回傳網址 */
+    create(itemId: number, input: { title: string; description: string; target: string; reviewerIds: string[] }): Promise<{ url: string }>;
+  };
   test: {
     state(itemId: number): Promise<TestState>;
     /** 切換 SIT／UAT（只切換 environment.ts 裡的註解） */

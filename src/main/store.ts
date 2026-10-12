@@ -1,7 +1,7 @@
 // 資料庫：~/Library/Application Support/FlowPilot/flowpilot.db（SQLite，用 Node 內建的 node:sqlite）
 // 每次狀態改變先寫進來，重新啟動才接得回去。
 import { DatabaseSync } from 'node:sqlite';
-import type { AcceptanceItem, JiraTicket, PlanDraft, Judgement, PendingRequest, Review, RunSummary, TestReport, TestResult, TicketPlan, WorkItem, WorkLane, WorkStage, WorkStatus } from '../shared/types';
+import type { AcceptanceItem, JiraTicket, PlanDraft, PrRecord, Judgement, PendingRequest, Review, RunSummary, TestReport, TestResult, TicketPlan, WorkItem, WorkLane, WorkStage, WorkStatus } from '../shared/types';
 import type { PastDecision } from './planner/judge';
 
 // 依序執行的資料庫結構變更；只能往後加，不能改前面的
@@ -89,6 +89,11 @@ const MIGRATIONS: string[] = [
      plan_json TEXT,
      added_at TEXT NOT NULL
    );`,
+  // 發出去的 PR 網址（同一張單不重複發）
+  `ALTER TABLE work_items ADD COLUMN pr_url TEXT;`,
+  // 一張單可以發好幾個 PR（例如同一條分支發到 sit、uat、master），改成存清單；舊的單一網址搬進去
+  `ALTER TABLE work_items ADD COLUMN prs TEXT;
+   UPDATE work_items SET prs = json_array(json_object('id', 0, 'url', pr_url, 'target', '', 'title', '')) WHERE pr_url IS NOT NULL;`,
 ];
 
 /** 還佔著資料夾的狀態 */
@@ -97,7 +102,7 @@ export const OCCUPYING: WorkStatus[] = ['preparing', 'running', 'waiting', 'revi
 /** 已經結束的狀態 */
 export const FINISHED: WorkStatus[] = ['failed', 'stopped', 'removed', 'committed'];
 
-type NewWorkItem = Omit<WorkItem, 'id' | 'folder' | 'lane' | 'status' | 'activity' | 'threadId' | 'lastMessage' | 'pending' | 'stage' | 'autotested' | 'autotestResult' | 'testReport' | 'updatedAt'>;
+type NewWorkItem = Omit<WorkItem, 'id' | 'folder' | 'lane' | 'status' | 'activity' | 'threadId' | 'lastMessage' | 'pending' | 'stage' | 'autotested' | 'autotestResult' | 'testReport' | 'updatedAt' | 'prs'>;
 
 interface WorkItemRow {
   id: number;
@@ -123,6 +128,8 @@ interface WorkItemRow {
   pending_json: string | null;
   branch_created: number;
   commit_sha: string | null;
+  pr_url: string | null;
+  prs: string | null;
   stage: WorkStage;
   autotested: number;
   autotest_result: string | null;
@@ -162,6 +169,7 @@ function toWorkItem(row: WorkItemRow): WorkItem & { branchCreated: boolean; comm
     updatedAt: row.updated_at,
     branchCreated: !!row.branch_created,
     commitSha: row.commit_sha,
+    prs: row.prs ? (JSON.parse(row.prs) as PrRecord[]) : [],
   };
 }
 
@@ -318,7 +326,7 @@ export class Store {
 
   updateWorkItem(
     id: number,
-    patch: Partial<Pick<StoredWorkItem, keyof typeof PATCH_COLUMNS>> & { pending?: PendingRequest | null; autotestResult?: TestResult | null; testReport?: TestReport | null },
+    patch: Partial<Pick<StoredWorkItem, keyof typeof PATCH_COLUMNS>> & { pending?: PendingRequest | null; autotestResult?: TestResult | null; testReport?: TestReport | null; prs?: PrRecord[] },
     now = new Date(),
   ): StoredWorkItem {
     const sets: string[] = ['updated_at = ?'];
@@ -329,6 +337,10 @@ export class Store {
         const v = (patch as Record<string, unknown>)[key];
         values.push(typeof v === 'boolean' ? Number(v) : (v as string | number | null));
       }
+    }
+    if ('prs' in patch) {
+      sets.push('prs = ?');
+      values.push(patch.prs?.length ? JSON.stringify(patch.prs) : null);
     }
     if ('testReport' in patch) {
       sets.push('test_report = ?');

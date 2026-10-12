@@ -16,6 +16,17 @@ describe('寫入防護', () => {
     expect(decide('PUT', u('/api/resource/uploadimage'))).toBe('block'); // 但 PUT 還是擋
   });
 
+  it('登入流程的其他步驟放行（寄驗證信、兩步驟驗證）；同樣在 auth 底下的改密碼、綁定還是擋', () => {
+    const web = (path: string) => `https://uat8-newplatform.mxsyl.com${path}`;
+    expect(decide('POST', web('/v1/member/auth/loginbyemail'))).toBe('login');
+    expect(decide('POST', web('/v1/member/auth/sendemailverify'))).toBe('login');
+    expect(decide('POST', web('/v1/member/auth/verify2fa'))).toBe('login');
+    expect(decide('POST', web('/v1/member/auth/resetpassword'))).toBe('block');
+    expect(decide('POST', web('/v1/member/auth/bindphonecode'))).toBe('block');
+    expect(decide('POST', web('/v1/member/sendemailverify'))).toBe('block'); // 不在 auth 底下就照一般規則
+    expect(decide('POST', web('/v1/game/gamemultiplelabel'))).toBe('read'); // 查遊戲標籤
+  });
+
   it('會改資料的擋下：先看有沒有改資料的字，再看查詢的字；看不出來的也擋', () => {
     expect(decide('POST', u('/api/resource/popup/addpopup'))).toBe('block');
     expect(decide('POST', u('/api/x/updateBudget'))).toBe('block'); // 有 get 但其實是 update

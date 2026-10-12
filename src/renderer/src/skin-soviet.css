@@ -1,0 +1,65 @@
+/*
+ * 蘇聯外觀（紅色警戒 2 風格）：跟盟軍同一套結構（skin-allied.css），換一組陣營色與材質——
+ * 暗紅生鏽的鐵板、橘紅色發光、紅色雷達、紅星徽章、黃黑警示帶的防爆門。全部自己畫。
+ */
+
+:root[data-skin='soviet'] {
+  --bg: #120806;
+  --fg: #f6e4da;
+  --muted: #b48c7e;
+  --line: #4a2219;
+  --hover: #2a100b;
+  --selected: #4a1610;
+  --accent: #ff6a3d;
+  --running: #ff7a45;
+  --code-bg: #170806;
+  --later-bg: #22100c;
+
+  --fx: #ff5a2e;
+  --fx-rgb: 255, 90, 46;
+  --fx-hi: #ff9a6b;
+  --fx-pale: #ffd2bc;
+  --fx-mid: #d9361a;
+  --fx-deep: #7c1408;
+  --fx-line: #4f241b;
+  --fx-line-hi: #7a3022;
+  --fx-line-dark: #2a110c;
+  --fx-well: #0e0504;
+  --fx-dim: #c47a62;
+  --fx-tag: #3d120b;
+  --knob-in: #6a1a0c;
+  --knob-out: #2a0a05;
+  --fx-chip: #2a100b;
+  --fx-text: #fff0e8;
+  --rim: #a3826f;
+
+  /* 生鏽的鐵板（偏紅褐、比盟軍粗糙） */
+  --steel: linear-gradient(180deg, #e2cbbb 0%, #a8826e 14%, #65453a 48%, #341f19 52%, #5e3e33 82%, #bb9881 100%);
+  --steel-v: linear-gradient(90deg, #341f19 0%, #9c7764 30%, #d7bca9 50%, #9c7764 70%, #341f19 100%);
+  --glass: linear-gradient(180deg, rgba(54, 18, 12, 0.96), rgba(16, 6, 4, 0.96));
+  --rivet: radial-gradient(circle at 35% 35%, #fbe9dd 0 18%, #a8826e 30%, #4a2c22 62%, transparent 66%);
+
+  --tab-btn: linear-gradient(180deg, #b4442c 0%, #6c1b0e 48%, #4a0f07 52%, #8e2b17 100%);
+  --tab-btn-hover: linear-gradient(180deg, #d0583a 0%, #7f2212 48%, #58140a 52%, #a8361d 100%);
+  --btn: linear-gradient(180deg, #5e3429 0%, #361a14 50%, #28120d 51%, #46241b 100%);
+  --btn-hover: linear-gradient(180deg, #74402f 0%, #44201a 50%, #321610 51%, #58301f 100%);
+  --card: linear-gradient(180deg, rgba(100, 36, 24, 0.55), rgba(30, 10, 7, 0.75));
+  --card-hover: linear-gradient(180deg, rgba(135, 48, 30, 0.6), rgba(44, 14, 9, 0.8));
+  --head-bar: linear-gradient(180deg, rgba(125, 42, 26, 0.55), rgba(40, 12, 8, 0.6));
+  --bubble: linear-gradient(180deg, rgba(170, 52, 26, 0.45), rgba(90, 20, 10, 0.55));
+  --composer-bg: linear-gradient(180deg, rgba(70, 22, 14, 0.7), rgba(28, 8, 5, 0.9));
+  --tab-off: linear-gradient(180deg, #4a1c14, #2a100b);
+  --panel-bg: linear-gradient(180deg, rgba(58, 20, 14, 0.7), rgba(26, 8, 6, 0.7));
+  --door-stops: #2c1712 0%, #6d4537 18%, #a27b69 40%, #6b4538 62%, #35201a 100%;
+  --page-bg:
+    radial-gradient(1200px 600px at 70% -10%, rgba(200, 50, 20, 0.2), transparent 60%),
+    linear-gradient(rgba(255, 90, 46, 0.035) 1px, transparent 1px) 0 0 / 100% 24px,
+    linear-gradient(90deg, rgba(255, 90, 46, 0.035) 1px, transparent 1px) 0 0 / 24px 100%,
+    #0d0504;
+}
+
+/* 防爆門：黃黑警示帶（蘇聯的工業感） */
+[data-skin='soviet'] .blast-doors .door::after { background: repeating-linear-gradient(135deg, #e3a51c 0 18px, #1a0d08 18px 36px); }
+
+/* 外觀選單的顏色預覽 */
+.skin-swatch.soviet { background: linear-gradient(180deg, #bb9881, #341f19 52%, #7c1408), #120806; box-shadow: inset 0 -3px 0 #ff5a2e; }

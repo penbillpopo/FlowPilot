@@ -465,3 +465,20 @@ tbody tr.planning input { cursor: pointer; }
 .plan-hidden { margin: 0 0 8px; display: flex; gap: 6px; align-items: baseline; }
 .plan-notice { margin-bottom: 10px; font-size: 13px; }
 .mark.planning { background: color-mix(in srgb, var(--warn) 18%, transparent); color: var(--warn); font-weight: 600; }
+
+/* 發 PR */
+.pr-panel .pr-field { display: flex; flex-direction: column; gap: 4px; }
+.pr-panel .pr-field input:not([type='checkbox']), .pr-panel .pr-field select, .pr-panel textarea { width: 100%; font: inherit; }
+.pr-panel textarea { color: var(--fg); background: var(--bg); border: 1px solid var(--line); border-radius: 6px; padding: 6px 8px; resize: vertical; font-size: 12px; }
+.pr-reviewer { display: flex; gap: 8px; align-items: center; justify-content: flex-start; width: 100%; padding: 4px 6px; border-radius: 4px; cursor: pointer; text-align: left; }
+.pr-reviewer:hover { background: var(--hover); }
+.pr-reviewer input { margin: 0; flex-shrink: 0; width: auto; }
+.pr-list { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 4px; }
+.pr-list li { display: flex; flex-direction: column; gap: 2px; min-width: 0; padding: 6px 0; border-top: 1px solid var(--line); }
+.pr-list li:first-child { border-top: none; padding-top: 0; }
+.pr-line { display: flex; gap: 8px; align-items: center; }
+.pr-line .link { margin-left: auto; }
+.pr-list .pr-title { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.mark.pr-active { color: var(--running); }
+.mark.pr-completed { background: var(--ok-bg); color: var(--ok-fg); }
+.mark.pr-abandoned { color: var(--muted); text-decoration: line-through; }

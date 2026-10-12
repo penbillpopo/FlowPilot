@@ -42,7 +42,7 @@ export function App() {
   const setTab = (next: 'tickets' | 'board') => {
     if (next === tab && !doors) return;
     const calm = window.matchMedia?.('(prefers-reduced-motion: reduce)').matches;
-    if (settings.theme !== 'allied' || calm) return setTabNow(next);
+    if (calm) return setTabNow(next);
     doorTimers.current.forEach(clearTimeout);
     setDoors('closing');
     play('doors');
@@ -82,25 +82,14 @@ export function App() {
   return (
     <div className="shell">
       <nav ref={nav}>
-        {settings.theme === 'allied' && (
-          <div className="emblem" aria-hidden>
-            <svg viewBox="0 0 40 40" width="28" height="28">
-              <defs>
-                <linearGradient id="em" x1="0" y1="0" x2="0" y2="1">
-                  <stop offset="0" stopColor="#bfe9ff" />
-                  <stop offset="1" stopColor="#2a7fd4" />
-                </linearGradient>
-              </defs>
-              <path d="M20 3 L35 9 L33 25 Q28 33 20 37 Q12 33 7 25 L5 9 Z" fill="none" stroke="url(#em)" strokeWidth="2" />
-              <path d="M10 15 L20 11 L30 15 L26 17 L20 15 L14 17 Z M13 21 L20 18 L27 21 L24 23 L20 21 L16 23 Z M16 27 L20 25 L24 27 L20 31 Z" fill="url(#em)" />
-            </svg>
-            <span className="emblem-name">FLOWPILOT</span>
-          </div>
-        )}
+        <div className="emblem" aria-hidden>
+          <Emblem faction={settings.theme} size={28} />
+          <span className="emblem-name">FLOWPILOT</span>
+        </div>
         <button className={tab === 'board' ? 'on' : ''} onClick={() => setTab('board')}>{term('工作台')}</button>
         <button className={tab === 'tickets' ? 'on' : ''} onClick={() => setTab('tickets')}>{term('單列表')}</button>
         <div className="nav-right">
-          {settings.theme === 'allied' && (
+          {(
             <>
               <div className={`radar ${working ? 'live' : ''}`} title={working ? `AI 正在做 ${working} 張單` : '目前沒有 AI 在做'}>
                 <span className="sweep" />
@@ -123,10 +112,7 @@ export function App() {
           <div className="door right" />
           <div className="door-seam" />
           <div className="door-emblem">
-            <svg viewBox="0 0 40 40" width="64" height="64">
-              <path d="M20 3 L35 9 L33 25 Q28 33 20 37 Q12 33 7 25 L5 9 Z" fill="none" stroke="currentColor" strokeWidth="1.6" />
-              <path d="M10 15 L20 11 L30 15 L26 17 L20 15 L14 17 Z M13 21 L20 18 L27 21 L24 23 L20 21 L16 23 Z M16 27 L20 25 L24 27 L20 31 Z" fill="currentColor" />
-            </svg>
+            <Emblem faction={settings.theme} size={64} plain />
           </div>
         </div>
       )}
@@ -141,20 +127,86 @@ export function App() {
   );
 }
 
+/** 陣營徽章（自己畫的）：盟軍是盾牌與三道翼紋，蘇聯是紅星加齒輪外圈 */
+function Emblem({ faction, size, plain }: { faction: SkinSettings['theme']; size: number; plain?: boolean }) {
+  const id = `em-${faction}-${size}`;
+  const [top, bottom] = faction === 'soviet' ? ['#ffd2bc', '#d9361a'] : ['#bfe9ff', '#2a7fd4'];
+  const paint = plain ? 'currentColor' : `url(#${id})`;
+  return (
+    <svg viewBox="0 0 40 40" width={size} height={size}>
+      <defs>
+        <linearGradient id={id} x1="0" y1="0" x2="0" y2="1">
+          <stop offset="0" stopColor={top} />
+          <stop offset="1" stopColor={bottom} />
+        </linearGradient>
+      </defs>
+      {faction === 'soviet' ? (
+        <>
+          <circle cx="20" cy="20" r="16.5" fill="none" stroke={paint} strokeWidth="2" strokeDasharray="3.2 2" />
+          <circle cx="20" cy="20" r="13" fill="none" stroke={paint} strokeWidth="1.2" />
+          <path d="M20 8.5 L22.9 16.6 L31.5 16.9 L24.7 22.2 L27.1 30.5 L20 25.6 L12.9 30.5 L15.3 22.2 L8.5 16.9 L17.1 16.6 Z" fill={paint} />
+        </>
+      ) : (
+        <>
+          <path d="M20 3 L35 9 L33 25 Q28 33 20 37 Q12 33 7 25 L5 9 Z" fill="none" stroke={paint} strokeWidth="2" />
+          <path d="M10 15 L20 11 L30 15 L26 17 L20 15 L14 17 Z M13 21 L20 18 L27 21 L24 23 L20 21 L16 23 Z M16 27 L20 25 L24 27 L20 31 Z" fill={paint} />
+        </>
+      )}
+    </svg>
+  );
+}
+
 /** 外觀設定：標準／盟軍；盟軍外觀可以再開關音效、語音、指揮官用語 */
 function SkinMenu({ settings, onChange }: { settings: SkinSettings; onChange(patch: Partial<SkinSettings>): void }) {
+  const toggles: [keyof SkinSettings, string, string][] = [
+    ['sound', '音效', '做完、要你處理、失敗時的提示音'],
+    ['voice', '指揮官語音', '用英文念狀態（Construction complete…）'],
+    ['lingo', '指揮官用語', '狀態、階段換成作戰用語'],
+  ];
+  // 點選單外面就收起來
+  const box = useRef<HTMLDetailsElement>(null);
+  useEffect(() => {
+    const close = (e: MouseEvent) => {
+      if (box.current?.open && !box.current.contains(e.target as Node)) box.current.removeAttribute('open');
+    };
+    document.addEventListener('mousedown', close);
+    return () => document.removeEventListener('mousedown', close);
+  }, []);
   return (
-    <details className="more skin-menu">
-      <summary>外觀</summary>
-      <div className="more-menu">
-        <button className={settings.theme === 'standard' ? 'on' : ''} onClick={() => onChange({ theme: 'standard' })}>標準</button>
-        <button className={settings.theme === 'allied' ? 'on' : ''} onClick={() => onChange({ theme: 'allied' })}>盟軍（紅色警戒風格）</button>
-        {settings.theme === 'allied' && (
-          <>
-            <label><input type="checkbox" checked={settings.sound} onChange={(e) => onChange({ sound: e.target.checked })} /> 音效</label>
-            <label><input type="checkbox" checked={settings.voice} onChange={(e) => onChange({ voice: e.target.checked })} /> 指揮官語音</label>
-            <label><input type="checkbox" checked={settings.lingo} onChange={(e) => onChange({ lingo: e.target.checked })} /> 指揮官用語</label>
-          </>
+    <details className="skin-menu" ref={box}>
+      <summary title="外觀設定" aria-label="外觀設定">
+        <svg className="gear" viewBox="0 0 24 24" width="20" height="20" aria-hidden>
+          <path
+            fill="currentColor"
+            d="M19.4 13a7.6 7.6 0 0 0 0-2l2.1-1.6-2-3.5-2.5 1a7.4 7.4 0 0 0-1.7-1L15 3h-4l-.3 2.9a7.4 7.4 0 0 0-1.7 1l-2.5-1-2 3.5L6.6 11a7.6 7.6 0 0 0 0 2l-2.1 1.6 2 3.5 2.5-1a7.4 7.4 0 0 0 1.7 1L11 21h4l.3-2.9a7.4 7.4 0 0 0 1.7-1l2.5 1 2-3.5zM13 15.5a3.5 3.5 0 1 1 0-7 3.5 3.5 0 0 1 0 7z"
+            transform="translate(-1 0)"
+          />
+        </svg>
+      </summary>
+      <div className="skin-panel">
+        <div className="skin-title">外觀</div>
+        <div className="skin-themes">
+          <button className={settings.theme === 'allied' ? 'on' : ''} onClick={() => onChange({ theme: 'allied' })}>
+            <span className="skin-swatch allied" />
+            盟軍
+          </button>
+          <button className={settings.theme === 'soviet' ? 'on' : ''} onClick={() => onChange({ theme: 'soviet' })}>
+            <span className="skin-swatch soviet" />
+            蘇聯
+          </button>
+        </div>
+        {(
+          <ul className="skin-toggles">
+            {toggles.map(([key, label, hint]) => (
+              <li key={key}>
+                <button className={`skin-toggle ${settings[key] ? 'on' : ''}`} onClick={() => onChange({ [key]: !settings[key] })} title={hint}>
+                  <span className="led" />
+                  {label}
+                  <span className="muted small">{settings[key] ? '開' : '關'}</span>
+                </button>
+              </li>
+            ))}
+          </ul>
         )}
       </div>
     </details>

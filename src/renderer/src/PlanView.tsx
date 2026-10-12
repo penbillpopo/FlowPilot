@@ -499,9 +499,6 @@ export function PlanView({ drafts, onChange, onBack, onConfirmed }: Props) {
         <span className="muted">
           計畫表裡 {tickets.length} 張：{ready.length} 張可以開始{!allJudged ? '，其他的 AI 還在審閱' : checking ? '，檢查分支中（會先抓遠端）…' : ''}
         </span>
-        <button className="primary" disabled={ready.length === 0 || !!confirming} onClick={() => confirm(ready)}>
-          {confirming && confirming.length > 1 ? '確認中…' : ready.length === tickets.length ? '全部確認，開始開發' : `確認可以開始的 ${ready.length} 張`}
-        </button>
       </footer>
     </main>
   );

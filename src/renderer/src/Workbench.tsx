@@ -2,6 +2,7 @@
 import { createContext, useContext, useEffect, useState } from 'react';
 import type { BoardState, WorkItem, WorkStatus } from '../../shared/types';
 import { ChatPanel, errorText, STATUS_LABEL } from './ChatPanel';
+import { PrPanel } from './PrPanel';
 import { term } from './skin';
 import { AcceptancePanel, FolderTerminalPanel, GitPanel, pendingChecks, TestPanel } from './SidePanels';
 
@@ -30,6 +31,7 @@ function Row({ item, selected, onSelect, extra }: { item: WorkItem; selected: bo
       <div className="ticket-line">
         <strong>{item.ticketKey}</strong>
         {item.status !== 'queued' && <span className={`status ${item.status}`}>{STATUS_LABEL[item.status]}</span>}
+        {item.prs.length > 0 && <span className="mark done" title={item.prs.map((p) => `→ ${p.target || '？'}`).join('\n')}>已發 PR{item.prs.length > 1 ? ` ×${item.prs.length}` : ''}</span>}
         {extra}
       </div>
       <div className="ticket-tag"><ProjectTag item={item} /></div>
@@ -190,6 +192,7 @@ export function Workbench({ onGoTickets }: { onGoTickets(): void }) {
           </div>
         ) : current && RELEASED.includes(current.status) ? (
           // 已結束的單：資料夾可能已經是別張單在用，這裡不再提供會動到資料夾的操作
+          <>
           <div className="panel finished-note">
             <strong>這張單已完成</strong>
             <p className="muted small">
@@ -199,6 +202,8 @@ export function Workbench({ onGoTickets }: { onGoTickets(): void }) {
             <p className="small">分支：<code>{current.branch}</code></p>
             {current.activity && <p className="muted small">{current.activity}</p>}
           </div>
+          {current.status === 'committed' && <PrPanel key={current.id} item={current} />}
+          </>
         ) : current?.folder ? (
           <RightPanels key={current.id} item={current} />
         ) : current ? (

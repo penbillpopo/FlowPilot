@@ -2,6 +2,8 @@
 // 標記：PlatformWeb 是「// sit分支本地调试使用这个」「// uat分支本地调试使用这个」；
 // PlatformAdmin、GoMoneyAdmin 是「/** SIT */」「/** UAT */」。
 // 標記下面接著的程式碼行算同一組，碰到空行或下一個標記就結束。
+// 另外 PlatformWeb 有「// uat使用sit的翻译，调试需要解除此注释」：UAT 用 SIT 的多語系，
+// 這個標記下面的 environment.xxx = … 行切到 UAT 時打開、切回 SIT 時註解掉。
 import { existsSync, readFileSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import type { Env } from '../shared/types';
@@ -58,14 +60,30 @@ export function detectEnvironment(text: string): Env | 'mixed' | null {
   return 'mixed';
 }
 
-/** 打開目標那組的註解、註解掉另一組；其他行原封不動 */
+const UAT_EXTRA_MARKER = /^\s*\/\/\s*uat使用sit/i;
+
+/** 只有 UAT 才要打開的行（標記下面連續的 environment.xxx = … 行） */
+function uatExtras(lines: string[]): number[] {
+  const rows: number[] = [];
+  for (let i = 0; i < lines.length; i++) {
+    if (!UAT_EXTRA_MARKER.test(lines[i])) continue;
+    for (let j = i + 1; j < lines.length && /^\s*(?:\/\/\s*)?environment\.[\w$]+\s*=/.test(lines[j]); j++) rows.push(j);
+  }
+  return rows;
+}
+
+const uncomment = (line: string) => line.replace(/^(\s*)\/\/ ?/, '$1');
+const comment = (line: string) => (isCommented(line) ? line : line.replace(/^(\s*)/, '$1// '));
+
+/** 打開目標那組的註解、註解掉另一組；只有 UAT 才要的行跟著切換；其他行原封不動 */
 export function switchEnvironment(text: string, target: Env): string {
   const lines = text.split('\n');
   const b = blocks(lines);
   if (!b) throw new Error('environment.ts 裡找不到 SIT／UAT 的標記');
   const other: Env = target === 'sit' ? 'uat' : 'sit';
-  for (const i of b[target]) lines[i] = lines[i].replace(/^(\s*)\/\/ ?/, '$1');
-  for (const i of b[other]) if (!isCommented(lines[i])) lines[i] = lines[i].replace(/^(\s*)/, '$1// ');
+  for (const i of b[target]) lines[i] = uncomment(lines[i]);
+  for (const i of b[other]) lines[i] = comment(lines[i]);
+  for (const i of uatExtras(lines)) lines[i] = target === 'uat' ? uncomment(lines[i]) : comment(lines[i]);
   return lines.join('\n');
 }
 

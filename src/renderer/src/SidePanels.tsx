@@ -114,7 +114,7 @@ export function AcceptancePanel({ item }: { item: WorkItem }) {
                         我測過了
                       </label>
                     )}
-                    {a.page && item.folder && (
+                    {a.page && !/\/:/.test(a.page) && item.folder && (
                       <button className="link small" title="在你的瀏覽器打開本機網站這一頁（網站沒開會先啟動）" onClick={() => run(() => api.test.openPage(item.id, a.page))}>
                         打開這頁
                       </button>
@@ -219,7 +219,7 @@ export function TestPanel({ item }: { item: WorkItem }) {
         <span className="test-label">環境</span>
         <div className="segmented">
           {(['sit', 'uat'] as Env[]).map((e) => (
-            <button key={e} className={env === e ? 'on' : ''} disabled={busy || env === e || env === null} onClick={() => switchTo(e)}>
+            <button key={e} className={env === e ? 'on' : ''} disabled={busy || env === null} title={env === e ? '再按一次會重新套用（例如 UAT 要用 SIT 多語系的那行）' : undefined} onClick={() => switchTo(e)}>
               {e.toUpperCase()}
             </button>
           ))}

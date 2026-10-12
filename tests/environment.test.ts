@@ -41,6 +41,23 @@ describe('environment.ts 切換', () => {
     expect(switchEnvironment(uat, 'sit')).toBe(WEB);
   });
 
+  it('PlatformWeb：UAT 用 SIT 的多語系，切到 UAT 時打開那行、切回 SIT 時註解掉；其他註解不動', () => {
+    const translate = "environment.translateUrl = `https://sit-newplatform.mxsyl.com/configs3/LanguageTranslate/Web8/[lang].json`;";
+    const text = WEB + `
+// uat使用sit的翻译，调试需要解除此注释
+// ${translate}
+
+// 解除注释临时使用prod的部分接口进行调试，请勿滥用！
+// environment.apiUrl = 'https://api.gogamingapi1.com';
+`;
+    const uat = switchEnvironment(text, 'uat');
+    expect(uat).toContain(`\n${translate}\n`);
+    expect(uat).toContain("// environment.apiUrl = 'https://api.gogamingapi1.com';");
+    expect(detectEnvironment(uat)).toBe('uat');
+    const sit = switchEnvironment(uat, 'sit');
+    expect(sit).toBe(text);
+  });
+
   it('Admin：保留縮排，不碰 env 那行', () => {
     expect(detectEnvironment(ADMIN)).toBe('sit');
     const uat = switchEnvironment(ADMIN, 'uat');

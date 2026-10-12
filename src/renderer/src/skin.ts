@@ -1,21 +1,24 @@
-// 外觀：標準或「盟軍」（紅色警戒 2 風格，全部自己畫，不用遊戲的圖、字型、音效）。
+// 外觀：「盟軍」或「蘇聯」（紅色警戒 2 風格，全部自己畫，不用遊戲的圖、字型、音效）。
 // 另外可以開音效（自己合成的提示音）、指揮官語音（系統語音念自己寫的台詞）、指揮官用語（狀態、階段換成作戰用語）。
 import { useEffect, useState } from 'react';
 import type { WorkItem, WorkStatus } from '../../shared/types';
 
 export interface SkinSettings {
-  theme: 'standard' | 'allied';
+  theme: 'allied' | 'soviet';
   sound: boolean;
   voice: boolean;
   lingo: boolean;
 }
 
 const KEY = 'flowpilot.skin';
-const DEFAULTS: SkinSettings = { theme: 'standard', sound: false, voice: false, lingo: false };
+const DEFAULTS: SkinSettings = { theme: 'allied', sound: true, voice: true, lingo: true };
 
 function load(): SkinSettings {
   try {
-    return { ...DEFAULTS, ...JSON.parse(localStorage.getItem(KEY) ?? '{}') };
+    const saved = { ...DEFAULTS, ...JSON.parse(localStorage.getItem(KEY) ?? '{}') };
+    // 以前的「標準」外觀拿掉了，改成盟軍
+    if (saved.theme !== 'allied' && saved.theme !== 'soviet') saved.theme = 'allied';
+    return saved;
   } catch {
     return DEFAULTS;
   }
@@ -41,12 +44,12 @@ export function useSkin(): [SkinSettings, (patch: Partial<SkinSettings>) => void
     settings,
     (patch) => {
       const next = { ...settings, ...patch };
-      // 切到標準外觀時，音效、語音、用語一起關掉（那些是盟軍外觀的一部分）
-      if (patch.theme === 'standard') Object.assign(next, { sound: false, voice: false, lingo: false });
-      if (patch.theme === 'allied' && settings.theme !== 'allied') Object.assign(next, { sound: true, voice: true, lingo: true });
       apply(next);
       setSettings(next);
-      if (next.sound && (patch.theme === 'allied' || patch.sound)) play('ready');
+      const switched = !!patch.theme && patch.theme !== settings.theme;
+      if (next.sound && (switched || patch.sound)) play('ready');
+      // 切換陣營：用新陣營的聲音念一段開場白（台詞自己寫的）
+      if (switched || patch.voice) say('selected');
     },
   ];
 }
@@ -166,49 +169,43 @@ export function play(cue: Cue) {
 
 // ---- 指揮官語音（系統內建的語音合成，念自己寫的台詞）----
 
-let voice: SpeechSynthesisVoice | null | undefined;
-function pickVoice(): SpeechSynthesisVoice | null {
-  if (voice !== undefined) return voice;
-  const voices = speechSynthesis.getVoices();
-  if (!voices.length) return null; // 語音清單還沒載入，下次再找
-  voice = ['Samantha', 'Karen', 'Moira', 'Serena'].map((n) => voices.find((v) => v.name.startsWith(n) && v.lang.startsWith('en'))).find(Boolean) ?? voices.find((v) => v.lang.startsWith('en')) ?? null;
-  return voice;
-}
+/**
+ * 指揮官語音：預先錄好的音檔（scripts/make-voices.mjs 用 macOS 的 say 錄的，放在 public/voice）。
+ * 盟軍是女聲（Allied forces selected.）、蘇聯是低沉的男聲（Soviet empire selected.）。
+ * 不用瀏覽器的語音合成：每台電腦拿到的聲音不一定一樣，男聲壓低音調也容易失真。
+ */
+export type VoiceLine = 'selected' | 'building' | 'complete' | 'authorize' | 'orders' | 'unable' | 'canceled' | 'accomplished' | 'options';
 
-export function say(line: string) {
-  if (!current.voice || typeof speechSynthesis === 'undefined') return;
+let speaking: HTMLAudioElement | null = null;
+export function say(line: VoiceLine) {
+  if (!current.voice) return;
   try {
-    const u = new SpeechSynthesisUtterance(line);
-    const v = pickVoice();
-    if (v) u.voice = v;
-    u.lang = 'en-US';
-    u.rate = 0.92;
-    u.pitch = 0.75;
-    u.volume = 0.9;
-    speechSynthesis.cancel();
-    speechSynthesis.speak(u);
+    speaking?.pause(); // 新的一句蓋過上一句
+    speaking = new Audio(`./voice/${current.theme}-${line}.m4a`);
+    speaking.volume = 0.9;
+    void speaking.play().catch(() => {});
   } catch {}
 }
 
 // ---- 工作台變化 → 音效與語音 ----
 
 /** 狀態變成什麼時要播什麼（台詞自己寫，只取那個味道） */
-function cueFor(item: WorkItem, before: WorkStatus | undefined): [Cue, string] | null {
+function cueFor(item: WorkItem, before: WorkStatus | undefined): [Cue, VoiceLine] | null {
   if (before === item.status) return null;
   switch (item.status) {
     case 'running':
-      return before === 'queued' || before === 'preparing' ? ['start', 'Building.'] : null;
+      return before === 'queued' || before === 'preparing' ? ['start', 'building'] : null;
     case 'review':
-      return ['ready', 'Construction complete.'];
+      return ['ready', 'complete'];
     case 'waiting':
-      return ['attention', item.pending?.kind === 'approval' ? 'Authorization required.' : 'Awaiting orders, commander.'];
+      return ['attention', item.pending?.kind === 'approval' ? 'authorize' : 'orders'];
     case 'failed':
     case 'blocked':
-      return ['fail', 'Unable to comply.'];
+      return ['fail', 'unable'];
     case 'stopped':
-      return ['click', 'Canceled.'];
+      return ['click', 'canceled'];
     case 'committed':
-      return ['done', 'Mission accomplished.'];
+      return ['done', 'accomplished'];
     default:
       return null;
   }
@@ -222,9 +219,9 @@ export function useBoardCues(items: WorkItem[] | null) {
     const next = new Map(items.map((i) => [i.id, i.status]));
     if (seen) {
       const rank: Cue[] = ['fail', 'attention', 'done', 'ready', 'start', 'click'];
-      const cues = items.map((i) => cueFor(i, seen.get(i.id))).filter((c): c is [Cue, string] => !!c);
+      const cues = items.map((i) => cueFor(i, seen.get(i.id))).filter((c): c is [Cue, VoiceLine] => !!c);
       const added = items.some((i) => !seen.has(i.id));
-      if (added && !cues.length) cues.push(['start', 'New construction options.']);
+      if (added && !cues.length) cues.push(['start', 'options']);
       cues.sort((a, b) => rank.indexOf(a[0]) - rank.indexOf(b[0]));
       if (cues[0]) {
         play(cues[0][0]);

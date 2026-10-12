@@ -160,10 +160,11 @@ export function ReviewIssues({ review, onChange }: { review: Review; onChange(re
         <textarea
           rows={2}
           value={text}
-          placeholder="跟 AI 討論這張單：追問、補充背景，或告訴它 PM 的回覆（⌘＋Enter 送出）。AI 會一併更新上面的問題。"
+          placeholder="跟 AI 討論這張單：追問、補充背景，或告訴它 PM 的回覆（Enter 送出，Shift＋Enter 換行）。AI 會一併更新上面的問題。"
           onChange={(e) => setText(e.target.value)}
           onKeyDown={(e) => {
-            if (e.key === 'Enter' && e.metaKey) {
+            // Enter 送出、Shift＋Enter 換行；中文輸入法選字時按的 Enter 不算
+            if (e.key === 'Enter' && !e.shiftKey && !e.nativeEvent.isComposing) {
               e.preventDefault();
               send();
             }

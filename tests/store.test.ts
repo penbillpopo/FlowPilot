@@ -98,3 +98,38 @@ describe('計畫表的草稿', () => {
     expect(store.isDraft('ALL-1')).toBe(false);
   });
 });
+
+describe('發過的 PR', () => {
+  it('一張單可以記好幾個 PR；沒發過是空的', () => {
+    const store = new Store(':memory:');
+    const run = store.createRun([ticket('ALL-1')]);
+    const [item] = store.createWorkItems([{
+      runId: run.id, ticketKey: 'ALL-1', ticketSummary: '', mainKey: 'ALL-1', mainUrl: '', project: 'PlatformWeb', merchant: 1,
+      targetMerchants: [], branch: 'ban/m1/ALL-1', baseBranch: 'master-1', skill: 'x', prTitle: 'feat(ALL-1) x', preferredFolder: null,
+    }]);
+    expect(store.getWorkItem(item.id)!.prs).toEqual([]);
+    const sit = { id: 1, url: 'https://x/pullrequest/1', target: 'sit-1', title: 'feat(ALL-1) x' };
+    const uat = { id: 2, url: 'https://x/pullrequest/2', target: 'uat-1', title: 'feat(ALL-1) x' };
+    store.updateWorkItem(item.id, { prs: [sit] });
+    store.updateWorkItem(item.id, { prs: [sit, uat] });
+    expect(store.getWorkItem(item.id)!.prs.map((p) => p.target)).toEqual(['sit-1', 'uat-1']);
+  });
+
+  it('舊版存的單一 PR 網址搬進清單', () => {
+    const file = join(mkdtempSync(join(tmpdir(), 'fp-pr-')), 'db.sqlite');
+    const old = new Store(file);
+    const run = old.createRun([ticket('ALL-2')]);
+    const [item] = old.createWorkItems([{
+      runId: run.id, ticketKey: 'ALL-2', ticketSummary: '', mainKey: 'ALL-2', mainUrl: '', project: 'PlatformWeb', merchant: 1,
+      targetMerchants: [], branch: 'ban/m1/ALL-2', baseBranch: 'master-1', skill: 'x', prTitle: 'feat(ALL-2) x', preferredFolder: null,
+    }]);
+    // 模擬舊版：只有 pr_url，還沒有 prs
+    const db = (old as unknown as { db: { exec(sql: string): void; prepare(sql: string): { get(): unknown } } }).db;
+    const version = (db.prepare('PRAGMA user_version').get() as { user_version: number }).user_version;
+    db.exec(`UPDATE work_items SET pr_url = 'https://x/pullrequest/9', prs = NULL; PRAGMA user_version = ${version - 1}; ALTER TABLE work_items DROP COLUMN prs;`);
+    old.close();
+    const store = new Store(file);
+    expect(store.getWorkItem(item.id)!.prs).toEqual([{ id: 0, url: 'https://x/pullrequest/9', target: '', title: '' }]);
+    store.close();
+  });
+});

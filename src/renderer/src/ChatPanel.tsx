@@ -619,14 +619,15 @@ export function ChatPanel({ item }: { item: WorkItem }) {
             rows={3}
             value={text}
             placeholder={
-              running ? '補充指示（會插進正在進行的這一輪）。可以直接貼上截圖。'
-              : awaitingYou ? 'AI 在等你回答…（⌘＋Enter 送出，可以直接貼上截圖）'
-              : '跟 AI 說…（⌘＋Enter 送出，可以直接貼上截圖）'
+              running ? '補充指示（會插進正在進行的這一輪，Enter 送出，Shift＋Enter 換行）。可以直接貼上截圖。'
+              : awaitingYou ? 'AI 在等你回答…（Enter 送出，Shift＋Enter 換行，可以直接貼上截圖）'
+              : '跟 AI 說…（Enter 送出，Shift＋Enter 換行，可以直接貼上截圖）'
             }
             onChange={(e) => setText(e.target.value)}
             onPaste={onPaste}
             onKeyDown={(e) => {
-              if (e.key === 'Enter' && e.metaKey) {
+              // Enter 送出、Shift＋Enter 換行；中文輸入法選字時按的 Enter 不算
+              if (e.key === 'Enter' && !e.shiftKey && !e.nativeEvent.isComposing) {
                 e.preventDefault();
                 send();
               }

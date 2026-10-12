@@ -64,8 +64,10 @@ export interface RunnerDeps {
 /** 有任何回應就算連得到（後端回 404、401 也是連上了）；5 秒沒回應或連線失敗就是連不到 */
 async function reachable(url: string): Promise<boolean> {
   try {
-    await fetch(url, { signal: AbortSignal.timeout(5000) });
-    return true;
+    const response = await fetch(url, { signal: AbortSignal.timeout(5000) });
+    // 有回應不代表能用：沒開 VPN、IP 不在白名單時，Cloudflare 會回 403 擋下，瀏覽器看起來就像跨網域（CORS）錯誤
+    const blocked = response.headers.has('cf-mitigated') || (response.status === 403 && /cloudflare/i.test(response.headers.get('server') ?? ''));
+    return !blocked;
   } catch {
     return false;
   }
@@ -134,7 +136,7 @@ export function reportLines(review: Review | null): string[] {
     '  - files：改到的檔案路徑（從專案根目錄開始）。',
     '  - impact：也會影響到的頁面或功能。改到共用的元件、服務、樣式時，一定要實際搜尋（例如 rg）有哪些地方用到，寫出頁面名稱；沒有就寫空字串。',
     '  - howToTest：我要怎麼測：在哪一頁、用哪個商戶、做什麼操作、應該看到什麼。具體到我照著做就能驗收。',
-    '  - page：要測的頁面路徑（例如 /order/list），沒有固定頁面就寫空字串。',
+    '  - page：要測的頁面路徑，要能直接打開（例如 /order/list）；路由有參數（例如 /games/:providerCatId/:gameId）就填一個實際存在、你測過的網址，找不到就寫空字串，並在 howToTest 寫怎麼點進去。',
     '  - needYou：要不要我親自看（畫面、操作感覺、寫入後的結果、你沒測到的）是 true；你已經確實測過、我不用再看的是 false。',
     '  - attention：要我特別注意的地方，一條一句：Jira 沒寫清楚由你自己判斷的、跟 Jira 或設計稿不一致的（寫原因）、需求範圍以外也被改到的。沒有就給空陣列。',
     '  - otherChanges：跟某一條預期結果無關、但也改到的東西（例如共用元件、重構、修掉的舊問題）。這張單改到的每一個檔案，都要出現在某一條的 files 或 otherChanges 裡（environment.ts 除外）。',
@@ -248,6 +250,11 @@ export class Runner {
   /** 進行中的單停下來等你、做完或失敗時跳系統通知（每一張進行中的單都會通知） */
   private notify(id: number, title: string, body: string) {
     this.deps.notify(title, body, id);
+  }
+
+  /** 工作台以外的地方改了單（例如發了 PR），通知畫面更新 */
+  notifyChanged() {
+    this.deps.onChange();
   }
 
   private update(id: number, patch: Parameters<Store['updateWorkItem']>[1]): StoredWorkItem {
@@ -619,12 +626,14 @@ export class Runner {
       const common = [
         `- 寫入防護：這個測試瀏覽器會擋下所有會新增、修改、刪除資料的請求（PUT、PATCH、DELETE，以及網址看起來會改資料的 POST），不會送到後端，並回一個假的成功（success: true）。登入和查詢會正常放行。`,
         `  每個被擋下或放行的請求（含送出的內容）都記在 ${requestLog}，一行一筆 JSON。按下儲存、送出之後，用終端機讀這個檔案（例如 cat），逐欄對照預期的 payload（欄位、值、不該送的欄位、null）。`,
+        '  寫入防護是照網址猜的，可能猜錯：如果某個被擋下的請求其實是查詢或登入步驟（例如被擋之後畫面變空、資料不見、被登出），在結果的「要你注意」裡寫出那個網址，FlowPilot 會修正規則。',
         '  因為回的是假的成功，存檔之後的畫面（例如列表多一筆、詳情變成新的值）不會跟真的一樣，這部分列進要我手動測的項目。不要用任何方式繞過防護（例如用 curl 或腳本直接打後端）。',
         `- 本機網站已經由 FlowPilot 啟動：${url}，直接用；不要自己啟動、重啟或關掉網站。`,
         `- 環境：FlowPilot 已經切到 ${env.toUpperCase()}，不要修改 ${ENVIRONMENT_FILE}。`,
         // 實測：AI 曾試著在瀏覽器裡讀這個檔案（讀不到）就放棄登入，所以寫清楚用終端機讀
         `- 登入：先用終端機指令讀 ${accountFile}（例如 cat）取得帳號密碼，再用瀏覽器工具填進登入表單自動登入（登入畫面要 OTP 時，填檔案裡的 otp）。這個檔案在電腦上，瀏覽器裡讀不到，不要在瀏覽器裡讀。不要停下來等我登入，也不要把密碼印出來或寫進任何檔案、回覆。`,
         '- 第一步先登入：登入失敗（帳號密碼錯、OTP、被擋）就立刻停止，不要再試別的，直接回報「測試結果：沒測成（登入失敗：原因）」。',
+        '- 看到跨網域（CORS）錯誤先不要下結論：重新整理再試一次，並用終端機 curl 帶 Origin 標頭（例如 curl -sI -H "Origin: 本機網站網址" 後端網址/version）看後端有沒有回 Access-Control-Allow-Origin。後端有回就不是後端的問題，重試或換方式繼續測；確定是環境問題才回報沒測成，並附上 curl 的結果。',
         '- 失敗時先判斷原因：是前端程式的問題就直接修正，然後重測失敗的部分，最多 3 輪；不是前端的問題（後端、資料、權限、環境）就記下來，不要修。API 回 404 通常是後端還沒部署這支 API，不是前端的錯。',
         '- 不要提交、不要推送。自己做，不要開子 AI（spawn_agent）分工。',
         ...designCompareLines(this.deps.store.getReview(item.ticketKey)?.review ?? null),

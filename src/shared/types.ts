@@ -40,6 +40,13 @@ export interface PlanEntry {
 }
 
 /** 一張單的計畫（計畫表的一列） */
+/** 計畫表裡的一張單：加進來就留著，按返回也不會清掉 */
+export interface PlanDraft {
+  ticket: JiraTicket;
+  /** 你改過的計畫；還沒改過是 null（照 AI 審閱的結果） */
+  plan: TicketPlan | null;
+}
+
 export interface TicketPlan {
   ticket: JiraTicket;
   entries: PlanEntry[];
@@ -412,6 +419,8 @@ export interface TicketMark {
   active: boolean;
   /** 在工作台上而且已完成 */
   done: boolean;
+  /** 在計畫表裡（還沒確認） */
+  planning: boolean;
   /** 本機已經有這張單的分支 */
   branch: boolean;
 }
@@ -434,7 +443,14 @@ export interface FlowPilotApi {
   listTickets(statuses: string[]): Promise<JiraTicket[]>;
   /** 單列表可以選的狀態，以及預設選哪些 */
   statusOptions(): Promise<{ statuses: string[]; defaultStatuses: string[] }>;
-  createRun(tickets: JiraTicket[]): Promise<RunSummary>;
+  /** 計畫表裡的單 */
+  planDrafts(): Promise<PlanDraft[]>;
+  /** 把單加進計畫表（AI 在背景審閱） */
+  planAdd(tickets: JiraTicket[]): Promise<PlanDraft[]>;
+  /** 存下你在計畫表改過的內容 */
+  planSaveDraft(ticketKey: string, plan: TicketPlan): Promise<void>;
+  /** 不做了：從計畫表拿掉，審閱紀錄也刪掉 */
+  planDiscard(ticketKeys: string[]): Promise<PlanDraft[]>;
   latestRun(): Promise<RunSummary | null>;
   openExternal(url: string): Promise<void>;
   openSettingsFile(): Promise<void>;
@@ -453,7 +469,8 @@ export interface FlowPilotApi {
   requestRequirementUpdate(itemId: number): Promise<void>;
   /** 算出分支並檢查是否已建立；fetch 為 true 時先抓遠端 */
   checkBranches(plans: TicketPlan[], fetch: boolean): Promise<PlanBranch[]>;
-  confirmPlan(runId: number, plans: TicketPlan[], judgements: Record<string, Judgement>): Promise<RunSummary>;
+  /** 確認這幾張的計畫，建立分支、交給 AI 開發；其他還在計畫表的不受影響 */
+  confirmPlan(plans: TicketPlan[], judgements: Record<string, Judgement>): Promise<RunSummary>;
   /** 執行看板 */
   board(): Promise<BoardState>;
   onBoardChanged(listener: (board: BoardState) => void): () => void;
@@ -520,7 +537,6 @@ export interface FlowPilotApi {
   /** 單列表的標記：在工作台上（不能再選）、分支已經存在 */
   ticketMarks(keys: string[]): Promise<Record<string, TicketMark>>;
   /** 在計畫表返回、沒有確認的單：審閱紀錄不留 */
-  discardReviews(keys: string[]): Promise<void>;
   test: {
     state(itemId: number): Promise<TestState>;
     /** 切換 SIT／UAT（只切換 environment.ts 裡的註解） */

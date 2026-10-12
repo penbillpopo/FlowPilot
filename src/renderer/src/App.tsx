@@ -1,7 +1,8 @@
 // 主畫面：上方切換「工作台」與「單列表」。
 // 單列表：列出 Jira 上進行中的單，由你勾選這次要做哪幾張；確認後進入計畫表，計畫確認後跳到執行看板。
-import { useEffect, useState } from 'react';
-import type { JiraTicket, RunSummary, TicketMark } from '../../shared/types';
+import { useEffect, useRef, useState } from 'react';
+import type { JiraTicket, PlanDraft, TicketMark, WorkItem } from '../../shared/types';
+import { play, term, useBoardCues, useSkin, type SkinSettings } from './skin';
 import { Workbench } from './Workbench';
 import { PlanView } from './PlanView';
 
@@ -32,17 +33,103 @@ function formatTime(iso: string) {
 }
 
 export function App() {
-  const [tab, setTab] = useState<'tickets' | 'board'>('board');
+  const [tab, setTabNow] = useState<'tickets' | 'board'>('board');
+  const [settings, setSkin] = useSkin();
+  // 盟軍外觀的換場：防爆門合上 → 換畫面 → 打開
+  const [doors, setDoors] = useState<'closing' | 'opening' | null>(null);
+  const doorTimers = useRef<ReturnType<typeof setTimeout>[]>([]);
+  const nav = useRef<HTMLElement>(null);
+  const setTab = (next: 'tickets' | 'board') => {
+    if (next === tab && !doors) return;
+    const calm = window.matchMedia?.('(prefers-reduced-motion: reduce)').matches;
+    if (settings.theme !== 'allied' || calm) return setTabNow(next);
+    doorTimers.current.forEach(clearTimeout);
+    setDoors('closing');
+    play('doors');
+    doorTimers.current = [
+      setTimeout(() => {
+        setTabNow(next);
+        setDoors('opening');
+      }, 420),
+      setTimeout(() => setDoors(null), 420 + 740),
+    ];
+  };
+  const [items, setItems] = useState<WorkItem[] | null>(null);
 
   // 點系統通知時跳到工作台
-  useEffect(() => api.onFocusItem(() => setTab('board')), []);
+  useEffect(() => api.onFocusItem(() => setTabNow('board')), []);
+
+  // 上方的計數器、雷達與音效看整個工作台
+  useEffect(() => {
+    api.board().then((b) => setItems(b.items)).catch(() => {});
+    return api.onBoardChanged((b) => setItems(b.items));
+  }, []);
+  useBoardCues(items);
+
+  // 盟軍外觀：按按鈕有一點點聲音
+  useEffect(() => {
+    const onClick = (e: MouseEvent) => {
+      if ((e.target as HTMLElement).closest('button:not(:disabled), summary')) play('click');
+    };
+    document.addEventListener('click', onClick, true);
+    return () => document.removeEventListener('click', onClick, true);
+  }, []);
+
+  const list = items ?? [];
+  const needYou = list.filter((i) => i.status === 'waiting' || i.status === 'review' || i.status === 'blocked').length;
+  const working = list.filter((i) => i.status === 'running' || i.status === 'preparing').length;
 
   return (
     <div className="shell">
-      <nav>
-        <button className={tab === 'board' ? 'on' : ''} onClick={() => setTab('board')}>工作台</button>
-        <button className={tab === 'tickets' ? 'on' : ''} onClick={() => setTab('tickets')}>單列表</button>
+      <nav ref={nav}>
+        {settings.theme === 'allied' && (
+          <div className="emblem" aria-hidden>
+            <svg viewBox="0 0 40 40" width="28" height="28">
+              <defs>
+                <linearGradient id="em" x1="0" y1="0" x2="0" y2="1">
+                  <stop offset="0" stopColor="#bfe9ff" />
+                  <stop offset="1" stopColor="#2a7fd4" />
+                </linearGradient>
+              </defs>
+              <path d="M20 3 L35 9 L33 25 Q28 33 20 37 Q12 33 7 25 L5 9 Z" fill="none" stroke="url(#em)" strokeWidth="2" />
+              <path d="M10 15 L20 11 L30 15 L26 17 L20 15 L14 17 Z M13 21 L20 18 L27 21 L24 23 L20 21 L16 23 Z M16 27 L20 25 L24 27 L20 31 Z" fill="url(#em)" />
+            </svg>
+            <span className="emblem-name">FLOWPILOT</span>
+          </div>
+        )}
+        <button className={tab === 'board' ? 'on' : ''} onClick={() => setTab('board')}>{term('工作台')}</button>
+        <button className={tab === 'tickets' ? 'on' : ''} onClick={() => setTab('tickets')}>{term('單列表')}</button>
+        <div className="nav-right">
+          {settings.theme === 'allied' && (
+            <>
+              <div className={`radar ${working ? 'live' : ''}`} title={working ? `AI 正在做 ${working} 張單` : '目前沒有 AI 在做'}>
+                <span className="sweep" />
+                {list.filter((i) => i.status !== 'removed').slice(0, 8).map((i, n) => (
+                  <span key={i.id} className={`blip s-${i.status}`} style={{ '--a': `${n * 47 + 20}deg`, '--r': `${30 + ((n * 23) % 55)}%` } as React.CSSProperties} />
+                ))}
+              </div>
+              <div className="counter" title="等你處理的單（等你回答、等你測試、卡住）">
+                <span className="counter-label">{needYou ? 'ORDERS' : 'STANDBY'}</span>
+                <span className="counter-digits">{String(needYou).padStart(5, '0')}</span>
+              </div>
+            </>
+          )}
+          <SkinMenu settings={settings} onChange={setSkin} />
+        </div>
       </nav>
+      {doors && (
+        <div className={`blast-doors ${doors}`} style={{ top: nav.current?.offsetHeight ?? 52 }} aria-hidden>
+          <div className="door left" />
+          <div className="door right" />
+          <div className="door-seam" />
+          <div className="door-emblem">
+            <svg viewBox="0 0 40 40" width="64" height="64">
+              <path d="M20 3 L35 9 L33 25 Q28 33 20 37 Q12 33 7 25 L5 9 Z" fill="none" stroke="currentColor" strokeWidth="1.6" />
+              <path d="M10 15 L20 11 L30 15 L26 17 L20 15 L14 17 Z M13 21 L20 18 L27 21 L24 23 L20 21 L16 23 Z M16 27 L20 25 L24 27 L20 31 Z" fill="currentColor" />
+            </svg>
+          </div>
+        </div>
+      )}
       {/* 兩個分頁都保持掛著，切換時不會丟掉計畫表或輸入到一半的回覆 */}
       <div hidden={tab !== 'tickets'}>
         <TicketList onConfirmed={() => setTab('board')} />
@@ -54,13 +141,36 @@ export function App() {
   );
 }
 
+/** 外觀設定：標準／盟軍；盟軍外觀可以再開關音效、語音、指揮官用語 */
+function SkinMenu({ settings, onChange }: { settings: SkinSettings; onChange(patch: Partial<SkinSettings>): void }) {
+  return (
+    <details className="more skin-menu">
+      <summary>外觀</summary>
+      <div className="more-menu">
+        <button className={settings.theme === 'standard' ? 'on' : ''} onClick={() => onChange({ theme: 'standard' })}>標準</button>
+        <button className={settings.theme === 'allied' ? 'on' : ''} onClick={() => onChange({ theme: 'allied' })}>盟軍（紅色警戒風格）</button>
+        {settings.theme === 'allied' && (
+          <>
+            <label><input type="checkbox" checked={settings.sound} onChange={(e) => onChange({ sound: e.target.checked })} /> 音效</label>
+            <label><input type="checkbox" checked={settings.voice} onChange={(e) => onChange({ voice: e.target.checked })} /> 指揮官語音</label>
+            <label><input type="checkbox" checked={settings.lingo} onChange={(e) => onChange({ lingo: e.target.checked })} /> 指揮官用語</label>
+          </>
+        )}
+      </div>
+    </details>
+  );
+}
+
 function TicketList({ onConfirmed }: { onConfirmed(): void }) {
   const [tickets, setTickets] = useState<JiraTicket[] | null>(null);
   const [selected, setSelected] = useState<Set<string>>(new Set());
   const [marks, setMarks] = useState<Record<string, TicketMark>>({});
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const [planning, setPlanning] = useState<{ run: RunSummary; tickets: JiraTicket[] } | null>(null);
+  // 計畫表：加進去的單一直留著（按返回也不會清掉），審閱在背景跑
+  const [drafts, setDrafts] = useState<PlanDraft[]>([]);
+  const [showPlan, setShowPlan] = useState(false);
+  const [adding, setAdding] = useState(false);
   const [statusOptions, setStatusOptions] = useState<string[]>([]);
   const [statuses, setStatuses] = useState<string[] | null>(null);
 
@@ -82,7 +192,13 @@ function TicketList({ onConfirmed }: { onConfirmed(): void }) {
     }
   }
 
+  const reloadMarks = () => {
+    const keys = tickets?.map((t) => t.key) ?? [];
+    if (keys.length) api.ticketMarks(keys).then(setMarks).catch(() => {});
+  };
+
   useEffect(() => {
+    api.planDrafts().then(setDrafts).catch(() => {});
     api.statusOptions().then(({ statuses: available, defaultStatuses }) => {
       setStatusOptions(available);
       const initial = rememberedStatuses(available, defaultStatuses);
@@ -110,14 +226,14 @@ function TicketList({ onConfirmed }: { onConfirmed(): void }) {
         if (!keys.length) return;
         api.ticketMarks(keys).then((next) => {
           setMarks(next);
-          setSelected((prev) => new Set([...prev].filter((key) => !next[key]?.active)));
+          setSelected((prev) => new Set([...prev].filter((key) => !next[key]?.active && !next[key]?.planning)));
         }).catch(() => {});
       }, 500);
     });
   }, [tickets]);
 
   function toggle(key: string) {
-    if (marks[key]?.active) return; // 在工作台上的單不能再選
+    if (marks[key]?.active || marks[key]?.planning) return; // 在工作台上、已經在計畫表裡的單不能再選
     setSelected((prev) => {
       const next = new Set(prev);
       next.has(key) ? next.delete(key) : next.add(key);
@@ -125,32 +241,42 @@ function TicketList({ onConfirmed }: { onConfirmed(): void }) {
     });
   }
 
-  async function confirm() {
+  async function addToPlan() {
     if (!tickets) return;
-    const chosen = tickets.filter((t) => selected.has(t.key));
-    setPlanning({ run: await api.createRun(chosen), tickets: chosen });
+    setAdding(true);
+    setError(null);
+    try {
+      setDrafts(await api.planAdd(tickets.filter((t) => selected.has(t.key))));
+      setSelected(new Set());
+      setShowPlan(true);
+      reloadMarks();
+    } catch (e) {
+      setError(e instanceof Error ? e.message.replace(/^Error invoking remote method '[^']+': (Error: )?/, '') : String(e));
+    } finally {
+      setAdding(false);
+    }
   }
 
-  if (planning) {
+  if (showPlan && drafts.length) {
     return (
       <PlanView
-        run={planning.run}
-        tickets={planning.tickets}
+        drafts={drafts}
+        onChange={setDrafts}
         onBack={() => {
-          // 返回沒有確認：這些單的審閱紀錄不留（審閱紀錄跟著工作台走）
-          api.discardReviews(planning.tickets.map((t) => t.key)).catch(() => {});
-          setPlanning(null);
+          // 返回不會清掉計畫表：審閱、討論、你改過的內容都留著
+          setShowPlan(false);
+          reloadMarks();
         }}
         onConfirmed={() => {
-          setPlanning(null);
-          setSelected(new Set());
+          setShowPlan(false);
+          reloadMarks();
           onConfirmed();
         }}
       />
     );
   }
 
-  const selectable = tickets?.filter((t) => !marks[t.key]?.active) ?? [];
+  const selectable = tickets?.filter((t) => !marks[t.key]?.active && !marks[t.key]?.planning) ?? [];
   const allChecked = selectable.length > 0 && selectable.every((t) => selected.has(t.key));
 
   return (
@@ -178,6 +304,17 @@ function TicketList({ onConfirmed }: { onConfirmed(): void }) {
 
       {error && <div className="error">{error}</div>}
 
+      {/* 計畫中的單直接點那一列打開計畫表；只有不在目前篩選裡的，才在這裡留一個入口 */}
+      {(() => {
+        const hidden = drafts.filter((d) => !tickets?.some((t) => t.key === d.ticket.key));
+        return hidden.length > 0 && (
+          <p className="muted small plan-hidden">
+            計畫表裡還有 {hidden.map((d) => d.ticket.key).join('、')}（不在目前選的狀態裡）
+            <button className="link small" onClick={() => setShowPlan(true)}>打開</button>
+          </p>
+        );
+      })()}
+
       {tickets && tickets.length === 0 && !error && <p className="empty">{statuses?.length ? '選的狀態裡目前沒有單。' : '請至少選一個狀態。'}</p>}
 
       {tickets && tickets.length > 0 && (
@@ -203,12 +340,12 @@ function TicketList({ onConfirmed }: { onConfirmed(): void }) {
             {tickets.map((t) => (
               <tr
                 key={t.key}
-                className={`${selected.has(t.key) ? 'selected' : ''} ${marks[t.key]?.active ? 'locked' : ''}`}
-                onClick={() => toggle(t.key)}
-                title={marks[t.key]?.active ? '這張單在工作台上，要在工作台移除後才能再選' : undefined}
+                className={`${selected.has(t.key) ? 'selected' : ''} ${marks[t.key]?.active ? 'locked' : ''} ${marks[t.key]?.planning ? 'planning' : ''}`}
+                onClick={() => (marks[t.key]?.planning ? setShowPlan(true) : toggle(t.key))}
+                title={marks[t.key]?.active ? '這張單在工作台上，要在工作台移除後才能再選' : marks[t.key]?.planning ? '這張單在計畫表裡，點一下打開計畫表' : undefined}
               >
                 <td className="check">
-                  <input type="checkbox" checked={selected.has(t.key)} disabled={!!marks[t.key]?.active} onChange={() => toggle(t.key)} onClick={(e) => e.stopPropagation()} />
+                  <input type="checkbox" checked={selected.has(t.key)} disabled={!!marks[t.key]?.active || !!marks[t.key]?.planning} onChange={() => toggle(t.key)} onClick={(e) => e.stopPropagation()} />
                 </td>
                 <td className="key">
                   <a href={t.url} onClick={(e) => { e.preventDefault(); e.stopPropagation(); api.openExternal(t.url); }}>{t.key}</a>
@@ -217,6 +354,7 @@ function TicketList({ onConfirmed }: { onConfirmed(): void }) {
                     {marks[t.key]?.active && (marks[t.key].done
                       ? <span className="mark done" title="這張單在工作台上已完成；在工作台移除後才能再選">已完成</span>
                       : <span className="mark active" title="這張單正在工作台上進行">進行中</span>)}
+                    {marks[t.key]?.planning && <span className="mark planning" title="這張單在計畫表裡，還沒確認">計畫中</span>}
                     {marks[t.key]?.branch && !marks[t.key]?.active && <span className="mark" title="本機已經有這張單的分支，確認後會切換過去繼續開發">有分支</span>}
                   </span>
                 </td>
@@ -240,9 +378,9 @@ function TicketList({ onConfirmed }: { onConfirmed(): void }) {
       )}
 
       <footer>
-        <span className="muted">確認後，AI 會審閱每張單：整理要做什麼、找出單子的問題、判斷專案與商戶，產生計畫表給你確認。</span>
-        <button className="primary" disabled={selected.size === 0} onClick={confirm}>
-          確認這 {selected.size} 張，產生計畫
+        <span className="muted">加進計畫表後，AI 會在背景審閱每張單：整理要做什麼、找出單子的問題、判斷專案與商戶。你可以先去做別的，審好的單可以一張一張確認開工。</span>
+        <button className="primary" disabled={selected.size === 0 || adding} onClick={addToPlan}>
+          {adding ? '加入中…' : `把這 ${selected.size} 張加進計畫表`}
         </button>
       </footer>
     </main>

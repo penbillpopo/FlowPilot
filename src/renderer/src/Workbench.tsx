@@ -2,6 +2,7 @@
 import { createContext, useContext, useEffect, useState } from 'react';
 import type { BoardState, WorkItem, WorkStatus } from '../../shared/types';
 import { ChatPanel, errorText, STATUS_LABEL } from './ChatPanel';
+import { term } from './skin';
 import { AcceptancePanel, FolderTerminalPanel, GitPanel, pendingChecks, TestPanel } from './SidePanels';
 
 const api = window.flowpilot;
@@ -121,7 +122,7 @@ export function Workbench({ onGoTickets }: { onGoTickets(): void }) {
         )}
         {error && <div className="error small">{error}</div>}
 
-        <div className="side-section">進行中（{active.length}）</div>
+        <div className="side-section">{term('進行中')}（{active.length}）</div>
         <ul className="tickets">
           {active.length === 0 && <li className="muted small empty-row">沒有</li>}
           {active.map((i) => (
@@ -131,7 +132,7 @@ export function Workbench({ onGoTickets }: { onGoTickets(): void }) {
 
         {waitingTurn.length > 0 && (
           <>
-            <div className="side-section">排隊（{waitingTurn.length}）</div>
+            <div className="side-section">{term('排隊')}（{waitingTurn.length}）</div>
             <ul className="tickets">
               {waitingTurn.map((i) => (
                 <Row
@@ -158,7 +159,7 @@ export function Workbench({ onGoTickets }: { onGoTickets(): void }) {
 
         {finished.length > 0 && (
           <>
-            <div className="side-section">已完成（{finished.length}）</div>
+            <div className="side-section">{term('已完成')}（{finished.length}）</div>
             <ul className="tickets">
               {finished.map((i) => (
                 <Row key={i.id} item={i} selected={selected === i.id} onSelect={() => setSelected(i.id)} />

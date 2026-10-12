@@ -1,6 +1,6 @@
 // 第二階段畫面：計畫表。AI 先判斷每張單的專案與商戶，你可以改；檢查分支是否已建立後確認。
 import { useEffect, useMemo, useRef, useState } from 'react';
-import type { JiraTicket, PlanBranch, PlanEntry, PlanOptions, Review, ReviewChecks, RunSummary, TicketPlan } from '../../shared/types';
+import type { JiraTicket, PlanBranch, PlanDraft, PlanEntry, PlanOptions, Review, ReviewChecks, TicketPlan } from '../../shared/types';
 import { ReviewIssues } from './ReviewIssues';
 
 const api = window.flowpilot;
@@ -92,14 +92,18 @@ function BriefBlocks({ review }: { review: Review }) {
 }
 
 interface Props {
-  run: RunSummary;
-  tickets: JiraTicket[];
+  /** 計畫表裡的單（加進來就留著，返回也不會清掉） */
+  drafts: PlanDraft[];
+  /** 計畫表裡的單變了（確認開工、不做了） */
+  onChange(drafts: PlanDraft[]): void;
   onBack(): void;
-  /** 計畫確認並開始執行後 */
+  /** 計畫表裡的單都確認開工了 */
   onConfirmed(): void;
 }
 
-export function PlanView({ run, tickets, onBack, onConfirmed }: Props) {
+export function PlanView({ drafts, onChange, onBack, onConfirmed }: Props) {
+  const tickets = drafts.map((d) => d.ticket);
+  const [notice, setNotice] = useState<string | null>(null);
   const [options, setOptions] = useState<PlanOptions | null>(null);
   const [plans, setPlans] = useState<Record<string, TicketPlan>>({});
   /** 審閱結果（判斷＋問題清單＋討論） */
@@ -109,10 +113,10 @@ export function PlanView({ run, tickets, onBack, onConfirmed }: Props) {
   const [checking, setChecking] = useState(false);
   const [checkError, setCheckError] = useState<string | null>(null);
   const [confirmError, setConfirmError] = useState<string | null>(null);
-  const [confirming, setConfirming] = useState(false);
+  const [confirming, setConfirming] = useState<string[] | null>(null);
   const fetchedOnce = useRef(false);
-  /** 開發模式下 React 會把初始化跑兩次，用這個避免每張單判斷兩次 */
-  const started = useRef(false);
+  /** 已經開始審閱的單（開發模式下 React 會把初始化跑兩次，避免每張單判斷兩次） */
+  const started = useRef(new Set<string>());
   /** 看板上還沒結束的工作（同一條分支不會重複建立） */
   const [active, setActive] = useState<{ branch: string; status: string }[]>([]);
 
@@ -125,34 +129,40 @@ export function PlanView({ run, tickets, onBack, onConfirmed }: Props) {
     try {
       const j = await api.reviewTicket(ticket, force);
       setJudgements((prev) => ({ ...prev, [ticket.key]: j }));
-      setPlans((prev) => ({
-        ...prev,
-        [ticket.key]: { ticket, entries: j.entries, prTitle: j.prTitle, reason: j.reason, summary: j.summary, resources: j.resources },
-      }));
+      const fromReview: TicketPlan = { ticket, entries: j.entries, prTitle: j.prTitle, reason: j.reason, summary: j.summary, resources: j.resources };
+      // 你之前改過的計畫（專案、商戶、標題）優先；重新審閱就換成新的結果
+      const saved = force ? null : drafts.find((d) => d.ticket.key === ticket.key)?.plan;
+      const plan = saved ? { ...fromReview, entries: saved.entries, prTitle: saved.prTitle } : fromReview;
+      setPlans((prev) => ({ ...prev, [ticket.key]: plan }));
+      if (force) api.planSaveDraft(ticket.key, plan).catch(() => {});
     } catch (e) {
       setJudgeErrors((prev) => ({ ...prev, [ticket.key]: errorText(e) }));
     }
   }
 
   useEffect(() => {
-    if (started.current) return;
-    started.current = true;
-    api.planOptions().then((o) => {
-      setOptions(o);
-      tickets.forEach((t) => judge(t));
-    });
+    api.planOptions().then(setOptions);
     api
       .board()
       .then((b) => setActive(b.items.filter((i) => !['failed', 'stopped', 'removed'].includes(i.status)).map((i) => ({ branch: i.branch, status: i.status }))))
       .catch(() => {});
   }, []);
 
+  // 計畫表裡的每張單都去拿審閱結果（背景已經在審的會等同一個結果，審好的直接拿存檔）
+  useEffect(() => {
+    for (const t of tickets) {
+      if (started.current.has(t.key)) continue;
+      started.current.add(t.key);
+      judge(t);
+    }
+  }, [drafts]);
+
   const allJudged = tickets.every((t) => plans[t.key]);
-  const readyPlans = useMemo(() => (options ? Object.values(plans).filter((p) => !problemOf(p, options)) : []), [plans, options]);
+  const readyPlans = useMemo(() => (options ? Object.values(plans).filter((p) => drafts.some((d) => d.ticket.key === p.ticket.key) && !problemOf(p, options)) : []), [plans, options, drafts]);
 
   // AI 都判斷完、或你改了內容之後，重新檢查分支（第一次會先抓遠端）
   useEffect(() => {
-    if (!allJudged || !options) return;
+    if (!options || !readyPlans.length) return;
     const timer = setTimeout(async () => {
       setChecking(true);
       setCheckError(null);
@@ -166,7 +176,7 @@ export function PlanView({ run, tickets, onBack, onConfirmed }: Props) {
       }
     }, fetchedOnce.current ? 400 : 0);
     return () => clearTimeout(timer);
-  }, [allJudged, readyPlans]);
+  }, [readyPlans]);
 
   async function recheck() {
     fetchedOnce.current = false;
@@ -183,7 +193,11 @@ export function PlanView({ run, tickets, onBack, onConfirmed }: Props) {
   }
 
   function update(key: string, change: (plan: TicketPlan) => TicketPlan) {
-    setPlans((prev) => ({ ...prev, [key]: change(prev[key]) }));
+    setPlans((prev) => {
+      const next = change(prev[key]);
+      api.planSaveDraft(key, next).catch(() => {}); // 存起來，返回再進來還在
+      return { ...prev, [key]: next };
+    });
   }
 
   function updateEntry(key: string, index: number, change: Partial<PlanEntry>) {
@@ -209,26 +223,51 @@ export function PlanView({ run, tickets, onBack, onConfirmed }: Props) {
       .map((b) => ({ branch: b, local: b.existsIn.filter((w) => w !== '遠端') }))
       .filter(({ local }) => local.length > 1);
   const continuing = (key: string) => branchesOf(key).some((b) => b.role !== 'target' && b.existsIn.length > 0);
-  const toRun = tickets.filter((t) => plans[t.key]);
-  const unchosen = toRun.filter((t) =>
-    folderChoices(t.key).some(({ branch, local }) => {
-      const folder = plans[t.key].entries.find((e) => e.project === branch.project)?.folder;
+  const unchosenFolder = (key: string) =>
+    folderChoices(key).some(({ branch, local }) => {
+      const folder = plans[key].entries.find((e) => e.project === branch.project)?.folder;
       return !folder || !local.includes(folder);
-    }),
-  );
-  const problems = options ? toRun.map((t) => problemOf(plans[t.key], options)).filter(Boolean) : [];
-  const canConfirm = allJudged && !!branches && !checking && !checkError && problems.length === 0 && unchosen.length === 0 && toRun.length > 0 && !confirming;
+    });
+  /** 這張可以確認開工了嗎；不行的話回傳原因 */
+  const blockerOf = (key: string): string | null => {
+    if (!plans[key] || !judgements[key]) return 'AI 審閱中';
+    if (!options) return '讀取中';
+    const problem = problemOf(plans[key], options);
+    if (problem) return problem;
+    if (checking || !branches) return '檢查分支中';
+    if (checkError) return '檢查分支失敗';
+    if (!branches.some((b) => b.ticketKey === key)) return '檢查分支中';
+    if (unchosenFolder(key)) return '還沒選資料夾';
+    return null;
+  };
+  const ready = tickets.filter((t) => !blockerOf(t.key)).map((t) => t.key);
 
-  async function confirm() {
-    setConfirming(true);
+  async function confirm(keys: string[]) {
+    setConfirming(keys);
     setConfirmError(null);
+    setNotice(null);
     try {
-      await api.confirmPlan(run.id, toRun.map((t) => plans[t.key]), judgements);
-      onConfirmed();
+      await api.confirmPlan(keys.map((k) => plans[k]), Object.fromEntries(keys.map((k) => [k, judgements[k]])));
+      const rest = drafts.filter((d) => !keys.includes(d.ticket.key));
+      onChange(rest);
+      if (!rest.length) return onConfirmed();
+      setNotice(`${keys.join('、')} 已經交給 AI 開發，到作戰室看進度；其他的單還留在這裡`);
     } catch (e) {
       setConfirmError(errorText(e));
     } finally {
-      setConfirming(false);
+      setConfirming(null);
+    }
+  }
+
+  async function discard(key: string) {
+    if (!window.confirm(`${key} 不做了？會從計畫表拿掉，AI 的審閱和討論紀錄也會刪掉。之後要做可以再從單列表加進來（會重新審閱）。`)) return;
+    try {
+      const rest = await api.planDiscard([key]);
+      started.current.delete(key);
+      onChange(rest);
+      if (!rest.length) onBack();
+    } catch (e) {
+      setConfirmError(errorText(e));
     }
   }
 
@@ -237,15 +276,16 @@ export function PlanView({ run, tickets, onBack, onConfirmed }: Props) {
       <header>
         <div>
           <h1>計畫表</h1>
-          <p className="muted">AI 先審閱每張單、判斷要做在哪個專案與商戶，有錯直接改。確認後會建立分支、分配資料夾，交給 Codex 開發，做完自動用無頭瀏覽器測一輪。</p>
+          <p className="muted">AI 在背景審閱每張單、判斷要做在哪個專案與商戶，有錯直接改（會自動存起來，按返回也不會清掉）。審好的單可以一張一張確認開工；同一個專案同時做幾張，看它有幾個資料夾，超過的會排隊。</p>
         </div>
         <div className="actions">
           <button onClick={onBack}>返回</button>
-          <button onClick={recheck} disabled={checking || !allJudged}>{checking ? '檢查中…' : '重新檢查分支'}</button>
+          <button onClick={recheck} disabled={checking || !readyPlans.length}>{checking ? '檢查中…' : '重新檢查分支'}</button>
         </div>
       </header>
 
       {checkError && <div className="error">檢查分支失敗：{checkError}</div>}
+      {notice && <div className="notice-ok plan-notice">{notice}</div>}
 
       <div className="plans">
         {tickets.map((ticket) => {
@@ -273,7 +313,7 @@ export function PlanView({ run, tickets, onBack, onConfirmed }: Props) {
               {!plan && !error && <p className="muted">AI 審閱中…（讀單、判斷專案；一般或複雜的單會大略看程式碼，約 1 分鐘）</p>}
               {error && (
                 <div className="error">
-                  AI 審閱失敗：{error} <button onClick={() => judge(ticket)}>重試</button>
+                  AI 審閱失敗：{error} <button onClick={() => judge(ticket)}>重試</button> <button className="link danger" onClick={() => discard(ticket.key)}>不做了</button>
                 </div>
               )}
 
@@ -438,6 +478,14 @@ export function PlanView({ run, tickets, onBack, onConfirmed }: Props) {
                     <ReviewIssues review={judgements[ticket.key]} onChange={(r) => setJudgements((prev) => ({ ...prev, [ticket.key]: r }))} />
                   )}
 
+                  <div className="plan-actions">
+                    <button className="link danger" onClick={() => discard(ticket.key)}>不做了</button>
+                    {blockerOf(ticket.key) && <span className="muted small">{blockerOf(ticket.key)}</span>}
+                    <button className="primary" disabled={!!blockerOf(ticket.key) || !!confirming} onClick={() => confirm([ticket.key])}>
+                      {confirming?.includes(ticket.key) ? '確認中…' : `確認 ${ticket.key}，開始開發`}
+                    </button>
+                  </div>
+
                 </>
               )}
             </section>
@@ -449,10 +497,10 @@ export function PlanView({ run, tickets, onBack, onConfirmed }: Props) {
 
       <footer>
         <span className="muted">
-          {!allJudged ? 'AI 審閱中…' : checking ? '檢查分支中（會先抓遠端）…' : `${toRun.length} 張要執行${unchosen.length ? `，${unchosen.length} 張還沒選資料夾` : ''}`}
+          計畫表裡 {tickets.length} 張：{ready.length} 張可以開始{!allJudged ? '，其他的 AI 還在審閱' : checking ? '，檢查分支中（會先抓遠端）…' : ''}
         </span>
-        <button className="primary" disabled={!canConfirm} onClick={confirm}>
-          {confirming ? '確認中…' : '確認計畫，開始開發'}
+        <button className="primary" disabled={ready.length === 0 || !!confirming} onClick={() => confirm(ready)}>
+          {confirming && confirming.length > 1 ? '確認中…' : ready.length === tickets.length ? '全部確認，開始開發' : `確認可以開始的 ${ready.length} 張`}
         </button>
       </footer>
     </main>

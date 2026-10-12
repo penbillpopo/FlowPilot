@@ -76,3 +76,25 @@ describe('工作項目', () => {
     expect(store.listWorkItems()).toEqual([]);
   });
 });
+
+describe('計畫表的草稿', () => {
+  it('加進去就留著；改過的計畫存起來；重複加不會蓋掉；審閱紀錄跟著草稿留下', () => {
+    const store = new Store(':memory:');
+    store.addDrafts([ticket('ALL-1'), ticket('ALL-2')]);
+    const plan = { ticket: ticket('ALL-1'), entries: [{ project: 'PlatformAdmin', merchants: [], sourceMerchant: null, reason: '' }], prTitle: 'feat(ALL-1) x', reason: '' };
+    store.saveDraftPlan('ALL-1', plan);
+    store.addDrafts([ticket('ALL-1')]); // 再加一次：保留原本改過的
+    expect(store.listDrafts().map((d) => [d.ticket.key, d.plan?.prTitle ?? null])).toEqual([['ALL-1', 'feat(ALL-1) x'], ['ALL-2', null]]);
+    expect(store.isDraft('ALL-2')).toBe(true);
+
+    const review = (key: string) => ({ ticketKey: key, entries: [], prTitle: '', reason: '', summary: [], resources: [], level: '小' as const, codeChecked: false, issues: [], discussion: [], reviewedAt: '' });
+    store.saveReview(review('ALL-1'), 't1');
+    store.saveReview(review('ALL-9'), 't9');
+    expect(store.purgeOrphanReviews()).toBe(1); // 只清掉不在計畫表也不在工作台的
+    expect(store.getReview('ALL-1')).not.toBeNull();
+
+    store.removeDrafts(['ALL-1']);
+    expect(store.listDrafts().map((d) => d.ticket.key)).toEqual(['ALL-2']);
+    expect(store.isDraft('ALL-1')).toBe(false);
+  });
+});

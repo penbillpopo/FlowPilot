@@ -433,10 +433,10 @@ export function GitPanel({ item, onCount }: { item: WorkItem; onCount?(changes: 
                 </button>
                 <button
                   className="link small file-actions"
-                  title="這個檔案改得不對？在輸入框帶入檔名，跟 AI 說要怎麼改"
+                  title="這個檔案改得不對？按一下會把檔名帶進中間的輸入框，接著打要怎麼改，送出給 AI"
                   onClick={() => window.dispatchEvent(new CustomEvent('flowpilot:ask-ai', { detail: `${file.path}：` }))}
                 >
-                  跟 AI 說
+                  要 AI 改
                 </button>
                 {diff?.path === file.path && <div className="diff-row"><DiffView diff={diff.text} /></div>}
               </li>

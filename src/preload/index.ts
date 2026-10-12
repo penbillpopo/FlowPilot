@@ -5,7 +5,10 @@ import type { FlowPilotApi } from '../shared/types';
 const api: FlowPilotApi = {
   listTickets: (statuses) => ipcRenderer.invoke('tickets:list', statuses),
   statusOptions: () => ipcRenderer.invoke('tickets:statusOptions'),
-  createRun: (tickets) => ipcRenderer.invoke('run:create', tickets),
+  planDrafts: () => ipcRenderer.invoke('plan:drafts'),
+  planAdd: (tickets) => ipcRenderer.invoke('plan:add', tickets),
+  planSaveDraft: (key, plan) => ipcRenderer.invoke('plan:saveDraft', key, plan),
+  planDiscard: (keys) => ipcRenderer.invoke('plan:discard', keys),
   latestRun: () => ipcRenderer.invoke('run:latest'),
   openExternal: (url) => ipcRenderer.invoke('shell:openExternal', url),
   openSettingsFile: () => ipcRenderer.invoke('settings:open'),
@@ -17,7 +20,7 @@ const api: FlowPilotApi = {
   discussReview: (ticketKey, text) => ipcRenderer.invoke('review:discuss', ticketKey, text),
   requestRequirementUpdate: (itemId) => ipcRenderer.invoke('req:update', itemId),
   checkBranches: (plans, fetch) => ipcRenderer.invoke('plan:check', plans, fetch),
-  confirmPlan: (runId, plans, judgements) => ipcRenderer.invoke('plan:confirm', runId, plans, judgements),
+  confirmPlan: (plans, judgements) => ipcRenderer.invoke('plan:confirm', plans, judgements),
   board: () => ipcRenderer.invoke('board:get'),
   onBoardChanged: (listener) => {
     const handler = (_event: unknown, board: Parameters<typeof listener>[0]) => listener(board);
@@ -89,7 +92,6 @@ const api: FlowPilotApi = {
   retest: (id) => ipcRenderer.invoke('item:retest', id),
   rerunAutotest: (id) => ipcRenderer.invoke('item:rerunAutotest', id),
   ticketMarks: (keys) => ipcRenderer.invoke('tickets:marks', keys),
-  discardReviews: (keys) => ipcRenderer.invoke('review:discard', keys),
   test: {
     state: (id) => ipcRenderer.invoke('test:state', id),
     setEnvironment: (id, env) => ipcRenderer.invoke('test:setEnvironment', id, env),

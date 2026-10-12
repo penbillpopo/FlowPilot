@@ -5,21 +5,12 @@ import { DiffView } from './DiffView';
 import { commitPrefs, deliveryOf, gitChanged, useGitState } from './delivery';
 import { Markdown } from './Markdown';
 import { pendingChecks } from './SidePanels';
+import { statusLabel, term } from './skin';
 
 const api = window.flowpilot;
 
-export const STATUS_LABEL: Record<WorkStatus, string> = {
-  queued: '排隊中',
-  preparing: '準備中',
-  running: '執行中',
-  waiting: '等你回答',
-  review: '等你測試',
-  blocked: '卡住了',
-  failed: '失敗',
-  stopped: '已停止',
-  removed: '已移除',
-  committed: '已完成',
-};
+/** 狀態文字（開了指揮官用語會換成作戰用語） */
+export const STATUS_LABEL = new Proxy({} as Record<WorkStatus, string>, { get: (_t, key) => statusLabel(key as WorkStatus) });
 
 /** 跟狀態標籤意思一樣的說明，不重複顯示 */
 const REDUNDANT_ACTIVITY = /^(AI 在問你問題|執行中|執行技能|開發中|AI 做完了，等你審查|已完成)$/;
@@ -57,7 +48,7 @@ function Stages({ item, delivering }: { item: WorkItem; delivering: boolean }) {
         const result = done && i === 2 ? autotestMark(item) : null;
         return (
           <li key={label} className={result ? result.className : done ? 'done' : now ? `now ${tone}` : ''} title={result?.title}>
-            {label}
+            {term(label)}
             {result ? result.text : done ? ' ✓' : ''}
             {now && (i === 4 && item.status === 'review' ? <span className="step-note">・推送、完成</span> : note && <span className="step-note">・{note}</span>)}
           </li>

@@ -39,6 +39,7 @@ function setup({ account = true } = {}) {
   const requests: { method: string; params: any }[] = [];
   const replies: { id: number; result: unknown }[] = [];
   let turn = 0;
+  let loaded = true; // 對話在不在 Codex 的記憶體裡（FlowPilot 重新啟動後，失敗的單不會自動接回）
   const codex = {
     on: (l: (m: RpcMessage) => void) => ((listener = l), () => {}),
     setDisconnectHandler: () => {},
@@ -47,6 +48,8 @@ function setup({ account = true } = {}) {
     request: async (method: string, params: any) => {
       requests.push({ method, params });
       if (method === 'skills/list') return { data: [{ skills: ['frontend-development', 'frontend-playwright-test'].map((name) => ({ name, description: '', path: `/skills/${name}/SKILL.md`, enabled: true })) }] };
+      if (method === 'thread/resume') loaded = true;
+      if (method === 'turn/start' && !loaded) throw new Error(`thread not found: ${params.threadId}`);
       if (method === 'turn/start') return { turn: { id: `turn-${++turn}` } };
       return {};
     },
@@ -78,7 +81,7 @@ function setup({ account = true } = {}) {
     await new Promise((r) => setTimeout(r, 20));
   };
   const lastTurn = () => requests.filter((r) => r.method === 'turn/start').at(-1)!.params;
-  return { root, folder, store, runner, id: item.id, requests, replies, emit: (m: RpcMessage) => listener(m), sites, reached, stopped, setBackendUp: (v: boolean) => (backendUp = v), complete, lastTurn, get: () => store.getWorkItem(item.id)! };
+  return { root, folder, store, runner, id: item.id, requests, replies, emit: (m: RpcMessage) => listener(m), sites, reached, stopped, setBackendUp: (v: boolean) => (backendUp = v), complete, lastTurn, unload: () => (loaded = false), get: () => store.getWorkItem(item.id)! };
 }
 
 describe('流程階段', () => {
@@ -272,6 +275,26 @@ describe('流程階段', () => {
     expect(t.get().stage).toBe('fix');
     await t.complete('改好了\n```flowpilot-test\n{"acceptance":[{"no":1,"text":"預設選 All","result":"沒測","change":"按鈕改藍色","needYou":true}]}\n```');
     expect(t.get().testReport?.acceptance[0]).toMatchObject({ change: '按鈕改藍色', changed: true, checked: false });
+  });
+
+  it('測試做到一半接著做（重試、補充指示）：先確認本機網站有在跑', async () => {
+    const t = setup();
+    await t.complete('做完了'); // 進自動測試
+    const before = t.sites.length;
+    t.store.updateWorkItem(t.id, { status: 'failed' });
+    await t.runner.reply(t.id, '請從剛才中斷的地方繼續。');
+    expect(t.sites.length).toBe(before + 1);
+  });
+
+  it('對話不在 Codex 的記憶體裡（FlowPilot 重新啟動過）：先接回再開始這一輪，不會報 thread not found', async () => {
+    const t = setup();
+    await t.complete('做完了');
+    await t.complete('測試結果：通過');
+    t.unload();
+    await t.runner.reply(t.id, '請從剛才中斷的地方繼續。');
+    const methods = t.requests.map((r) => r.method);
+    expect(methods.slice(-3)).toEqual(['turn/start', 'thread/resume', 'turn/start']);
+    expect(t.get().status).toBe('running');
   });
 
   it('AI 開的子 AI 要求同意：認得是這張單的，照同一套規則處理，不會互等卡住', async () => {

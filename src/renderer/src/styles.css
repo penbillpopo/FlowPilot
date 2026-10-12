@@ -261,7 +261,8 @@ ul.git-files li.diff-row { display: block; background: none; padding: 4px 0 8px;
 .file-name { flex: 1; min-width: 0; border: none; background: none; text-align: left; padding: 3px 4px; color: var(--fg); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .file-actions { display: flex; gap: 2px; }
 .file-actions button.link { font-size: 15px; padding: 0 6px; }
-.code { font-family: ui-monospace, Menlo, monospace; font-size: 11px; font-weight: 700; display: inline-block; width: 14px; }
+.code { font-family: ui-monospace, Menlo, monospace; font-size: 11px; font-weight: 700; display: inline-block; min-width: 14px; }
+.file-name .code { font-family: inherit; margin-right: 6px; }
 .c-M { color: #d29922; } .c-A, .c-U { color: var(--review); } .c-D { color: var(--blocked); } .c-R { color: var(--running); }
 .git-commit { display: flex; flex-direction: column; gap: 6px; border-top: 1px solid var(--line); padding-top: 8px; }
 .git-commit input { width: 100%; }
@@ -446,6 +447,9 @@ header .actions button { white-space: nowrap; }
 .trial-row { align-items: center; gap: 8px; flex-wrap: wrap; }
 .ok-text { color: var(--ok-fg); }
 tr.locked { opacity: 0.5; cursor: not-allowed; }
+/* 計畫中的單：點一下打開計畫表 */
+tbody tr.planning { cursor: pointer; }
+tbody tr.planning input { cursor: pointer; }
 /* 右邊：本機網站的狀態 */
 .site-status { display: flex; align-items: center; gap: 8px; font-size: 13px; }
 .site-dot { width: 8px; height: 8px; border-radius: 50%; background: var(--line); flex-shrink: 0; }
@@ -454,3 +458,10 @@ tr.locked { opacity: 0.5; cursor: not-allowed; }
 .git-files li { flex-wrap: wrap; }
 .git-files li .diff-row { flex-basis: 100%; }
 .git-commit > button.primary { width: 100%; }
+
+/* 計畫表：每張單底下的確認、不做了；單列表上方的計畫表提示 */
+.plan-actions { display: flex; gap: 12px; align-items: center; justify-content: flex-end; border-top: 1px solid var(--line); padding-top: 10px; }
+.plan-actions .link.danger { margin-right: auto; align-self: center; }
+.plan-hidden { margin: 0 0 8px; display: flex; gap: 6px; align-items: baseline; }
+.plan-notice { margin-bottom: 10px; font-size: 13px; }
+.mark.planning { background: color-mix(in srgb, var(--warn) 18%, transparent); color: var(--warn); font-weight: 600; }

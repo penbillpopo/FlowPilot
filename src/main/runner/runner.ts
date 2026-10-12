@@ -650,14 +650,10 @@ export class Runner {
             '- 最後照技能的結果格式回報，並另外列出「跳過、要你手動測的項目」。',
           ];
       await codex.start();
-      const { turn } = await codex.request<{ turn: { id: string } }>('turn/start', {
-        threadId: item.threadId,
-        input: [
-          { type: 'skill', name: rule.testSkill, path: await this.skillPath(rule.testSkill) },
-          { type: 'text', text: text.join('\n'), text_elements: [] },
-        ],
-      });
-      this.turns.set(item.threadId, turn.id);
+      await this.startTurn(item, [
+        { type: 'skill', name: rule.testSkill, path: await this.skillPath(rule.testSkill) },
+        { type: 'text', text: text.join('\n'), text_elements: [] },
+      ]);
       this.update(id, { activity: headed ? '列測試計畫給你確認' : '自動測試中（無頭）', ...(headed ? {} : { autotested: true }) });
     } catch (error) {
       if (['removed', 'stopped'].includes(this.deps.store.getWorkItem(id)!.status)) return;
@@ -689,8 +685,7 @@ export class Runner {
         '最後簡短列出：審查了什麼、修正了什麼、還有什麼風險。',
       ].join('\n');
       await this.deps.codex.start();
-      const { turn } = await this.deps.codex.request<{ turn: { id: string } }>('turn/start', { threadId: item.threadId, input: [{ type: 'text', text, text_elements: [] }] });
-      this.turns.set(item.threadId, turn.id);
+      await this.startTurn(item, [{ type: 'text', text, text_elements: [] }]);
     } catch (error) {
       this.deps.log(`${item.ticketKey} 自我審查開始不了，直接進自動測試：${(error as Error).message}`);
       await this.startTest(id, false);
@@ -1010,6 +1005,10 @@ export class Runner {
     // 等你測試時要求修改：附上請 AI 一併更新驗收表的說明
     const asFix = !this.turns.get(item.threadId) && item.stage === 'manual' && options.asFix !== false;
     const note = asFix && text.trim() ? acceptanceUpdateNote(this.deps.store.getReview(item.ticketKey)?.review ?? null) : '';
+    // 測試做到一半（例如重試、補充指示）：本機網站可能已經關了（FlowPilot 重新啟動時會跟著關），先確認有在跑
+    if (['autotest', 'retest'].includes(item.stage) && item.folder) {
+      await this.deps.ensureSite(item.folder).catch((error) => this.deps.log(`${item.ticketKey}：啟動本機網站失敗：${(error as Error).message}`));
+    }
     const input: object[] = [
       ...(text.trim() ? [{ type: 'text', text: text + note, text_elements: [] }] : []),
       ...images.map((path) => ({ type: 'localImage', path })),
@@ -1019,8 +1018,7 @@ export class Runner {
     if (turnId) {
       await codex.request('turn/steer', { threadId: item.threadId, input, expectedTurnId: turnId });
     } else {
-      const { turn } = await codex.request<{ turn: { id: string } }>('turn/start', { threadId: item.threadId, input });
-      this.turns.set(item.threadId, turn.id);
+      await this.startTurn(item, input);
     }
     // 等你測試時你在對話裡說的話，當成要求修改；改完回到等你測試（不會再自動測試，要重測按「開瀏覽器測給我看」）
     const stage = !turnId && item.stage === 'manual' && options.asFix !== false ? { stage: 'fix' as const } : {};
@@ -1156,9 +1154,22 @@ export class Runner {
     const item = this.deps.store.getWorkItem(id)!;
     if (!['blocked', 'failed', 'stopped'].includes(item.status)) throw new Error('只有卡住、失敗或停止的單可以重試');
     if (item.threadId) {
-      // 已經有對話：接著原本的對話繼續
+      // 失敗、停止時資料夾已經讓出：先確認沒有別張單在用、資料夾還在這張單的分支上，才接著原本的對話繼續
+      if (item.folder) {
+        const other = this.deps.store.listWorkItems().find((i) => i.id !== id && i.folder === item.folder && OCCUPYING.includes(i.status));
+        if (other) throw new Error(`資料夾 ${item.folder} 正在做 ${other.ticketKey}，等它完成或移除後再重試`);
+        const branch = await currentBranch(this.folderPath(item.folder)).catch(() => '');
+        if (branch !== item.branch) throw new Error(`資料夾 ${item.folder} 現在在 ${branch || '（讀不到）'}，不是這張單的分支 ${item.branch}；切回這條分支後再重試`);
+      }
+      const before = { status: item.status, activity: item.activity };
       this.update(id, { status: 'running', activity: '繼續執行' });
-      await this.reply(id, '請從剛才中斷的地方繼續。');
+      try {
+        await this.reply(id, '請從剛才中斷的地方繼續。');
+      } catch (error) {
+        // 沒接上就回到原本的狀態，不要卡在「執行中」
+        this.update(id, before);
+        throw error;
+      }
       return;
     }
     this.allowed.delete(id);
@@ -1170,6 +1181,26 @@ export class Runner {
     const item = this.deps.store.getWorkItem(id)!;
     if (!item.threadId || !item.folder) throw new Error('這張單還沒開始執行');
     await this.deps.vscode.attach(this.deps.settings().folders, { threadId: item.threadId, folder: item.folder, ticketKey: item.ticketKey });
+  }
+
+  /**
+   * 在這張單的對話開始新的一輪。
+   * 對話不在 Codex 的記憶體裡時（例如 FlowPilot 重新啟動過，失敗或停止的單不會自動接回），先接回再開始。
+   */
+  private async startTurn(item: StoredWorkItem, input: object[]): Promise<string> {
+    const threadId = item.threadId!;
+    const start = () => this.deps.codex.request<{ turn: { id: string } }>('turn/start', { threadId, input });
+    let turn: { id: string };
+    try {
+      ({ turn } = await start());
+    } catch (error) {
+      if (!/thread not found/i.test((error as Error).message)) throw error;
+      this.deps.log(`${item.ticketKey}：對話不在 Codex 的記憶體裡，先接回再繼續`);
+      await this.deps.codex.request('thread/resume', { threadId, excludeTurns: true, config: threadConfig(this.deps.dataDir, this.deps.writeGuard, item.id, item.folder ? apiHosts(this.folderPath(item.folder)) : []) });
+      ({ turn } = await start());
+    }
+    this.turns.set(threadId, turn.id);
+    return turn.id;
   }
 
   /** 啟動或重新連線後，重新訂閱還在進行中的對話，才收得到它們的進度 */

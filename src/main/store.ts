@@ -1,7 +1,7 @@
 // 資料庫：~/Library/Application Support/FlowPilot/flowpilot.db（SQLite，用 Node 內建的 node:sqlite）
 // 每次狀態改變先寫進來，重新啟動才接得回去。
 import { DatabaseSync } from 'node:sqlite';
-import type { AcceptanceItem, JiraTicket, Judgement, PendingRequest, Review, RunSummary, TestReport, TestResult, TicketPlan, WorkItem, WorkLane, WorkStage, WorkStatus } from '../shared/types';
+import type { AcceptanceItem, JiraTicket, PlanDraft, Judgement, PendingRequest, Review, RunSummary, TestReport, TestResult, TicketPlan, WorkItem, WorkLane, WorkStage, WorkStatus } from '../shared/types';
 import type { PastDecision } from './planner/judge';
 
 // 依序執行的資料庫結構變更；只能往後加，不能改前面的
@@ -82,6 +82,13 @@ const MIGRATIONS: string[] = [
   `ALTER TABLE work_items ADD COLUMN autotest_result TEXT;`,
   // 最近一次瀏覽器測試的報告：預期結果對照、手動測試清單
   `ALTER TABLE work_items ADD COLUMN test_report TEXT;`,
+  // 計畫表的草稿：加進計畫表、還沒確認的單（按返回也留著，連同你改過的專案、標題）
+  `CREATE TABLE plan_drafts (
+     ticket_key TEXT PRIMARY KEY,
+     ticket_json TEXT NOT NULL,
+     plan_json TEXT,
+     added_at TEXT NOT NULL
+   );`,
 ];
 
 /** 還佔著資料夾的狀態 */
@@ -351,6 +358,33 @@ export class Store {
     return rows.every((r) => r.status === 'committed') ? 'done' : 'active';
   }
 
+  // ---- 計畫表的草稿 ----
+
+  /** 加進計畫表（已經在的不重複加，保留原本的內容） */
+  addDrafts(tickets: JiraTicket[], now = new Date()) {
+    const insert = this.db.prepare('INSERT OR IGNORE INTO plan_drafts (ticket_key, ticket_json, added_at) VALUES (?, ?, ?)');
+    for (const ticket of tickets) insert.run(ticket.key, JSON.stringify(ticket), now.toISOString());
+  }
+
+  /** 計畫表裡的單（先加的在前）；plan 是你改過的計畫，還沒改過是 null */
+  listDrafts(): PlanDraft[] {
+    const rows = this.db.prepare('SELECT * FROM plan_drafts ORDER BY added_at, ticket_key').all() as { ticket_json: string; plan_json: string | null }[];
+    return rows.map((r) => ({ ticket: JSON.parse(r.ticket_json), plan: r.plan_json ? JSON.parse(r.plan_json) : null }));
+  }
+
+  saveDraftPlan(ticketKey: string, plan: TicketPlan) {
+    this.db.prepare('UPDATE plan_drafts SET plan_json = ? WHERE ticket_key = ?').run(JSON.stringify(plan), ticketKey);
+  }
+
+  removeDrafts(ticketKeys: string[]) {
+    const del = this.db.prepare('DELETE FROM plan_drafts WHERE ticket_key = ?');
+    for (const key of ticketKeys) del.run(key);
+  }
+
+  isDraft(ticketKey: string): boolean {
+    return !!this.db.prepare('SELECT 1 FROM plan_drafts WHERE ticket_key = ?').get(ticketKey);
+  }
+
   /** 同一個專案、同一條分支還沒結束的工作項目（避免重複建立） */
   activeWorkItem(project: string, branch: string): StoredWorkItem | null {
     const row = this.db
@@ -373,10 +407,10 @@ export class Store {
     this.db.prepare('DELETE FROM reviews WHERE ticket_key = ?').run(ticketKey);
   }
 
-  /** 審閱紀錄跟著工作台走：不在工作台上的單，審閱紀錄全部清掉；回傳清掉幾筆 */
+  /** 審閱紀錄跟著計畫表和工作台走：都不在的單，審閱紀錄全部清掉；回傳清掉幾筆 */
   purgeOrphanReviews(): number {
     const result = this.db
-      .prepare("DELETE FROM reviews WHERE ticket_key NOT IN (SELECT ticket_key FROM work_items WHERE status != 'removed')")
+      .prepare("DELETE FROM reviews WHERE ticket_key NOT IN (SELECT ticket_key FROM work_items WHERE status != 'removed') AND ticket_key NOT IN (SELECT ticket_key FROM plan_drafts)")
       .run();
     return Number(result.changes);
   }

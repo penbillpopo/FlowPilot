@@ -128,9 +128,22 @@ async function withJudgeSlot<T>(task: () => Promise<T>): Promise<T> {
 }
 
 /** 審閱一張單：讀單 → 判斷專案 → 大略看程式碼 → 找問題。已經審過就直接用上次的結果 */
-async function reviewTicket(ticket: JiraTicket, force = false): Promise<Review> {
+/** 正在審閱的單：同一張單同時只審一次（背景審閱還沒好、你又打開計畫表時，等同一個結果） */
+const reviewing = new Map<string, Promise<Review>>();
+
+function reviewTicket(ticket: JiraTicket, force = false): Promise<Review> {
   const saved = store.getReview(ticket.key);
-  if (saved && !force) return saved.review;
+  if (saved && !force) return Promise.resolve(saved.review);
+  const running = reviewing.get(ticket.key);
+  if (running && !force) return running;
+  const job = runReview(ticket).finally(() => {
+    if (reviewing.get(ticket.key) === job) reviewing.delete(ticket.key);
+  });
+  reviewing.set(ticket.key, job);
+  return job;
+}
+
+async function runReview(ticket: JiraTicket): Promise<Review> {
   const settings = loadSettings(settingsFile);
   const credentials = loadCredentials(settings.jira.envFile);
   const [sub, main] = await Promise.all([
@@ -306,7 +319,7 @@ async function ticketMarks(keys: string[]): Promise<Record<string, TicketMark>> 
   const marks: Record<string, TicketMark> = {};
   for (const key of keys) {
     const work = store.ticketWorkState(key);
-    marks[key] = { active: !!work, done: work === 'done', branch: branches.some((b) => b.toUpperCase().endsWith(`/${key.toUpperCase()}`)) };
+    marks[key] = { active: !!work, done: work === 'done', planning: !work && store.isDraft(key), branch: branches.some((b) => b.toUpperCase().endsWith(`/${key.toUpperCase()}`)) };
   }
   return marks;
 }
@@ -367,15 +380,26 @@ function registerIpc() {
     const { statuses, defaultStatuses } = loadSettings(settingsFile).jira;
     return { statuses, defaultStatuses };
   });
-  ipcMain.handle('run:create', (_event, tickets: JiraTicket[]) => {
-    // 已經在工作台上的單不能再進一次（要等它在工作台結束）
+  ipcMain.handle('plan:drafts', () => store.listDrafts());
+  ipcMain.handle('plan:add', (_event, tickets: JiraTicket[]) => {
+    // 已經在工作台上的單不能再進一次（要等它在工作台移除）
     const active = tickets.filter((t) => store.hasActiveTicket(t.key)).map((t) => t.key);
-    if (active.length) throw new Error(`${active.join('、')} 已經在工作台上，要等它結束（完成或移除）才能再選`);
-    return store.createRun(tickets);
+    if (active.length) throw new Error(`${active.join('、')} 已經在工作台上，要在工作台移除後才能再選`);
+    if (!tickets.length) throw new Error('沒有勾選任何單');
+    store.addDrafts(tickets);
+    // 審閱在背景跑：你可以先回單列表或去作戰室，回來時結果已經存好
+    for (const ticket of tickets) void reviewTicket(ticket).catch((error) => log(`${ticket.key} 背景審閱失敗：${(error as Error).message}`));
+    return store.listDrafts();
   });
-  // 在計畫表返回、沒有確認的單：審閱紀錄不留（審閱紀錄跟著工作台走）
-  ipcMain.handle('review:discard', (_event, keys: string[]) => {
-    for (const key of keys) if (!store.hasActiveTicket(key)) store.deleteReview(key);
+  ipcMain.handle('plan:saveDraft', (_event, ticketKey: string, plan: TicketPlan) => store.saveDraftPlan(ticketKey, plan));
+  // 不做了：從計畫表拿掉，審閱紀錄也刪掉（審閱紀錄跟著計畫表和工作台走）
+  ipcMain.handle('plan:discard', (_event, keys: string[]) => {
+    store.removeDrafts(keys);
+    for (const key of keys) {
+      reviewing.delete(key);
+      if (!store.hasActiveTicket(key)) store.deleteReview(key);
+    }
+    return store.listDrafts();
   });
   ipcMain.handle('run:latest', () => store.latestRun());
   ipcMain.handle('shell:openExternal', (_event, url: string) => {
@@ -411,7 +435,7 @@ function registerIpc() {
     const branches = plans.filter((p) => !planProblem(p, settings)).flatMap((p) => deriveBranches(p, settings));
     return checkExisting(branches, settings.folders, { fetch });
   });
-  ipcMain.handle('plan:confirm', async (_event, runId: number, plans: TicketPlan[], judgements: Record<string, Judgement>) => {
+  ipcMain.handle('plan:confirm', async (_event, plans: TicketPlan[], judgements: Record<string, Judgement>) => {
     const settings = validatePlans(plans);
     // 確認前再檢查一次：已存在的分支會切過去繼續開發，但存在於好幾個資料夾時一定要選好用哪一個
     const branches = await checkExisting(plans.flatMap((p) => deriveBranches(p, settings)), settings.folders);
@@ -425,8 +449,11 @@ function registerIpc() {
     }
     const already = plans.filter((p) => store.hasActiveTicket(p.ticket.key)).map((p) => p.ticket.key);
     if (already.length) throw new Error(`${already.join('、')} 已經在工作台上，要等它結束（完成或移除）才能再選`);
-    const run = store.confirmPlan(runId, plans, judgements);
-    runner.startRun(runId); // 確認計畫後直接開始：建立分支、分配資料夾、啟動 AI
+    // 確認的這幾張自成一批；計畫表裡其他還沒確認的不受影響
+    const created = store.createRun(plans.map((p) => p.ticket));
+    const run = store.confirmPlan(created.id, plans, judgements);
+    store.removeDrafts(plans.map((p) => p.ticket.key));
+    runner.startRun(created.id); // 確認計畫後直接開始：建立分支、分配資料夾、啟動 AI
     return run;
   });
   ipcMain.handle('board:get', () => runner.board());
@@ -506,6 +533,9 @@ function registerIpc() {
   });
   ipcMain.handle('item:openInVSCode', (_event, id: number) => runner.openInVSCode(id));
 }
+
+// 盟軍外觀的提示音、語音：AI 做完時你可能沒在點畫面，也要能播
+app.commandLine.appendSwitch('autoplay-policy', 'no-user-gesture-required');
 
 app.whenReady().then(() => {
   log(`啟動 FlowPilot ${app.getVersion()}（${app.isPackaged ? '打包版' : '開發版'}）`);

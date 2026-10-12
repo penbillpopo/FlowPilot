@@ -1,7 +1,7 @@
 // 資料庫：~/Library/Application Support/FlowPilot/flowpilot.db（SQLite，用 Node 內建的 node:sqlite）
 // 每次狀態改變先寫進來，重新啟動才接得回去。
 import { DatabaseSync } from 'node:sqlite';
-import type { AcceptanceItem, JiraTicket, PlanDraft, PrRecord, Judgement, PendingRequest, Review, RunSummary, TestReport, TestResult, TicketPlan, WorkItem, WorkLane, WorkStage, WorkStatus } from '../shared/types';
+import type { AcceptanceItem, JiraTicket, PlanDraft, PortSource, PrRecord, Judgement, PendingRequest, Review, RunSummary, TestReport, TestResult, TicketPlan, WorkItem, WorkLane, WorkStage, WorkStatus } from '../shared/types';
 import type { PastDecision } from './planner/judge';
 
 // 依序執行的資料庫結構變更；只能往後加，不能改前面的
@@ -94,6 +94,8 @@ const MIGRATIONS: string[] = [
   // 一張單可以發好幾個 PR（例如同一條分支發到 sit、uat、master），改成存清單；舊的單一網址搬進去
   `ALTER TABLE work_items ADD COLUMN prs TEXT;
    UPDATE work_items SET prs = json_array(json_object('id', 0, 'url', pr_url, 'target', '', 'title', '')) WHERE pr_url IS NOT NULL;`,
+  // 多商戶的單：從來源商戶移植過來的工作，記下來源分支
+  `ALTER TABLE work_items ADD COLUMN port_of TEXT;`,
 ];
 
 /** 還佔著資料夾的狀態 */
@@ -102,7 +104,7 @@ export const OCCUPYING: WorkStatus[] = ['preparing', 'running', 'waiting', 'revi
 /** 已經結束的狀態 */
 export const FINISHED: WorkStatus[] = ['failed', 'stopped', 'removed', 'committed'];
 
-type NewWorkItem = Omit<WorkItem, 'id' | 'folder' | 'lane' | 'status' | 'activity' | 'threadId' | 'lastMessage' | 'pending' | 'stage' | 'autotested' | 'autotestResult' | 'testReport' | 'updatedAt' | 'prs'>;
+type NewWorkItem = Omit<WorkItem, 'id' | 'folder' | 'lane' | 'status' | 'activity' | 'threadId' | 'lastMessage' | 'pending' | 'stage' | 'autotested' | 'autotestResult' | 'testReport' | 'updatedAt' | 'prs' | 'portOf'> & { portOf?: PortSource | null };
 
 interface WorkItemRow {
   id: number;
@@ -130,6 +132,7 @@ interface WorkItemRow {
   commit_sha: string | null;
   pr_url: string | null;
   prs: string | null;
+  port_of: string | null;
   stage: WorkStage;
   autotested: number;
   autotest_result: string | null;
@@ -170,6 +173,7 @@ function toWorkItem(row: WorkItemRow): WorkItem & { branchCreated: boolean; comm
     branchCreated: !!row.branch_created,
     commitSha: row.commit_sha,
     prs: row.prs ? (JSON.parse(row.prs) as PrRecord[]) : [],
+    portOf: row.port_of ? (JSON.parse(row.port_of) as PortSource) : null,
   };
 }
 
@@ -278,8 +282,8 @@ export class Store {
   createWorkItems(items: NewWorkItem[], now = new Date()): StoredWorkItem[] {
     const insert = this.db.prepare(
       `INSERT INTO work_items (run_id, ticket_key, ticket_summary, main_key, main_url, project, merchant, target_merchants,
-         branch, base_branch, skill, pr_title, preferred_folder, status, created_at, updated_at)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'queued', ?, ?)`,
+         branch, base_branch, skill, pr_title, preferred_folder, port_of, status, created_at, updated_at)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'queued', ?, ?)`,
     );
     const ids: number[] = [];
     this.db.exec('BEGIN');
@@ -287,7 +291,7 @@ export class Store {
       for (const i of items) {
         const t = now.toISOString();
         const r = insert.run(i.runId, i.ticketKey, i.ticketSummary, i.mainKey, i.mainUrl, i.project, i.merchant, JSON.stringify(i.targetMerchants),
-          i.branch, i.baseBranch, i.skill, i.prTitle, i.preferredFolder, t, t);
+          i.branch, i.baseBranch, i.skill, i.prTitle, i.preferredFolder, i.portOf ? JSON.stringify(i.portOf) : null, t, t);
         ids.push(Number(r.lastInsertRowid));
       }
       if (items.length) this.db.prepare("UPDATE runs SET status = 'started' WHERE id = ?").run(items[0].runId);

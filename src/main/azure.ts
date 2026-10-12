@@ -183,9 +183,11 @@ export function defaultPrTitle(item: Pick<WorkItem, 'ticketKey' | 'ticketSummary
 }
 
 /** PR 說明：Jira 連結＋驗收表的「改了什麼、怎麼測」 */
-export function prDescription(item: Pick<WorkItem, 'ticketKey' | 'ticketSummary' | 'mainKey' | 'mainUrl' | 'testReport'>): string {
+export function prDescription(item: Pick<WorkItem, 'ticketKey' | 'ticketSummary' | 'mainKey' | 'mainUrl' | 'testReport' | 'branch' | 'baseBranch'> & { portOf?: WorkItem['portOf'] }): string {
   const ticketUrl = item.mainUrl ? item.mainUrl.replace(/browse\/[^/?#]+/, `browse/${item.ticketKey}`) : '';
   const lines = [`Jira：[${item.ticketKey}](${ticketUrl || item.ticketKey}) ${item.ticketSummary}`];
+  // 移植過來的：寫清楚從哪裡移植（跟 platform-web-copy 的 PR 說明一樣）
+  if (item.portOf) lines.push('', `Port feature from ${item.portOf.branch} to ${item.baseBranch}`, '', 'Source:', `${item.portOf.baseBranch} -> ${item.portOf.branch}`, '', 'Target:', `${item.baseBranch} -> ${item.branch}`);
   if (item.mainKey && item.mainKey !== item.ticketKey && item.mainUrl) lines.push(`主單：[${item.mainKey}](${item.mainUrl})`);
   const report = item.testReport;
   const items = (report?.acceptance ?? []).filter((a: AcceptanceItem) => a.change || a.howToTest);

@@ -16,6 +16,13 @@ function lastReviewers(): string[] {
   }
 }
 
+/** 一起發的其他商戶：目標分支換成那個商戶的（例如 master-1 → master-2）；跟主程式的規則一樣 */
+function targetFor(target: string, from: number | null, to: number): string {
+  if (from === null) return target;
+  const m = target.match(new RegExp(`^(.*?)${from}$`));
+  return m ? `${m[1]}${to}` : target;
+}
+
 const PR_STATUS = { active: '審核中', completed: '已合併', abandoned: '已放棄' } as const;
 
 export function PrPanel({ item }: { item: WorkItem }) {
@@ -27,6 +34,10 @@ export function PrPanel({ item }: { item: WorkItem }) {
   const [target, setTarget] = useState('');
   const [description, setDescription] = useState('');
   const [reviewers, setReviewers] = useState<string[]>([]);
+  /** 一起發 PR 的其他商戶 */
+  const [also, setAlso] = useState<number[]>([]);
+  /** 上一次發的結果（一起發好幾個商戶時，逐一列出成功或失敗） */
+  const [results, setResults] = useState<{ merchant: number | null; target: string; url?: string; error?: string }[] | null>(null);
 
   // 打開時向 Azure 讀回發過的 PR 現在的狀態、目標分支、審核人
   useEffect(() => {
@@ -53,13 +64,17 @@ export function PrPanel({ item }: { item: WorkItem }) {
 
   async function send() {
     if (!options) return;
-    const names = options.reviewers.filter((r) => reviewers.includes(r.id)).map((r) => r.name);
-    const ok = window.confirm(`在 Azure 發 PR？\n\n${title}\n${options.source} → ${target}\n審核人：${names.length ? names.join('、') : '（沒有）'}`);
+    const names = options.reviewers.filter((r) => reviewers.includes(r.id)).map((r) => r.email || r.name);
+    const others = options.siblings.filter((x) => also.includes(x.id));
+    const lines = [`${options.source} → ${target}`, ...others.map((x) => `${x.branch} → ${targetFor(target, item.merchant, x.merchant)}`)];
+    const ok = window.confirm(`在 Azure 發 ${lines.length} 個 PR？\n\n${title}\n${lines.join('\n')}\n\n審核人：${names.length ? names.join('、') : '（沒有）'}`);
     if (!ok) return;
     setSending(true);
     setError(null);
     try {
-      await api.pr.create(item.id, { title, description, target, reviewerIds: reviewers });
+      const { results } = await api.pr.create(item.id, { title, description, target, reviewerIds: reviewers, alsoItemIds: others.map((x) => x.id) });
+      setResults(results);
+      setAlso([]);
       try {
         localStorage.setItem(REVIEWERS_KEY, JSON.stringify(reviewers));
       } catch {}
@@ -96,6 +111,16 @@ export function PrPanel({ item }: { item: WorkItem }) {
       <>
         {sent}
         <div className="panel pr-panel">
+          {results && (results.length > 1 || results.some((r) => r.error)) && (
+            <ul className="pr-results">
+              {results.map((r, i) => (
+                <li key={i} className={r.error && !r.url ? 'bad' : ''}>
+                  {r.merchant !== null ? `m${r.merchant}` : ''} → <code>{r.target}</code>：{r.error ?? '已發'}
+                  {r.url && <button className="link small" onClick={() => api.openExternal(r.url!)}>打開</button>}
+                </li>
+              ))}
+            </ul>
+          )}
           <button className="primary" disabled={loading} onClick={open}>{loading ? '讀取 Azure 中…' : item.prs.length ? '用 Azure 再發一個 PR' : '用 Azure 發 PR'}</button>
           {error && <div className="error small">{error}</div>}
         </div>
@@ -144,6 +169,28 @@ export function PrPanel({ item }: { item: WorkItem }) {
           </label>
         ))}
       </div>
+      {options.siblings.length > 0 && (
+        <div className="pr-field">
+          <span className="muted small">也幫其他商戶發（名稱、審核人一樣；目標分支換成各自的）</span>
+          {options.siblings.map((x) => {
+            const to = targetFor(target, item.merchant, x.merchant);
+            const sent = x.prs.some((p) => p.target === to && p.status !== 'completed' && p.status !== 'abandoned');
+            const why = !x.pushed ? '還沒推送' : sent ? '已經發過' : null;
+            return (
+              <label key={x.id} className={`pr-reviewer ${why ? 'disabled' : ''}`} title={why ?? undefined}>
+                <input
+                  type="checkbox"
+                  disabled={!!why || !target}
+                  checked={also.includes(x.id)}
+                  onChange={() => setAlso((prev) => (prev.includes(x.id) ? prev.filter((v) => v !== x.id) : [...prev, x.id]))}
+                />
+                <span>m{x.merchant}：{x.branch} → <code>{to || '—'}</code></span>
+                {why && <span className="muted small">（{why}）</span>}
+              </label>
+            );
+          })}
+        </div>
+      )}
       <label className="pr-field">
         <span className="muted small">說明（自動帶 Jira 連結和驗收表，可以改）</span>
         <textarea rows={8} value={description} onChange={(e) => setDescription(e.target.value)} />

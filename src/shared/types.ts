@@ -338,6 +338,8 @@ export interface WorkItem {
   autotested: boolean;
   /** 發出去的 PR（一張單可以發好幾個，例如同一條分支發到 sit、uat、master） */
   prs: PrRecord[];
+  /** 從來源商戶移植過來的（多商戶的單）；一般開發是 null */
+  portOf: PortSource | null;
   /** 自動測試的結果（AI 回覆最後一行的「測試結果：…」；沒開始成也算沒測成） */
   autotestResult: TestResult | null;
   /** 最近一次瀏覽器測試的報告：預期結果對照、要你手動測的清單（勾選狀態會保留） */
@@ -427,6 +429,13 @@ export interface TicketMark {
   branch: boolean;
 }
 
+/** 移植的來源：來源商戶開發好的分支 */
+export interface PortSource {
+  merchant: number;
+  branch: string;
+  baseBranch: string;
+}
+
 /** 發過的一個 PR */
 export interface PrRecord {
   id: number;
@@ -460,6 +469,8 @@ export interface PrOptions {
   existing: PrRecord[];
   /** 遠端沒有這條分支（要先推送） */
   notPushed: boolean;
+  /** 同一張單在其他商戶的工作（多商戶的單），可以一起發 PR */
+  siblings: { id: number; merchant: number; branch: string; status: WorkStatus; pushed: boolean; prs: PrRecord[] }[];
 }
 
 export interface CommitResult {
@@ -567,6 +578,8 @@ export interface FlowPilotApi {
   openUrl(url: string): Promise<void>;
   retry(itemId: number): Promise<void>;
   openInVSCode(itemId: number): Promise<void>;
+  /** 多商戶的單：來源商戶完成後，移植到其他商戶（每個商戶一張新的工作），回傳建立的分支 */
+  port(itemId: number): Promise<string[]>;
   /** 開瀏覽器測給我看：AI 先列測試計畫給你確認，再開有頭的瀏覽器測 */
   retest(itemId: number): Promise<void>;
   /** 重跑自動測試（無頭）：上次沒測成時用 */
@@ -580,7 +593,7 @@ export interface FlowPilotApi {
     /** 從 Azure 讀回這張單發過的 PR 現在的狀態、目標分支、審核人 */
     refresh(itemId: number): Promise<void>;
     /** 在 Azure 建立 PR，回傳網址 */
-    create(itemId: number, input: { title: string; description: string; target: string; reviewerIds: string[] }): Promise<{ url: string }>;
+    create(itemId: number, input: { title: string; description: string; target: string; reviewerIds: string[]; alsoItemIds?: number[] }): Promise<{ results: { merchant: number | null; target: string; url?: string; error?: string }[] }>;
   };
   test: {
     state(itemId: number): Promise<TestState>;

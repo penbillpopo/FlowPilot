@@ -26,7 +26,7 @@ import {
   switchBranch,
   switchToRemoteBranch,
 } from '../git';
-import { deriveBranches } from '../planner/rules';
+import { deriveBranches, fill } from '../planner/rules';
 import type { Settings } from '../settings';
 import { FINISHED, OCCUPYING, type StoredWorkItem, type Store } from '../store';
 import type { VSCode } from '../vscode';
@@ -62,6 +62,9 @@ export interface RunnerDeps {
 }
 
 /** 有任何回應就算連得到（後端回 404、401 也是連上了）；5 秒沒回應或連線失敗就是連不到 */
+/** 移植用的技能：照來源分支的改動，在目標商戶的架構裡重新實作 */
+const PORT_SKILL = 'platform-web-copy';
+
 async function reachable(url: string): Promise<boolean> {
   try {
     const response = await fetch(url, { signal: AbortSignal.timeout(5000) });
@@ -369,7 +372,8 @@ export class Runner {
         }
         branches[f.name] = await currentBranch(f.path).catch(() => '');
         if (branches[f.name] === next.branch) continue;
-        const dirty = await dirtyFiles(f.path).catch(() => ['（讀不到 git 狀態）']);
+        // environment.ts 是測試切 SIT／UAT 改的，準備時會還原，不算不乾淨（實際發生過：只因為它，第二個資料夾一直空著不能用）
+        const dirty = (await dirtyFiles(f.path).catch(() => ['（讀不到 git 狀態）'])).filter((file) => !isEnvironmentFile(file));
         if (dirty.length) {
           busy.add(f.name);
           reasons.push(`${f.name} 有未提交的修改（${dirty.slice(0, 2).join('、')}${dirty.length > 2 ? ' 等' : ''}）`);
@@ -428,6 +432,8 @@ export class Runner {
           return this.ask(id, 'dirty', `${item.folder} 已經在 ${item.branch}，有 ${dirty.length} 個未提交的修改（${dirty.slice(0, 3).join('、')}${dirty.length > 3 ? ' 等' : ''}）。要接著這些修改繼續開發嗎？`, '接著這些修改繼續開發');
         }
       } else {
+        // 要切到別的分支：environment.ts（測試切環境改的）先還原，其他的修改才擋下來
+        for (const file of (await dirtyFiles(cwd)).filter(isEnvironmentFile)) await runGit(cwd, ['restore', '--staged', '--worktree', '--', file]);
         const dirty = await dirtyFiles(cwd);
         if (dirty.length) {
           this.update(id, {
@@ -551,14 +557,31 @@ export class Runner {
       ? `- 這是已經存在的分支 ${item.branch}（基底 origin/${item.baseBranch}），之前已經有開發內容：比基底多 ${state.commits} 個提交、${state.dirty} 個未提交的修改。` +
         `請先看過現有的差異（git diff origin/${item.baseBranch}...HEAD 與 git status），了解做到哪裡，再接著完成剩下的部分；不要重做已經完成的內容，也不要丟掉未提交的修改。FlowPilot 已經切換好分支，不要切換分支。`
       : `- FlowPilot 已經在這個資料夾建立並切換到分支 ${item.branch}（從 origin/${item.baseBranch} 開出）。請直接在目前分支開發，不要切換分支。`;
-    const skill = this.deps.settings().projects[item.project]?.devSkill ?? item.skill;
+    const skill = item.portOf ? PORT_SKILL : this.deps.settings().projects[item.project]?.devSkill ?? item.skill;
     const brief = reviewBrief(this.deps.store.getReview(item.ticketKey)?.review ?? null);
     const rebaseLine = !state.rebase
       ? ''
       : state.rebase.conflict
         ? `- 【先處理】FlowPilot 正在把分支 rebase 到最新的 origin/${item.baseBranch}（基底有 ${state.rebase.behind} 個新提交），遇到衝突停住了。請先解衝突：用 git status 看哪些檔案衝突，照兩邊的意圖合併好，git add 之後用 GIT_EDITOR=true git rebase --continue 繼續，直到 rebase 完成；不要 git rebase --abort。在回覆裡說明每個衝突怎麼解的。rebase 完成後再開始開發。`
         : `- FlowPilot 已經把分支 rebase 到最新的 origin/${item.baseBranch}（基底有 ${state.rebase.behind} 個新提交），沒有衝突。`;
-    const instructions = [
+    const src = item.portOf;
+    const instructions = src ? [
+      `請使用 $${skill} 把 ${item.ticketKey} 從商戶 ${src.merchant} 移植到商戶 ${item.merchant}。以下是 FlowPilot 的安排，跟技能預設規則不同的地方以這裡為準：`,
+      rebaseLine,
+      '',
+      `- 來源：${src.baseBranch} → ${src.branch}（已經推送到遠端）。先 git fetch origin ${src.branch} ${src.baseBranch}，用 git diff origin/${src.baseBranch}...origin/${src.branch} 看來源的完整改動，搞清楚這個功能的目的。`,
+      `- 目標：${item.baseBranch} → ${item.branch}。` + (state.continuing
+        ? `這條分支已經存在、之前做過一部分（比基底多 ${state.commits} 個提交、${state.dirty} 個未提交的修改），先看過現有的差異再接著做。`
+        : `FlowPilot 已經在這個資料夾從 origin/${item.baseBranch} 開好並切換到 ${item.branch}。`) + '直接在目前分支做，不要切換分支、不要另外建分支。',
+      `- 照商戶 ${item.merchant} 現有的架構重新實作同樣的功能，保留這個商戶自己的行為；不要 merge、cherry-pick 來源分支，也不要整個檔案複製過來。`,
+      `- 需求以 Jira ${item.ticketKey}（主單 ${item.mainKey}）的「需求」與「預期結果」為準；完成時對照預期結果逐項確認。`,
+      '- 技能裡的「提交、推送、開 PR」這次都不要做：做完由 FlowPilot 安排瀏覽器測試，提交、推送、發 PR 由我決定。',
+      '- 做完跑一次跟提交時一樣的 lint，但只檢查這次改到的檔案，不要加 --fix。不要跑 build（正式版編譯很慢，實際跑過要好幾分鐘）：接下來的自動測試會啟動本機網站，編譯錯誤在那時就會出現。',
+      `- 不要修改 ${ENVIRONMENT_FILE}（SIT／UAT 由 FlowPilot 切換）。`,
+      '- 自己做，不要開子 AI（spawn_agent）分工。',
+      '- 最後說明：來源改了什麼、在這個商戶怎麼對應、有哪些地方跟來源不一樣（為什麼）。',
+      brief,
+    ] : [
       `請使用 $${skill} 處理這張 Jira：${item.mainUrl}`,
       rebaseLine,
       '',
@@ -574,14 +597,15 @@ export class Runner {
       '- 自己做，不要開子 AI（spawn_agent）分工。',
       item.targetMerchants.length ? `- 這張單之後還要移植到商戶 ${item.targetMerchants.join('、')}，那是下一階段的事，這次只做目前這個商戶。` : '',
       brief,
-    ]
+    ];
+    const text = instructions
       .filter((line) => line !== '')
       .join('\n');
     const { turn } = await codex.request<{ turn: { id: string } }>('turn/start', {
       threadId: thread.id,
       input: [
         { type: 'skill', name: skill, path: await this.skillPath(skill) },
-        { type: 'text', text: instructions, text_elements: [] },
+        { type: 'text', text, text_elements: [] },
       ],
     });
     this.turns.set(thread.id, turn.id);
@@ -903,7 +927,8 @@ export class Runner {
           this.notify(item.id, `${item.ticketKey} 在等你回答`, short(latest.lastMessage.slice(-200)));
         } else if (latest.stage === 'develop') {
           // 開發完：檢查計畫要自我審查就先審查，否則直接做無頭測試
-          if (this.deps.store.getReview(latest.ticketKey)?.review.checks?.codeReview.need) void this.startSelfCheck(item.id);
+          // 移植的不做自我審查：來源商戶開發時已經審過，移植只是照著改（自動測試照樣跑）
+          if (!latest.portOf && this.deps.store.getReview(latest.ticketKey)?.review.checks?.codeReview.need) void this.startSelfCheck(item.id);
           else void this.startTest(item.id, false);
         } else if (latest.stage === 'selfcheck') {
           void this.startTest(item.id, false);
@@ -1080,7 +1105,7 @@ export class Runner {
       pending: null,
       activity:
         '已完成' +
-        (item.targetMerchants.length ? `；之後要移植到 ${item.targetMerchants.map((m) => `m${m}`).join('、')}（移植功能還在開發中）` : ''),
+        (item.targetMerchants.length ? `；還要移植到 ${item.targetMerchants.map((m) => `m${m}`).join('、')}（推送之後按右邊的「移植」）` : ''),
     });
     await this.schedule();
   }
@@ -1212,6 +1237,46 @@ export class Runner {
     return turn.id;
   }
 
+  /**
+   * 多商戶的單：來源商戶完成之後，把功能移植到其他商戶。每個商戶一張新的工作（各自的分支、資料夾、對話），
+   * 跟一般開發一樣排隊、開發（用 platform-web-copy 的做法）、自動測試、等你測試、提交推送發 PR 由你決定。
+   * 來源分支要先推送：移植可能在別的資料夾做，要從遠端讀來源的改動。
+   */
+  async port(id: number): Promise<string[]> {
+    const source = this.deps.store.getWorkItem(id)!;
+    if (source.status !== 'committed') throw new Error('來源商戶要先完成（按「完成這張單」）才能移植');
+    if (!source.targetMerchants.length) throw new Error('這張單沒有要移植的商戶');
+    const settings = this.deps.settings();
+    const rule = settings.projects[source.project];
+    const folder = settings.folders.find((f) => f.project === source.project);
+    if (!rule || !folder) throw new Error(`設定檔裡沒有 ${source.project} 的專案或資料夾`);
+    const remote = await runGit(folder.path, ['ls-remote', '--heads', 'origin', source.branch]);
+    if (remote.code !== 0 || !remote.stdout.trim()) throw new Error(`遠端還沒有 ${source.branch}，請先推送 m${source.merchant} 的分支再移植`);
+    const items = source.targetMerchants
+      .map((m) => ({ m, branch: fill(rule.branch, { merchant: m, key: source.ticketKey }), baseBranch: fill(rule.baseBranch, { merchant: m, key: source.ticketKey }) }))
+      .filter((t) => !this.deps.store.activeWorkItem(source.project, t.branch));
+    if (!items.length) throw new Error('要移植的商戶都已經在工作台上了');
+    this.deps.store.createWorkItems(items.map((t) => ({
+      runId: source.runId,
+      ticketKey: source.ticketKey,
+      ticketSummary: source.ticketSummary,
+      mainKey: source.mainKey,
+      mainUrl: source.mainUrl,
+      project: source.project,
+      merchant: t.m,
+      targetMerchants: [],
+      branch: t.branch,
+      baseBranch: t.baseBranch,
+      skill: PORT_SKILL,
+      prTitle: source.prTitle,
+      preferredFolder: null,
+      portOf: { merchant: source.merchant!, branch: source.branch, baseBranch: source.baseBranch },
+    })));
+    this.update(id, { activity: `已經開始移植到 ${items.map((t) => `m${t.m}`).join('、')}（在作戰中）` });
+    void this.schedule();
+    return items.map((t) => t.branch);
+  }
+
   /** 啟動或重新連線後，重新訂閱還在進行中的對話，才收得到它們的進度 */
   async resubscribe(): Promise<void> {
     if (this.deps.paused) return;
@@ -1226,6 +1291,10 @@ export class Runner {
       } catch (error) {
         this.deps.log(`重新訂閱 ${item.ticketKey} 失敗：${(error as Error).message}`);
       }
+    }
+    // 正在做瀏覽器測試的單：本機網站是 FlowPilot 開的，重新啟動時跟著關了，馬上開回來（實際發生過：換版後 AI 測試時網站打不開）
+    for (const item of this.deps.store.listWorkItems().filter((i) => i.folder && i.status === 'running' && ['autotest', 'retest'].includes(i.stage))) {
+      void this.deps.ensureSite(item.folder!).catch((error) => this.deps.log(`${item.ticketKey}：重新啟動本機網站失敗：${(error as Error).message}`));
     }
     // 準備到一半被中斷的，重新準備
     for (const item of this.deps.store.listWorkItems().filter((i) => i.status === 'preparing')) void this.prepare(item.id);

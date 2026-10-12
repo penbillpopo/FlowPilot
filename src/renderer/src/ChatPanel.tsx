@@ -72,7 +72,7 @@ function autotestMark(item: WorkItem): { text: string; className: string; title?
 function flowPilotLabel(text: string): string | null {
   const skill = text.match(/^［技能：(.+?)］/)?.[1];
   if (skill) {
-    const kind = text.includes('開瀏覽器重新測試') ? '重測指示' : text.includes('自動安排的測試') ? '自動測試指示' : '開發指示';
+    const kind = text.includes('開瀏覽器重新測試') ? '重測指示' : text.includes('自動安排的測試') ? '自動測試指示' : text.includes('移植到商戶') ? '移植指示' : '開發指示';
     return `${kind}（${skill}）`;
   }
   if (text.startsWith('## 更新需求')) return '更新需求';

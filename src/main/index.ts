@@ -342,7 +342,13 @@ async function prOptions(itemId: number): Promise<PrOptions> {
   const repo = await AzureRepo.open(projectFolder(item));
   const [branches, reviewers, existing, pushed] = await Promise.all([repo.targetBranches(), repo.recentReviewers(), repo.activePrs(item.branch), repo.branchExists(item.branch)]);
   rememberPrs(itemId, existing);
+  // 同一張單在其他商戶的工作（多商戶的單：來源商戶和移植出去的），可以一起發 PR
+  const others = store.listWorkItems().filter((i) => i.id !== itemId && i.ticketKey === item.ticketKey && i.project === item.project && i.merchant !== null);
+  const siblings = await Promise.all(
+    others.map(async (i) => ({ id: i.id, merchant: i.merchant!, branch: i.branch, status: i.status, pushed: await repo.branchExists(i.branch).catch(() => false), prs: i.prs })),
+  );
   return {
+    siblings,
     title: defaultPrTitle(item),
     description: prDescription(item),
     source: item.branch,
@@ -354,25 +360,51 @@ async function prOptions(itemId: number): Promise<PrOptions> {
   };
 }
 
-async function createPr(itemId: number, input: { title: string; description: string; target: string; reviewerIds: string[] }): Promise<{ url: string }> {
+/** 一起發的其他商戶：目標分支照這個 PR 的換成那個商戶的（例如 master-1 → master-2）；沒有商戶編號的就用同一個 */
+function targetFor(target: string, from: number | null, to: number | null): string {
+  if (from === null || to === null) return target;
+  const m = target.match(new RegExp(`^(.*?)${from}$`));
+  return m ? `${m[1]}${to}` : target;
+}
+
+async function createPr(
+  itemId: number,
+  input: { title: string; description: string; target: string; reviewerIds: string[]; alsoItemIds?: number[] },
+): Promise<{ results: { merchant: number | null; target: string; url?: string; error?: string }[] }> {
   const item = store.getWorkItem(itemId);
   if (!item) throw new Error('找不到這張單');
   if (!input.title.trim()) throw new Error('PR 名稱不能空白');
   const repo = await AzureRepo.open(projectFolder(item));
-  if (!(await repo.branchExists(item.branch))) throw new Error(`遠端還沒有 ${item.branch}，請先推送`);
-  // 送出前再查一次：同一個目標分支已經有開著的 PR 就不重複建立（Azure 也不允許），直接給那個 PR
-  const active = await repo.activePrs(item.branch);
-  rememberPrs(itemId, active);
-  const same = active.find((p) => p.target === input.target);
-  if (same) return { url: same.url };
-  const pr = await repo.createPr({ source: item.branch, target: input.target, title: input.title.trim(), description: input.description, reviewerIds: input.reviewerIds });
-  // 讀回 Azure 上的樣子（審核人、狀態），讀不到就先記送出的內容
-  const record = await repo.getPr(pr.id).catch(() => ({ id: pr.id, url: pr.url, target: input.target, title: input.title.trim() }));
-  const latest = store.getWorkItem(itemId)!;
-  store.updateWorkItem(itemId, { prs: [...latest.prs, record] });
+  // 這張自己用你在表單填的內容；一起發的商戶用各自的說明，名稱共用
+  const jobs = [
+    { work: item, target: input.target, description: input.description },
+    ...(input.alsoItemIds ?? []).map((id) => store.getWorkItem(id)).filter((w): w is NonNullable<typeof w> => !!w && w.ticketKey === item.ticketKey)
+      .map((w) => ({ work: w, target: targetFor(input.target, item.merchant, w.merchant), description: prDescription(w) })),
+  ];
+  const results: { merchant: number | null; target: string; url?: string; error?: string }[] = [];
+  for (const job of jobs) {
+    const { work, target } = job;
+    try {
+      if (!(await repo.branchExists(work.branch))) throw new Error(`遠端還沒有 ${work.branch}，請先推送`);
+      // 同一個目標分支已經有開著的 PR 就不重複建立（Azure 也不允許），直接給那個 PR
+      const active = await repo.activePrs(work.branch);
+      rememberPrs(work.id, active);
+      const same = active.find((p) => p.target === target);
+      if (same) {
+        results.push({ merchant: work.merchant, target, url: same.url, error: '已經有開著的 PR' });
+        continue;
+      }
+      const pr = await repo.createPr({ source: work.branch, target, title: input.title.trim(), description: job.description, reviewerIds: input.reviewerIds });
+      const record = await repo.getPr(pr.id).catch(() => ({ id: pr.id, url: pr.url, target, title: input.title.trim() }));
+      store.updateWorkItem(work.id, { prs: [...store.getWorkItem(work.id)!.prs, record] });
+      log(`${work.ticketKey}：發了 PR #${pr.id}（${work.branch} → ${target}）`);
+      results.push({ merchant: work.merchant, target, url: pr.url });
+    } catch (error) {
+      results.push({ merchant: work.merchant, target, error: (error as Error).message });
+    }
+  }
   runner.notifyChanged();
-  log(`${item.ticketKey}：發了 PR #${pr.id}（${item.branch} → ${input.target}）`);
-  return { url: pr.url };
+  return { results };
 }
 
 function writeGuardPath() {
@@ -608,6 +640,7 @@ function registerIpc() {
     return runner.switchEnvironment(id, env);
   });
   ipcMain.handle('item:openInVSCode', (_event, id: number) => runner.openInVSCode(id));
+  ipcMain.handle('item:port', (_event, id: number) => runner.port(id));
 }
 
 // 盟軍外觀的提示音、語音：AI 做完時你可能沒在點畫面，也要能播

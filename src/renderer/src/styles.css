@@ -482,3 +482,8 @@ tbody tr.planning input { cursor: pointer; }
 .mark.pr-active { color: var(--running); }
 .mark.pr-completed { background: var(--ok-bg); color: var(--ok-fg); }
 .mark.pr-abandoned { color: var(--muted); text-decoration: line-through; }
+.pr-reviewer.disabled { opacity: 0.55; cursor: default; }
+.pr-results { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 3px; font-size: 12px; }
+.pr-results li.bad { color: var(--blocked); }
+.port-list { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 4px; }
+.port-list li { display: flex; gap: 8px; align-items: center; }

@@ -126,7 +126,8 @@ describe('發過的 PR', () => {
     // 模擬舊版：只有 pr_url，還沒有 prs
     const db = (old as unknown as { db: { exec(sql: string): void; prepare(sql: string): { get(): unknown } } }).db;
     const version = (db.prepare('PRAGMA user_version').get() as { user_version: number }).user_version;
-    db.exec(`UPDATE work_items SET pr_url = 'https://x/pullrequest/9', prs = NULL; PRAGMA user_version = ${version - 1}; ALTER TABLE work_items DROP COLUMN prs;`);
+    // 退回到加 prs 欄位之前（之後的升級也一起退掉）
+    db.exec(`UPDATE work_items SET pr_url = 'https://x/pullrequest/9', prs = NULL; PRAGMA user_version = ${version - 2}; ALTER TABLE work_items DROP COLUMN port_of; ALTER TABLE work_items DROP COLUMN prs;`);
     old.close();
     const store = new Store(file);
     expect(store.getWorkItem(item.id)!.prs).toEqual([{ id: 0, url: 'https://x/pullrequest/9', target: '', title: '' }]);

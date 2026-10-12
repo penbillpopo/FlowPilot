@@ -2,7 +2,7 @@
 import type { PlanBranch, PlanEntry, TicketPlan } from '../../shared/types';
 import type { ProjectRule, Settings } from '../settings';
 
-function fill(template: string, values: { merchant: number | null; key: string }): string {
+export function fill(template: string, values: { merchant: number | null; key: string }): string {
   return template.replaceAll('{商戶}', values.merchant === null ? '' : String(values.merchant)).replaceAll('{單號}', values.key.toUpperCase());
 }
 

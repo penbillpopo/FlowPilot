@@ -89,6 +89,7 @@ const api: FlowPilotApi = {
   openUrl: (url) => ipcRenderer.invoke('shell:openUrl', url),
   retry: (id) => ipcRenderer.invoke('item:retry', id),
   openInVSCode: (id) => ipcRenderer.invoke('item:openInVSCode', id),
+  port: (id) => ipcRenderer.invoke('item:port', id),
   retest: (id) => ipcRenderer.invoke('item:retest', id),
   rerunAutotest: (id) => ipcRenderer.invoke('item:rerunAutotest', id),
   ticketMarks: (keys) => ipcRenderer.invoke('tickets:marks', keys),

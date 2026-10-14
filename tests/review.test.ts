@@ -80,6 +80,24 @@ describe('審閱', () => {
     expect(brief).not.toContain('類型不認得');
   });
 
+  it('討論後 AI 釐清的標成已解決、判斷不是問題的標成不是問題（附理由）；你已經處理過的不會被改', () => {
+    let review = sanitizeReview(raw, ticket, settings);
+    const [a, b, c] = review.issues;
+    review.issues[2] = { ...c, status: 'assumed' };
+    review = applyDiscussion(review, '程式裡已經有空狀態了嗎？', {
+      reply: '查過程式碼了。\n已釐清：…；不是問題：…',
+      resolved: [{ id: a.id, answer: '含當天（程式裡的計算已經含）' }],
+      dismissed: [{ id: b.id, reason: '空狀態元件已經處理了' }, { id: c.id, reason: '不該套用到你處理過的' }],
+      newIssues: [],
+    });
+    expect(review.issues.find((i) => i.id === a.id)).toMatchObject({ status: 'answered', byDiscussion: true });
+    expect(review.issues.find((i) => i.id === b.id)).toMatchObject({ status: 'dismissed', answer: '空狀態元件已經處理了', byDiscussion: true });
+    expect(review.issues.find((i) => i.id === c.id)).toMatchObject({ status: 'assumed' });
+    expect(buildDiscussionPrompt(review, 'x')).toContain('dismissed');
+    // 交給開發的 AI：討論後判斷不是問題的不列
+    expect(reviewBrief(review)).not.toContain('空狀態元件已經處理了');
+  });
+
   it('交給開發的需求分析是五段格式；單上沒寫 API 就照實說，不編', () => {
     const review = sanitizeReview({ ...raw, pages: ['src/app/pages/banner'], apis: [], steps: ['新增存款次數欄位', ''] }, ticket, settings);
     expect(review.pages).toEqual(['src/app/pages/banner']);

@@ -1,6 +1,7 @@
 // 計畫表裡的審閱：AI 找出的問題，你可以回答、照建議、標成不是問題；也可以跟 AI 討論這張單。
 import { useState } from 'react';
 import type { Review, ReviewIssue } from '../../shared/types';
+import { useImageAttach } from './ImageAttach';
 import { Markdown } from './Markdown';
 
 const api = window.flowpilot;
@@ -69,7 +70,8 @@ function IssueCard({ issue, ticketKey, onChange }: { issue: ReviewIssue; ticketK
       )}
       {done && (
         <div className="issue-detail">
-          {issue.status === 'answered' && <>你的回答：{issue.answer}</>}
+          {issue.status === 'answered' && <>{issue.byDiscussion ? '討論後釐清' : '你的回答'}：{issue.answer}</>}
+          {issue.status === 'dismissed' && issue.answer && <>{issue.byDiscussion ? '討論後判斷不是問題' : '不是問題'}：{issue.answer}</>}
           {issue.status === 'assumed' && <>照 AI 建議：{issue.suggestion}</>}
           <button className="link" disabled={busy} onClick={() => set('open')}>重新打開</button>
         </div>
@@ -81,17 +83,19 @@ function IssueCard({ issue, ticketKey, onChange }: { issue: ReviewIssue; ticketK
 
 export function ReviewIssues({ review, onChange }: { review: Review; onChange(review: Review): void }) {
   const [text, setText] = useState('');
+  const attach = useImageAttach();
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const open = review.issues.filter((i) => i.status === 'open').length;
 
   async function send() {
-    if (!text.trim()) return;
+    if (!text.trim() && !attach.images.length) return;
     setBusy(true);
     setError(null);
     try {
-      onChange(await api.discussReview(review.ticketKey, text));
+      onChange(await api.discussReview(review.ticketKey, text, attach.images));
       setText('');
+      attach.clear();
     } catch (e) {
       setError(errorText(e));
     } finally {
@@ -143,7 +147,8 @@ export function ReviewIssues({ review, onChange }: { review: Review; onChange(re
         </div>
       )}
       {review.issues.length === 0 && <p className="muted small">AI 沒有發現明顯的問題。</p>}
-      {review.issues.map((issue) => (
+      {/* 還沒處理的排前面，處理過的（含討論後釐清、不是問題的）收到下面 */}
+      {[...review.issues].sort((a, b) => Number(a.status !== 'open') - Number(b.status !== 'open')).map((issue) => (
         <IssueCard key={`${issue.id}-${issue.status}`} issue={issue} ticketKey={review.ticketKey} onChange={onChange} />
       ))}
 
@@ -156,11 +161,12 @@ export function ReviewIssues({ review, onChange }: { review: Review; onChange(re
           ))}
         </div>
       )}
-      <div className="discuss-box">
+      {attach.view}
+      <div className={`discuss-box ${attach.dragging ? 'dragging' : ''}`} {...attach.bind}>
         <textarea
           rows={2}
           value={text}
-          placeholder="跟 AI 討論這張單：追問、補充背景，或告訴它 PM 的回覆（Enter 送出，Shift＋Enter 換行）。AI 會一併更新上面的問題。"
+          placeholder="跟 AI 討論這張單：追問、補充背景，或告訴它 PM 的回覆（Enter 送出，Shift＋Enter 換行）。可以附圖：按「附圖」、拖曳進來或直接貼上。AI 會一併更新上面的問題。"
           onChange={(e) => setText(e.target.value)}
           onKeyDown={(e) => {
             // Enter 送出、Shift＋Enter 換行；中文輸入法選字時按的 Enter 不算
@@ -170,7 +176,8 @@ export function ReviewIssues({ review, onChange }: { review: Review; onChange(re
             }
           }}
         />
-        <button className="primary" disabled={busy || !text.trim()} onClick={send}>{busy ? 'AI 思考中…' : '送出'}</button>
+        {attach.pickButton}
+        <button className="primary" disabled={busy || (!text.trim() && !attach.images.length)} onClick={send}>{busy ? 'AI 思考中…' : '送出'}</button>
       </div>
       {error && <div className="error">{error}</div>}
     </div>

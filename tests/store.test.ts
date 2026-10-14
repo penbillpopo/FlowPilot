@@ -128,7 +128,7 @@ describe('發過的 PR', () => {
     const db = (old as unknown as { db: { exec(sql: string): void; prepare(sql: string): { get(): unknown } } }).db;
     const version = (db.prepare('PRAGMA user_version').get() as { user_version: number }).user_version;
     // 退回到加 prs 欄位之前（之後的升級也一起退掉）
-    db.exec(`UPDATE work_items SET pr_url = 'https://x/pullrequest/9', prs = NULL; PRAGMA user_version = ${version - 3}; ALTER TABLE work_items DROP COLUMN members; ALTER TABLE work_items DROP COLUMN port_of; ALTER TABLE work_items DROP COLUMN prs;`);
+    db.exec(`UPDATE work_items SET pr_url = 'https://x/pullrequest/9', prs = NULL; PRAGMA user_version = ${version - 4}; ALTER TABLE plan_drafts DROP COLUMN extras_json; ALTER TABLE work_items DROP COLUMN members; ALTER TABLE work_items DROP COLUMN port_of; ALTER TABLE work_items DROP COLUMN prs;`);
     old.close();
     const store = new Store(file);
     expect(store.getWorkItem(item.id)!.prs).toEqual([{ id: 0, url: 'https://x/pullrequest/9', target: '', title: '' }]);
@@ -155,5 +155,17 @@ describe('合成一個任務', () => {
     expect(store.hasActiveTicket('ALL-14799')).toBe(true);
     store.updateWorkItem(item.id, { status: 'removed' });
     expect(store.ticketWorkState('ALL-14800')).toBeNull();
+  });
+});
+
+describe('計畫表的補充資料', () => {
+  it('存下來、讀得回來；拿掉全部就是空的', () => {
+    const store = new Store(':memory:');
+    store.addDrafts([ticket('ALL-1')]);
+    store.saveDraftExtras('ALL-1', [{ kind: 'url', value: 'https://x/wiki/pages/1' }, { kind: 'text', value: '照第 17 列做' }]);
+    expect(store.listDrafts()[0].extras.map((x) => x.kind)).toEqual(['url', 'text']);
+    expect(store.draftExtras('ALL-1')).toHaveLength(2);
+    store.saveDraftExtras('ALL-1', []);
+    expect(store.draftExtras('ALL-1')).toEqual([]);
   });
 });

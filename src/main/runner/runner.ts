@@ -627,6 +627,8 @@ export class Runner {
       input: [
         { type: 'skill', name: skill, path: await this.skillPath(skill) },
         { type: 'text', text, text_elements: [] },
+        // 補充資料裡的截圖（例如 Confluence 問題表那一列的截圖）一起給開發的 AI 看
+        ...(this.deps.store.getReview(item.ticketKey)?.review.supplementImages ?? []).filter((p) => existsSync(p)).map((path) => ({ type: 'localImage', path })),
       ],
     });
     this.turns.set(thread.id, turn.id);

@@ -54,6 +54,14 @@ export interface PlanDraft {
   ticket: JiraTicket;
   /** 你改過的計畫；還沒改過是 null（照 AI 審閱的結果） */
   plan: TicketPlan | null;
+  /** 你補充的需求來源 */
+  extras: SupplementItem[];
+}
+
+/** 補充的需求來源：網址（Confluence 會讀內容）、文字、截圖（本機路徑） */
+export interface SupplementItem {
+  kind: 'url' | 'text' | 'image';
+  value: string;
 }
 
 export interface TicketPlan {
@@ -125,8 +133,10 @@ export interface ReviewIssue {
   suggestion: string;
   /** 還沒處理、你回答了、照 AI 建議、不是問題 */
   status: 'open' | 'answered' | 'assumed' | 'dismissed';
-  /** 你的回答（status 為 answered 時） */
+  /** 你的回答（status 為 answered 時）；討論後 AI 釐清或判斷不是問題時，是它的結論 */
   answer?: string;
+  /** 在討論裡由 AI 處理的（釐清了、或判斷不是問題），不是你按的 */
+  byDiscussion?: boolean;
 }
 
 // ---- 需求變更 ----
@@ -186,6 +196,10 @@ export interface Review extends Judgement {
   reviewedAt: string;
   /** 上次確認過的單內容（子任務、主單） */
   snapshot?: TicketSnapshot[];
+  /** 你另外補充的需求來源（Confluence、文字），審閱和開發的 AI 都會看 */
+  supplements?: { label: string; text: string }[];
+  /** 補充資料裡的截圖（本機路徑），開發的 AI 開工時一起看 */
+  supplementImages?: string[];
   /** AI 這次審閱有沒有照要求完成；false 時畫面提醒你重新審閱 */
   complete?: boolean;
   /** 沒完成的原因 */
@@ -508,6 +522,8 @@ export interface FlowPilotApi {
   planAdd(tickets: JiraTicket[]): Promise<PlanDraft[]>;
   /** 好幾張單合成一個任務加進計畫表（同一條分支、同一段對話、一個 PR） */
   planAddGroup(tickets: JiraTicket[]): Promise<PlanDraft[]>;
+  /** 存下補充的需求來源（之後重新審閱就會一起看） */
+  planSetExtras(ticketKey: string, extras: SupplementItem[]): Promise<PlanDraft[]>;
   /** 存下你在計畫表改過的內容 */
   planSaveDraft(ticketKey: string, plan: TicketPlan): Promise<void>;
   /** 不做了：從計畫表拿掉，審閱紀錄也刪掉 */
@@ -525,7 +541,8 @@ export interface FlowPilotApi {
   /** 處理一個問題：回答、照建議、不是問題、重新打開 */
   updateIssue(ticketKey: string, issueId: string, patch: { status: ReviewIssue['status']; answer?: string }): Promise<Review>;
   /** 跟 AI 討論這張單，AI 會一併更新問題清單 */
-  discussReview(ticketKey: string, text: string): Promise<Review>;
+  /** 跟 AI 討論這張單；可以附圖 */
+  discussReview(ticketKey: string, text: string, images?: string[]): Promise<Review>;
   /** 更新需求：重新讀 Jira 跟上次的內容比對，交給這張單的 AI，在對話裡回答有沒有變更、打算怎麼改 */
   requestRequirementUpdate(itemId: number): Promise<void>;
   /** 算出分支並檢查是否已建立；fetch 為 true 時先抓遠端 */

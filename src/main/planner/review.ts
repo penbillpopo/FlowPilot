@@ -222,13 +222,18 @@ export function buildFigmaPrompt(figmaUrls: string[]): string {
 export const discussionSchema = {
   type: 'object',
   additionalProperties: false,
-  required: ['reply', 'resolved', 'newIssues'],
+  required: ['reply', 'resolved', 'dismissed', 'newIssues'],
   properties: {
     reply: { type: 'string', description: '用繁體中文回覆工程師' },
     resolved: {
       type: 'array',
-      description: '這次討論中已經有答案的問題（用問題編號），附上答案',
+      description: '已經釐清的問題（工程師回答了，或你查證後確定了答案、工程師也沒有異議），用問題編號，附上結論',
       items: { type: 'object', additionalProperties: false, required: ['id', 'answer'], properties: { id: { type: 'string' }, answer: { type: 'string' } } },
+    },
+    dismissed: {
+      type: 'array',
+      description: '討論後確定其實不是問題的（例如程式已經處理了、不在這張單的範圍、誤會了需求），用問題編號，附上理由；沒有就給空陣列',
+      items: { type: 'object', additionalProperties: false, required: ['id', 'reason'], properties: { id: { type: 'string' }, reason: { type: 'string' } } },
     },
     newIssues: { type: 'array', description: '討論中新發現的問題；沒有就給空陣列', items: issueSchema },
   },
@@ -241,10 +246,13 @@ export function buildDiscussionPrompt(review: Review, text: string): string {
     .map((i) => `- [${i.id}] ${i.title}（${STATUS_TEXT[i.status]}${i.answer ? `：${i.answer}` : ''}）`)
     .join('\n');
   return [
-    '工程師在討論這張單。請回覆他，並更新問題清單：',
-    '- 他的話如果回答了某個問題，放進 resolved（用問題編號），附上答案。',
+    '工程師在討論這張單。請回覆他，並整理問題清單（每個還沒處理的問題都想一下這次討論後還算不算問題）：',
+    '- 已經釐清的放進 resolved（用問題編號），附上結論：他的話回答了，或你查證後（例如看了程式碼、讀了補充資料）確定了答案、他也沒有異議。',
+    '- 討論後確定其實不是問題的放進 dismissed，附上理由：例如程式已經處理了、不在這張單的範圍、原本誤會了需求。',
+    '- 還有疑慮、需要 PM 決定的，不要放進去，留著。',
     '- 討論中發現新的問題，放進 newIssues；沒有就給空陣列。',
     '- 需要的話可以再看程式碼（只讀，看大方向）。',
+    '- reply 的最後一行列出這次處理了哪些問題，例如「已釐清：…；不是問題：…」；沒有處理就不用寫。',
     '',
     '## 目前的問題清單',
     list || '（沒有）',
@@ -257,13 +265,17 @@ export function buildDiscussionPrompt(review: Review, text: string): string {
 export function applyDiscussion(
   review: Review,
   text: string,
-  result: { reply: string; resolved: { id: string; answer: string }[]; newIssues: Partial<ReviewIssue>[] },
+  result: { reply: string; resolved: { id: string; answer: string }[]; dismissed?: { id: string; reason: string }[]; newIssues: Partial<ReviewIssue>[] },
   now = new Date(),
 ): Review {
   const issues = review.issues.map((issue) => {
+    // 你已經處理過的（回答、照建議、不是問題）不會被討論改掉；只處理還沒處理的
+    if (issue.status !== 'open') return issue;
     const hit = result.resolved?.find((r) => r.id === issue.id);
-    // 你標成「不是問題」的不會被改回來
-    return hit && issue.status !== 'dismissed' ? { ...issue, status: 'answered' as const, answer: hit.answer } : issue;
+    if (hit) return { ...issue, status: 'answered' as const, answer: hit.answer, byDiscussion: true };
+    const gone = result.dismissed?.find((r) => r.id === issue.id);
+    if (gone) return { ...issue, status: 'dismissed' as const, answer: gone.reason, byDiscussion: true };
+    return issue;
   });
   for (const raw of result.newIssues ?? []) {
     const issue = sanitizeIssue(raw, review.ticketKey);
@@ -307,5 +319,8 @@ export function reviewBrief(review: Review | null): string {
     '',
     '### 5. 疑問',
     ...(questions.length ? questions : ['- 沒有']),
+    ...(review.supplements?.length
+      ? ['', '### 6. 補充資料（我另外提供的需求來源，跟 Jira 單一樣重要；附的截圖也一起看）', ...review.supplements.flatMap((s) => ['', `【${s.label}】`, s.text])]
+      : []),
   ].join('\n');
 }

@@ -1,12 +1,13 @@
 // 應用程式主程序：選單列圖示＋主視窗。關掉視窗不會結束，背景繼續跑；從選單列「結束」才真的關掉。
 import { app, BrowserWindow, ipcMain, Menu, nativeImage, Notification, shell, Tray } from 'electron';
 import { execFileSync } from 'node:child_process';
-import { appendFileSync, mkdirSync, writeFileSync } from 'node:fs';
+import { appendFileSync, existsSync, mkdirSync, writeFileSync } from 'node:fs';
 import { randomUUID } from 'node:crypto';
 import { join } from 'node:path';
 import { groupTicket } from '../shared/group';
+import { confluencePageId, loadConfluence } from './confluence';
 import { AzureRepo, defaultPrTitle, prDescription, prIdFromUrl } from './azure';
-import type { Env, JiraTicket, PrOptions, PrRecord, WorkItem, Judgement, PlanOptions, Review, ReviewChecks, ReviewIssue, TicketMark, TicketPlan, TicketSnapshot } from '../shared/types';
+import type { Env, JiraTicket, PrOptions, PrRecord, SupplementItem, WorkItem, Judgement, PlanOptions, Review, ReviewChecks, ReviewIssue, TicketMark, TicketPlan, TicketSnapshot } from '../shared/types';
 import { CodexRpc } from './codex/rpc';
 import { listSkills, runStructured } from './codex/structured';
 import { checkExisting, runGit } from './git';
@@ -170,6 +171,30 @@ async function runReview(ticket: JiraTicket): Promise<Review> {
       log(`${ticket.key} 下載圖片 ${img.filename} 失敗：${(error as Error).message}`);
     }
   }
+  // 你補充的需求來源：Confluence 讀內容（問題表只取這張單的那幾列和截圖）、文字、截圖
+  const supplements: { label: string; text: string }[] = [];
+  const supplementImages: string[] = [];
+  for (const extra of store.draftExtras(ticket.key)) {
+    if (extra.kind === 'text') supplements.push({ label: '你補充的說明', text: extra.value });
+    else if (extra.kind === 'image') {
+      if (existsSync(extra.value)) supplementImages.push(extra.value);
+    } else if (confluencePageId(extra.value)) {
+      try {
+        const page = await loadConfluence(credentials, extra.value, members.map((m) => m.summary), imageDir);
+        supplements.push({ label: page.label, text: page.text });
+        supplementImages.push(...page.images);
+      } catch (error) {
+        supplements.push({ label: extra.value, text: `（讀不到：${(error as Error).message}）` });
+      }
+    } else {
+      supplements.push({ label: extra.value, text: '（不是 Confluence 頁面，FlowPilot 讀不到內容；需要的話把內容貼成文字）' });
+    }
+  }
+  // 補充的截圖排前面（你特地補的，比單上的附件重要），最多 8 張
+  images.splice(0, images.length, ...[...supplementImages, ...images].slice(0, 8));
+  const supplementPrompt = supplements.length
+    ? `\n\n## 補充資料（使用者另外提供的需求來源，跟 Jira 單一樣重要；跟單上的內容衝突時列成問題）\n${supplements.map((x) => `\n【${x.label}】\n${x.text}`).join('\n')}`
+    : '';
   // 審閱要用 git 讀各商戶的遠端基底分支（審閱的對話是唯讀的，自己不能抓），先抓一次，看到的才是最新的
   await Promise.all(settings.folders.map((f) => runGit(f.path, ['fetch', 'origin', '--quiet'], 60_000).catch(() => null)));
   const { result, threadId } = await withJudgeSlot(() =>
@@ -178,7 +203,7 @@ async function runReview(ticket: JiraTicket): Promise<Review> {
       keep: true, // 保留對話，之後可以接著討論
       developerInstructions: REVIEW_INSTRUCTIONS,
       images,
-      prompt: (ticket.members?.length ? buildGroupReviewPrompt(ticket, subs, mains, settings, store.recentDecisions()) : buildReviewPrompt(ticket, sub, main, settings, store.recentDecisions())) + (images.length ? `\n\n（附上單上的 ${images.length} 張圖片）` : ''),
+      prompt: (ticket.members?.length ? buildGroupReviewPrompt(ticket, subs, mains, settings, store.recentDecisions()) : buildReviewPrompt(ticket, sub, main, settings, store.recentDecisions())) + supplementPrompt + (images.length ? `\n\n（附上單上的 ${images.length} 張圖片）` : ''),
       schema: reviewSchema(settings),
       timeoutMs: 300_000,
     }),
@@ -215,6 +240,8 @@ async function runReview(ticket: JiraTicket): Promise<Review> {
   review.resources = resources;
   // 存下這次讀到的內容，之後比對 PM 有沒有改單
   review.snapshot = [...subs.map((x) => x.snapshot), ...mains.map((m) => m.snapshot)];
+  if (supplements.length) review.supplements = supplements;
+  if (supplementImages.length) review.supplementImages = supplementImages;
   store.saveReview(review, threadId);
   return review;
 }
@@ -251,20 +278,23 @@ function updateIssue(ticketKey: string, issueId: string, patch: { status: Review
   if (!saved) throw new Error(`${ticketKey} 還沒有審閱`);
   const review: Review = {
     ...saved.review,
-    issues: saved.review.issues.map((i) => (i.id === issueId ? { ...i, status: patch.status, answer: patch.status === 'answered' ? (patch.answer ?? '').trim() : undefined } : i)),
+    issues: saved.review.issues.map((i) => (i.id === issueId ? { ...i, status: patch.status, answer: patch.status === 'answered' ? (patch.answer ?? '').trim() : undefined, byDiscussion: undefined } : i)),
   };
   store.saveReview(review, saved.threadId);
   return review;
 }
 
-async function discussReview(ticketKey: string, text: string): Promise<Review> {
+async function discussReview(ticketKey: string, text: string, images: string[] = []): Promise<Review> {
   const saved = store.getReview(ticketKey);
   if (!saved) throw new Error(`${ticketKey} 還沒有審閱`);
-  if (!text.trim()) throw new Error('訊息是空的');
-  const request = { cwd: dataDir, keep: true, developerInstructions: REVIEW_INSTRUCTIONS, schema: discussionSchema, prompt: buildDiscussionPrompt(saved.review, text), timeoutMs: 300_000 };
+  const pictures = images.filter((p) => existsSync(p)).slice(0, 8);
+  if (!text.trim() && !pictures.length) throw new Error('訊息是空的');
+  // 附圖：文字補一句，討論紀錄也記下附了幾張
+  const said = `${text.trim()}${pictures.length ? `${text.trim() ? '\n' : ''}（附上 ${pictures.length} 張圖）` : ''}`;
+  const request = { cwd: dataDir, keep: true, developerInstructions: REVIEW_INSTRUCTIONS, schema: discussionSchema, prompt: buildDiscussionPrompt(saved.review, said), images: pictures, timeoutMs: 300_000 };
   // 接著審閱時的對話討論（AI 記得單和程式碼）；對話不在了就開一段新的
   const { result, threadId } = await runStructured<any>(codex, { ...request, threadId: saved.threadId ?? undefined }).catch(() => runStructured<any>(codex, request));
-  const review = applyDiscussion(saved.review, text.trim(), result);
+  const review = applyDiscussion(saved.review, said, result);
   store.saveReview(review, threadId);
   return review;
 }
@@ -523,6 +553,10 @@ function registerIpc() {
     void reviewTicket(group).catch((error) => log(`${group.key} 合成任務背景審閱失敗：${(error as Error).message}`));
     return store.listDrafts();
   });
+  ipcMain.handle('plan:setExtras', (_event, key: string, extras: SupplementItem[]) => {
+    store.saveDraftExtras(key, extras);
+    return store.listDrafts();
+  });
   ipcMain.handle('plan:saveDraft', (_event, ticketKey: string, plan: TicketPlan) => store.saveDraftPlan(ticketKey, plan));
   // 不做了：從計畫表拿掉，審閱紀錄也刪掉（審閱紀錄跟著計畫表和工作台走）
   ipcMain.handle('plan:discard', (_event, keys: string[]) => {
@@ -560,7 +594,7 @@ function registerIpc() {
     return review;
   });
   ipcMain.handle('review:updateIssue', (_event, ticketKey: string, issueId: string, patch: { status: ReviewIssue['status']; answer?: string }) => updateIssue(ticketKey, issueId, patch));
-  ipcMain.handle('review:discuss', (_event, ticketKey: string, text: string) => discussReview(ticketKey, text));
+  ipcMain.handle('review:discuss', (_event, ticketKey: string, text: string, images: string[] = []) => discussReview(ticketKey, text, images));
   ipcMain.handle('req:update', (_event, itemId: number) => requestRequirementUpdate(itemId));
   ipcMain.handle('plan:check', (_event, plans: TicketPlan[], fetch: boolean) => {
     const settings = loadSettings(settingsFile);

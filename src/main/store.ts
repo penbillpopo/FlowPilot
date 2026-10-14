@@ -1,7 +1,7 @@
 // 資料庫：~/Library/Application Support/FlowPilot/flowpilot.db（SQLite，用 Node 內建的 node:sqlite）
 // 每次狀態改變先寫進來，重新啟動才接得回去。
 import { DatabaseSync } from 'node:sqlite';
-import type { AcceptanceItem, JiraTicket, PlanDraft, PortSource, PrRecord, TicketRef, Judgement, PendingRequest, Review, RunSummary, TestReport, TestResult, TicketPlan, WorkItem, WorkLane, WorkStage, WorkStatus } from '../shared/types';
+import type { AcceptanceItem, JiraTicket, PlanDraft, PortSource, PrRecord, SupplementItem, TicketRef, Judgement, PendingRequest, Review, RunSummary, TestReport, TestResult, TicketPlan, WorkItem, WorkLane, WorkStage, WorkStatus } from '../shared/types';
 import type { PastDecision } from './planner/judge';
 
 // 依序執行的資料庫結構變更；只能往後加，不能改前面的
@@ -98,6 +98,8 @@ const MIGRATIONS: string[] = [
   `ALTER TABLE work_items ADD COLUMN port_of TEXT;`,
   // 好幾張單合成一個任務：全部成員的單號、標題、網址
   `ALTER TABLE work_items ADD COLUMN members TEXT;`,
+  // 計畫表的補充資料（Confluence 網址、文字、截圖）
+  `ALTER TABLE plan_drafts ADD COLUMN extras_json TEXT;`,
 ];
 
 /** 還佔著資料夾的狀態 */
@@ -394,12 +396,21 @@ export class Store {
 
   /** 計畫表裡的單（先加的在前）；plan 是你改過的計畫，還沒改過是 null */
   listDrafts(): PlanDraft[] {
-    const rows = this.db.prepare('SELECT * FROM plan_drafts ORDER BY added_at, ticket_key').all() as { ticket_json: string; plan_json: string | null }[];
-    return rows.map((r) => ({ ticket: JSON.parse(r.ticket_json), plan: r.plan_json ? JSON.parse(r.plan_json) : null }));
+    const rows = this.db.prepare('SELECT * FROM plan_drafts ORDER BY added_at, ticket_key').all() as { ticket_json: string; plan_json: string | null; extras_json: string | null }[];
+    return rows.map((r) => ({ ticket: JSON.parse(r.ticket_json), plan: r.plan_json ? JSON.parse(r.plan_json) : null, extras: r.extras_json ? JSON.parse(r.extras_json) : [] }));
   }
 
   saveDraftPlan(ticketKey: string, plan: TicketPlan) {
     this.db.prepare('UPDATE plan_drafts SET plan_json = ? WHERE ticket_key = ?').run(JSON.stringify(plan), ticketKey);
+  }
+
+  saveDraftExtras(ticketKey: string, extras: SupplementItem[]) {
+    this.db.prepare('UPDATE plan_drafts SET extras_json = ? WHERE ticket_key = ?').run(extras.length ? JSON.stringify(extras) : null, ticketKey);
+  }
+
+  draftExtras(ticketKey: string): SupplementItem[] {
+    const row = this.db.prepare('SELECT extras_json FROM plan_drafts WHERE ticket_key = ?').get(ticketKey) as { extras_json: string | null } | undefined;
+    return row?.extras_json ? JSON.parse(row.extras_json) : [];
   }
 
   removeDrafts(ticketKeys: string[]) {

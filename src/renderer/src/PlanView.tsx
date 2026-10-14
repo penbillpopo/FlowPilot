@@ -1,6 +1,6 @@
 // 第二階段畫面：計畫表。AI 先判斷每張單的專案與商戶，你可以改；檢查分支是否已建立後確認。
 import { useEffect, useMemo, useRef, useState } from 'react';
-import type { JiraTicket, PlanBranch, PlanDraft, PlanEntry, PlanOptions, Review, ReviewChecks, TicketPlan } from '../../shared/types';
+import type { JiraTicket, PlanBranch, PlanDraft, PlanEntry, PlanOptions, Review, ReviewChecks, SupplementItem, TicketPlan } from '../../shared/types';
 import { ReviewIssues } from './ReviewIssues';
 
 const api = window.flowpilot;
@@ -64,6 +64,89 @@ function CheckPlan({ review, onChange }: { review: Review; onChange(review: Revi
           </li>
         ))}
       </ul>
+      {error && <div className="error small">{error}</div>}
+    </div>
+  );
+}
+
+/**
+ * 補充資料：需求不一定在單上（Confluence 問題表、截圖、口頭說明）。
+ * Confluence 網址會讀內容（問題表只取這張單的那幾列和截圖），文字、截圖直接給 AI；改完要重新審閱才會套用。
+ */
+function Supplements({ draft, reviewing, applied, onChange, onReview }: { draft: PlanDraft; reviewing: boolean; applied: boolean; onChange(drafts: PlanDraft[]): void; onReview(): void }) {
+  const [input, setInput] = useState('');
+  const [error, setError] = useState<string | null>(null);
+  const [dirty, setDirty] = useState(false);
+  const extras = draft.extras;
+
+  async function save(next: SupplementItem[]) {
+    setError(null);
+    try {
+      onChange(await api.planSetExtras(draft.ticket.key, next));
+      setDirty(true);
+    } catch (e) {
+      setError(errorText(e));
+    }
+  }
+
+  function add() {
+    const text = input.trim();
+    if (!text) return;
+    // 一行一個網址就當網址，其他當文字說明
+    const lines = text.split('\n').map((l) => l.trim()).filter(Boolean);
+    const items: SupplementItem[] = lines.every((l) => /^https?:\/\/\S+$/.test(l)) ? lines.map((value) => ({ kind: 'url', value })) : [{ kind: 'text', value: text }];
+    setInput('');
+    save([...extras, ...items]);
+  }
+
+  async function paste(e: React.ClipboardEvent) {
+    const files = [...e.clipboardData.files].filter((f) => f.type.startsWith('image/'));
+    if (!files.length) return;
+    e.preventDefault();
+    const paths = await Promise.all(files.map(async (f) => api.saveImage(await f.arrayBuffer(), f.type.split('/')[1] ?? 'png')));
+    save([...extras, ...paths.map((value) => ({ kind: 'image' as const, value }))]);
+  }
+
+  const imageNo = (i: number) => extras.slice(0, i + 1).filter((x) => x.kind === 'image').length;
+  return (
+    <div className="plan-block supplements">
+      <div className="plan-block-title">
+        補充資料（{extras.length}）
+        <span className="muted small">需求不在單上時用：Confluence 網址會讀內容（問題表只取這張單的那一列和截圖）、文字說明、直接貼上截圖</span>
+      </div>
+      {extras.length > 0 && (
+        <ul className="supplement-list">
+          {extras.map((x, i) => (
+            <li key={i}>
+              <span className="mark">{x.kind === 'url' ? '網址' : x.kind === 'text' ? '說明' : '截圖'}</span>
+              <span className="supplement-value" title={x.value}>{x.kind === 'image' ? `截圖 ${imageNo(i)}` : x.value}</span>
+              <button className="link small danger" onClick={() => save(extras.filter((_, j) => j !== i))}>拿掉</button>
+            </li>
+          ))}
+        </ul>
+      )}
+      <div className="supplement-input">
+        <textarea
+          rows={2}
+          value={input}
+          placeholder="貼 Confluence 網址（一行一個）、打一段說明，或直接貼上截圖"
+          onChange={(e) => setInput(e.target.value)}
+          onPaste={paste}
+          onKeyDown={(e) => {
+            if (e.key === 'Enter' && !e.shiftKey && !e.nativeEvent.isComposing) {
+              e.preventDefault();
+              add();
+            }
+          }}
+        />
+        <button disabled={!input.trim()} onClick={add}>加入</button>
+      </div>
+      {(dirty || !applied) && extras.length > 0 && !reviewing && (
+        <p className="warn small">
+          補充資料要重新審閱才會套用（目前的問題和討論會被新的結果取代）。
+          <button className="link small" onClick={() => { setDirty(false); onReview(); }}>重新審閱</button>
+        </p>
+      )}
       {error && <div className="error small">{error}</div>}
     </div>
   );
@@ -323,6 +406,14 @@ export function PlanView({ drafts, onChange, onBack, onConfirmed }: Props) {
               )}
 
               {!plan && !error && <p className="muted">AI 審閱中…（讀單、判斷專案；一般或複雜的單會大略看程式碼，約 1 分鐘）</p>}
+              <Supplements
+                draft={drafts.find((d) => d.ticket.key === ticket.key)!}
+                reviewing={!plan && !error}
+                applied={!!(judgements[ticket.key]?.supplements?.length || judgements[ticket.key]?.supplementImages?.length)}
+                onChange={onChange}
+                onReview={() => judge(ticket, true)}
+              />
+
               {error && (
                 <div className="error">
                   AI 審閱失敗：{error} <button onClick={() => judge(ticket)}>重試</button> <button className="link danger" onClick={() => discard(ticket.key)}>移除</button>

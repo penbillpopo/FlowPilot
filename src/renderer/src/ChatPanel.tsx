@@ -3,6 +3,7 @@ import { useEffect, useRef, useState } from 'react';
 import type { BranchInfo, ChatEntry, ChatEvent, WorkItem, WorkStage, WorkStatus } from '../../shared/types';
 import { DiffView } from './DiffView';
 import { commitPrefs, deliveryOf, gitChanged, useGitState } from './delivery';
+import { useImageAttach } from './ImageAttach';
 import { Markdown } from './Markdown';
 import { pendingChecks } from './SidePanels';
 import { statusLabel, term } from './skin';
@@ -273,7 +274,7 @@ export function ChatPanel({ item }: { item: WorkItem }) {
   const [entries, setEntries] = useState<ChatEntry[]>([]);
   const [loading, setLoading] = useState(false);
   const [text, setText] = useState('');
-  const [images, setImages] = useState<string[]>([]);
+  const attach = useImageAttach();
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [removing, setRemoving] = useState(false);
@@ -353,26 +354,17 @@ export function ChatPanel({ item }: { item: WorkItem }) {
   }
 
   async function send() {
-    if (!text.trim() && images.length === 0) return;
+    if (!text.trim() && attach.images.length === 0) return;
     const message = text;
-    const attached = images;
+    const attached = attach.images;
     await act(async () => {
       await api.send(item.id, message, attached);
       setText('');
-      setImages([]);
+      attach.clear();
       stick.current = true;
     });
   }
 
-  async function onPaste(e: React.ClipboardEvent) {
-    const files = [...e.clipboardData.files].filter((f) => f.type.startsWith('image/'));
-    if (!files.length) return;
-    e.preventDefault();
-    for (const file of files) {
-      const path = await api.saveImage(await file.arrayBuffer(), file.type.split('/')[1] ?? 'png');
-      setImages((prev) => [...prev, path]);
-    }
-  }
 
   const running = item.status === 'running';
 
@@ -613,28 +605,18 @@ export function ChatPanel({ item }: { item: WorkItem }) {
       {error && <div className="error">{error}</div>}
 
       {canSend && (
-        <div className={`composer ${awaitingYou ? 'attention' : ''}`}>
-          {images.length > 0 && (
-            <div className="attachments">
-              {images.map((path) => (
-                <span key={path} className="chip on">
-                  截圖 {path.split('/').pop()?.slice(0, 8)}
-                  <button className="link" onClick={() => setImages((prev) => prev.filter((p) => p !== path))}>×</button>
-                </span>
-              ))}
-            </div>
-          )}
+        <div className={`composer ${awaitingYou ? 'attention' : ''} ${attach.dragging ? 'dragging' : ''}`} {...attach.bind}>
+          {attach.view}
           <textarea
             ref={input}
             rows={3}
             value={text}
             placeholder={
-              running ? '補充指示（會插進正在進行的這一輪，Enter 送出，Shift＋Enter 換行）。可以直接貼上截圖。'
-              : awaitingYou ? 'AI 在等你回答…（Enter 送出，Shift＋Enter 換行，可以直接貼上截圖）'
-              : '跟 AI 說…（Enter 送出，Shift＋Enter 換行，可以直接貼上截圖）'
+              running ? '補充指示（會插進正在進行的這一輪，Enter 送出，Shift＋Enter 換行）。可以附圖。'
+              : awaitingYou ? 'AI 在等你回答…（Enter 送出，Shift＋Enter 換行；可以附圖：按「附圖」、拖曳進來或直接貼上）'
+              : '跟 AI 說…（Enter 送出，Shift＋Enter 換行；可以附圖：按「附圖」、拖曳進來或直接貼上）'
             }
             onChange={(e) => setText(e.target.value)}
-            onPaste={onPaste}
             onKeyDown={(e) => {
               // Enter 送出、Shift＋Enter 換行；中文輸入法選字時按的 Enter 不算
               if (e.key === 'Enter' && !e.shiftKey && !e.nativeEvent.isComposing) {
@@ -644,7 +626,8 @@ export function ChatPanel({ item }: { item: WorkItem }) {
             }}
           />
           <div className="row composer-actions">
-            <button className="primary" disabled={busy || (!text.trim() && images.length === 0)} onClick={send}>
+            {attach.pickButton}
+            <button className="primary" disabled={busy || (!text.trim() && attach.images.length === 0)} onClick={send}>
               送出
             </button>
           </div>

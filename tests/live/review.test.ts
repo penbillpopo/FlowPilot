@@ -22,7 +22,7 @@ it.runIf(process.env.LIVE)('真實審閱', { timeout: 900_000 }, async () => {
         cwd: tmpdir(), keep: true, developerInstructions: REVIEW_INSTRUCTIONS, prompt: buildReviewPrompt(ticket, sub, main, settings, []), schema: reviewSchema(settings), timeoutMs: 300_000,
       });
       let review = sanitizeReview(result, ticket, settings);
-      const codePrompt = review.level !== '小' && !review.codeChecked ? buildCodeCheckPrompt(review.entries.map((e) => e.project), settings) : null;
+      const codePrompt = review.level !== '小' && !review.codeChecked ? buildCodeCheckPrompt(review.entries, settings) : null;
       let commands = 0;
       const off = rpc.on((m) => { if (m.params?.threadId === threadId && m.method === 'item/started' && m.params.item?.type === 'commandExecution') commands++; });
       if (codePrompt) {

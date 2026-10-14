@@ -38,7 +38,7 @@ export function planProblem(plan: TicketPlan, settings: Settings): string | null
   }
   const projects = plan.entries.map((e) => e.project);
   if (new Set(projects).size !== projects.length) return '同一個專案出現兩次';
-  if (!/^feat\([A-Z]+-\d+\) \S/.test(plan.prTitle)) return '合併請求標題格式要是 feat(單號) 英文描述';
+  if (!/^feat\([A-Z]+-\d+(, ?[A-Z]+-\d+)*\) \S/.test(plan.prTitle)) return '合併請求標題格式要是 feat(單號) 英文描述';
   return null;
 }
 

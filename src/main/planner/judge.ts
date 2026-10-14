@@ -107,6 +107,33 @@ export function buildJudgePrompt(ticket: JiraTicket, sub: IssueContext, main: Is
   return parts.join('\n');
 }
 
+/**
+ * 好幾張單合成一個任務：一起判斷專案與商戶（要做在同一個地方），預期結果標出是哪張單的。
+ */
+export function buildGroupJudgePrompt(ticket: JiraTicket, subs: IssueContext[], mains: IssueContext[], settings: Settings, allHistory: PastDecision[]): string {
+  const keys = subs.map((s) => s.key);
+  const history = allHistory.filter((h) => !keys.includes(h.ticketKey));
+  return [
+    '## 專案',
+    describeProjects(settings),
+    '',
+    '## 使用者過去確認過的判斷（越新越前面，請參考類似的單）',
+    history.length
+      ? history.map((h) => `- ${h.ticketKey}「${h.summary}」（主單：${h.mainSummary || '無'}）→ ${h.final.map((f) => (f.merchants.length ? `${f.project} 商戶 ${f.merchants.join('、')}` : f.project)).join('＋')}`).join('\n')
+      : '（還沒有）',
+    '',
+    `## 要判斷的任務：${keys.length} 張單合成一個任務（${keys.join('、')}），代表單號 ${ticket.key}`,
+    '這幾張單要在同一條分支、同一段 AI 對話裡一起做，最後發一個 PR。請當成一個任務來審閱：',
+    '- 專案與商戶：全部要做在同一個專案、同一組商戶。如果其實分屬不同專案或商戶，照多數的判斷，並列一個「範圍不清」的問題寫出哪張單不一樣。',
+    '- 預期結果（acceptance）每一條前面加上是哪張單的，例如「ALL-14800：…」；summary、pages、steps 也標出單號。每張單的預期結果都要列到。',
+    '- 問題清單也寫出是哪張單的問題（from 填那張單的單號）。',
+    '<Jira 內容>',
+    ...subs.map((s) => describeIssue(`子任務 ${s.key}`, s)),
+    ...mains.map((m) => `\n${describeIssue(`主單 ${m.key}`, m)}`),
+    '</Jira 內容>',
+  ].join('\n');
+}
+
 /** 整理 AI 的回答：去掉不存在的專案與商戶、補上來源商戶、修正標題的單號 */
 export function sanitizeJudgement(raw: Judgement, ticketKey: string, settings: Settings): Judgement {
   const seen = new Set<string>();

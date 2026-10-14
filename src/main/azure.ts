@@ -178,14 +178,18 @@ export class AzureRepo {
 }
 
 /** PR 預設的名稱：feat(單號) 單子名稱 */
-export function defaultPrTitle(item: Pick<WorkItem, 'ticketKey' | 'ticketSummary'>): string {
-  return `feat(${item.ticketKey}) ${item.ticketSummary}`.trim();
+export function defaultPrTitle(item: Pick<WorkItem, 'ticketKey' | 'ticketSummary'> & { members?: WorkItem['members'] }): string {
+  // 合成任務列出全部單號：feat(ALL-1, ALL-2) 標題
+  const keys = item.members?.length ? item.members.map((m) => m.key).join(', ') : item.ticketKey;
+  return `feat(${keys}) ${item.ticketSummary}`.trim();
 }
 
 /** PR 說明：Jira 連結＋驗收表的「改了什麼、怎麼測」 */
-export function prDescription(item: Pick<WorkItem, 'ticketKey' | 'ticketSummary' | 'mainKey' | 'mainUrl' | 'testReport' | 'branch' | 'baseBranch'> & { portOf?: WorkItem['portOf'] }): string {
+export function prDescription(item: Pick<WorkItem, 'ticketKey' | 'ticketSummary' | 'mainKey' | 'mainUrl' | 'testReport' | 'branch' | 'baseBranch'> & { portOf?: WorkItem['portOf']; members?: WorkItem['members'] }): string {
   const ticketUrl = item.mainUrl ? item.mainUrl.replace(/browse\/[^/?#]+/, `browse/${item.ticketKey}`) : '';
-  const lines = [`Jira：[${item.ticketKey}](${ticketUrl || item.ticketKey}) ${item.ticketSummary}`];
+  const lines = item.members?.length
+    ? ['Jira（合成一個任務）：', ...item.members.map((m) => `- [${m.key}](${m.url}) ${m.summary}`)]
+    : [`Jira：[${item.ticketKey}](${ticketUrl || item.ticketKey}) ${item.ticketSummary}`];
   // 移植過來的：寫清楚從哪裡移植（跟 platform-web-copy 的 PR 說明一樣）
   if (item.portOf) lines.push('', `Port feature from ${item.portOf.branch} to ${item.baseBranch}`, '', 'Source:', `${item.portOf.baseBranch} -> ${item.portOf.branch}`, '', 'Target:', `${item.baseBranch} -> ${item.branch}`);
   if (item.mainKey && item.mainKey !== item.ticketKey && item.mainUrl) lines.push(`主單：[${item.mainKey}](${item.mainUrl})`);

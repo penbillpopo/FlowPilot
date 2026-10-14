@@ -3,6 +3,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { describe, expect, it } from 'vitest';
 import { Store } from '../src/main/store';
+import { groupTicket } from '../src/shared/group';
 import type { JiraTicket } from '../src/shared/types';
 
 function ticket(key: string): JiraTicket {
@@ -127,10 +128,32 @@ describe('發過的 PR', () => {
     const db = (old as unknown as { db: { exec(sql: string): void; prepare(sql: string): { get(): unknown } } }).db;
     const version = (db.prepare('PRAGMA user_version').get() as { user_version: number }).user_version;
     // 退回到加 prs 欄位之前（之後的升級也一起退掉）
-    db.exec(`UPDATE work_items SET pr_url = 'https://x/pullrequest/9', prs = NULL; PRAGMA user_version = ${version - 2}; ALTER TABLE work_items DROP COLUMN port_of; ALTER TABLE work_items DROP COLUMN prs;`);
+    db.exec(`UPDATE work_items SET pr_url = 'https://x/pullrequest/9', prs = NULL; PRAGMA user_version = ${version - 3}; ALTER TABLE work_items DROP COLUMN members; ALTER TABLE work_items DROP COLUMN port_of; ALTER TABLE work_items DROP COLUMN prs;`);
     old.close();
     const store = new Store(file);
     expect(store.getWorkItem(item.id)!.prs).toEqual([{ id: 0, url: 'https://x/pullrequest/9', target: '', title: '' }]);
     store.close();
+  });
+});
+
+describe('合成一個任務', () => {
+  it('成員單也算在工作台、計畫表裡（單列表會鎖住）', () => {
+    const store = new Store(':memory:');
+    const group = groupTicket([ticket('ALL-14800'), ticket('ALL-14798'), ticket('ALL-14799')]);
+    store.addDrafts([group]);
+    expect(store.isDraft('ALL-14799')).toBe(true);
+    expect(store.isDraft('ALL-1')).toBe(false);
+    store.removeDrafts([group.key]);
+    const run = store.createRun([group]);
+    const [item] = store.createWorkItems([{
+      runId: run.id, ticketKey: group.key, ticketSummary: group.summary, mainKey: group.key, mainUrl: '', project: 'PlatformWeb', merchant: 10,
+      targetMerchants: [], branch: 'ban/m10/ALL-14798', baseBranch: 'master-10', skill: 'x', prTitle: 'feat(ALL-14798, ALL-14799, ALL-14800) x', preferredFolder: null,
+      members: group.members!.map((m) => ({ key: m.key, summary: m.summary, url: m.url })),
+    }]);
+    expect(store.getWorkItem(item.id)!.members.map((m) => m.key)).toEqual(['ALL-14798', 'ALL-14799', 'ALL-14800']);
+    expect(store.ticketWorkState('ALL-14800')).toBe('active');
+    expect(store.hasActiveTicket('ALL-14799')).toBe(true);
+    store.updateWorkItem(item.id, { status: 'removed' });
+    expect(store.ticketWorkState('ALL-14800')).toBeNull();
   });
 });

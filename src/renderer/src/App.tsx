@@ -213,6 +213,71 @@ function SkinMenu({ settings, onChange }: { settings: SkinSettings; onChange(pat
   );
 }
 
+/**
+ * 單列表上的 Jira 狀態：點一下列出這張單能切到的狀態，選了確認後切換。
+ * 這是 FlowPilot 對 Jira 唯一的寫入（其他一律只讀）。
+ */
+function StatusSwitch({ ticket, onChanged, onError }: { ticket: JiraTicket; onChanged(status: string): void; onError(message: string): void }) {
+  const [open, setOpen] = useState(false);
+  const [options, setOptions] = useState<{ id: string; name: string; to: string }[] | null>(null);
+  const [busy, setBusy] = useState(false);
+  const box = useRef<HTMLDivElement>(null);
+  const message = (e: unknown) => (e instanceof Error ? e.message.replace(/^Error invoking remote method '[^']+': (Error: )?/, '') : String(e));
+
+  useEffect(() => {
+    if (!open) return;
+    const close = (e: MouseEvent) => !box.current?.contains(e.target as Node) && setOpen(false);
+    document.addEventListener('mousedown', close);
+    return () => document.removeEventListener('mousedown', close);
+  }, [open]);
+
+  async function toggle(e: React.MouseEvent) {
+    e.stopPropagation(); // 不要順便勾選這一列
+    if (open) return setOpen(false);
+    setOpen(true);
+    setOptions(null);
+    try {
+      setOptions(await api.ticketTransitions(ticket.key));
+    } catch (err) {
+      setOpen(false);
+      onError(message(err));
+    }
+  }
+
+  async function pick(e: React.MouseEvent, option: { id: string; to: string }) {
+    e.stopPropagation();
+    if (!window.confirm(`把 ${ticket.key} 的 Jira 狀態從「${ticket.status}」改成「${option.to}」？\n\nJira 上的同事都會看到這個變更。`)) return;
+    setBusy(true);
+    try {
+      onChanged(await api.transitionTicket(ticket.key, option.id));
+      setOpen(false);
+    } catch (err) {
+      onError(message(err));
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  const choices = options?.filter((o) => o.to !== ticket.status) ?? [];
+  return (
+    <div className="status-switch" ref={box}>
+      <button className="status" onClick={toggle} disabled={busy} title="切換 Jira 狀態">
+        {busy ? '切換中…' : ticket.status}
+        <span className="caret">▼</span>
+      </button>
+      {open && (
+        <div className="status-menu" onClick={(e) => e.stopPropagation()}>
+          {!options && <span className="muted small">讀取中…</span>}
+          {options && choices.length === 0 && <span className="muted small">沒有可以切換的狀態</span>}
+          {choices.map((o) => (
+            <button key={o.id} onClick={(e) => pick(e, o)}>{o.to}</button>
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
+
 function TicketList({ onConfirmed }: { onConfirmed(): void }) {
   const [tickets, setTickets] = useState<JiraTicket[] | null>(null);
   const [selected, setSelected] = useState<Set<string>>(new Set());
@@ -293,12 +358,15 @@ function TicketList({ onConfirmed }: { onConfirmed(): void }) {
     });
   }
 
+  /** 一次加一個任務：勾一張就是那張；勾好幾張就合成一個任務（同一條分支、同一段對話、一個 PR） */
   async function addToPlan() {
     if (!tickets) return;
+    const chosen = tickets.filter((t) => selected.has(t.key));
+    const group = chosen.length >= 2;
     setAdding(true);
     setError(null);
     try {
-      setDrafts(await api.planAdd(tickets.filter((t) => selected.has(t.key))));
+      setDrafts(group ? await api.planAddGroup(chosen) : await api.planAdd(chosen));
       setSelected(new Set());
       setShowPlan(true);
       reloadMarks();
@@ -421,7 +489,13 @@ function TicketList({ onConfirmed }: { onConfirmed(): void }) {
                     <span className="muted">（本身是主單）</span>
                   )}
                 </td>
-                <td className="state"><span className="status">{t.status}</span></td>
+                <td className="state">
+                  <StatusSwitch
+                    ticket={t}
+                    onChanged={(status) => setTickets((prev) => prev?.map((x) => (x.key === t.key ? { ...x, status } : x)) ?? prev)}
+                    onError={setError}
+                  />
+                </td>
                 <td className="time">{formatTime(t.updated)}</td>
               </tr>
             ))}
@@ -430,9 +504,14 @@ function TicketList({ onConfirmed }: { onConfirmed(): void }) {
       )}
 
       <footer>
-        <span className="muted">加進計畫表後，AI 會在背景審閱每張單：整理要做什麼、找出單子的問題、判斷專案與商戶。你可以先去做別的，審好的單可以一張一張確認開工。</span>
-        <button className="primary" disabled={selected.size === 0 || adding} onClick={addToPlan}>
-          {adding ? '加入中…' : `把這 ${selected.size} 張加進計畫表`}
+        <span className="muted">一次加一個任務：勾一張就是那張；勾好幾張會合成一個任務（同一條分支、一個 PR）。加進計畫表後 AI 在背景審閱，你可以先去做別的。</span>
+        <button
+          className="primary"
+          disabled={selected.size === 0 || adding}
+          onClick={addToPlan}
+          title={selected.size >= 2 ? '勾好幾張會合成一個任務：同一條分支、同一段 AI 對話、一個 PR' : undefined}
+        >
+          {adding ? '加入中…' : selected.size >= 2 ? `把這 ${selected.size} 張合成一個任務，加進計畫表` : '加進計畫表'}
         </button>
       </footer>
     </main>

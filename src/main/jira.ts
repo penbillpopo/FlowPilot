@@ -316,3 +316,42 @@ export function buildJql(filter: string, statusNames: string[], ids: Map<string,
   if (statusIds.length === 0) throw new Error('至少要選一個狀態');
   return `${filter} AND status in (${statusIds.join(', ')}) ORDER BY updated DESC`;
 }
+
+// ---- 切換狀態（FlowPilot 對 Jira 唯一的寫入：只能切換狀態，其他一律只讀） ----
+
+export interface JiraTransition {
+  id: string;
+  /** 切換的名稱（例如「READY TO TEST」） */
+  name: string;
+  /** 切換後的狀態 */
+  to: string;
+}
+
+/** 這張單現在可以切到哪些狀態（照 Jira 的工作流程，每張單不一定一樣） */
+export async function getTransitions(credentials: JiraCredentials, key: string, fetchImpl: typeof fetch = fetch): Promise<JiraTransition[]> {
+  const auth = Buffer.from(`${credentials.email}:${credentials.token}`).toString('base64');
+  const response = await fetchImpl(`${credentials.baseUrl}/rest/api/3/issue/${encodeURIComponent(key)}/transitions`, {
+    headers: { Authorization: `Basic ${auth}`, Accept: 'application/json' },
+  });
+  if (!response.ok) throw new Error(`讀不到 ${key} 可以切換的狀態：HTTP ${response.status}`);
+  const body = (await response.json()) as { transitions?: { id: string; name: string; to?: { name?: string } }[] };
+  return (body.transitions ?? []).map((t) => ({ id: t.id, name: t.name, to: t.to?.name ?? t.name }));
+}
+
+/** 切換狀態；回傳切換後的狀態名稱 */
+export async function transitionIssue(credentials: JiraCredentials, key: string, transitionId: string, fetchImpl: typeof fetch = fetch): Promise<string> {
+  const available = await getTransitions(credentials, key, fetchImpl);
+  const target = available.find((t) => t.id === transitionId);
+  if (!target) throw new Error(`${key} 現在不能切到這個狀態（可能已經被別人改過了），請重新整理`);
+  const auth = Buffer.from(`${credentials.email}:${credentials.token}`).toString('base64');
+  const response = await fetchImpl(`${credentials.baseUrl}/rest/api/3/issue/${encodeURIComponent(key)}/transitions`, {
+    method: 'POST',
+    headers: { Authorization: `Basic ${auth}`, Accept: 'application/json', 'Content-Type': 'application/json' },
+    body: JSON.stringify({ transition: { id: transitionId } }),
+  });
+  if (!response.ok) {
+    const text = await response.text().catch(() => '');
+    throw new Error(`切換 ${key} 的狀態失敗：HTTP ${response.status}${text ? `（${text.slice(0, 200)}）` : ''}`);
+  }
+  return target.to;
+}

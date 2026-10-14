@@ -1,9 +1,11 @@
 // 審閱：讀懂單 → 判斷專案 → （一般、複雜的單）大略看一下程式碼 → 找出單子的問題。
 // 問題不會擋住開發；你可以回答、照 AI 建議、或標成不是問題，也可以跟 AI 討論。
-import type { CheckDecision, IssueType, JiraTicket, Review, ReviewChecks, ReviewIssue } from '../../shared/types';
+import type { CheckDecision, IssueType, JiraTicket, PlanEntry, Review, ReviewChecks, ReviewIssue } from '../../shared/types';
 import type { IssueContext } from '../jira';
 import type { Settings } from '../settings';
-import { buildJudgePrompt, JUDGE_INSTRUCTIONS, judgementSchema, sanitizeJudgement, type PastDecision } from './judge';
+import { ticketKeys } from '../../shared/group';
+import { fill } from './rules';
+import { buildGroupJudgePrompt, buildJudgePrompt, JUDGE_INSTRUCTIONS, judgementSchema, sanitizeJudgement, type PastDecision } from './judge';
 
 export const ISSUE_TYPES: IssueType[] = ['邏輯矛盾', '需求不明確', '遺漏情境', '前後端對不上', '跟設計稿不一致', '範圍不清', '跟現有功能衝突'];
 
@@ -74,7 +76,14 @@ export const REVIEW_INSTRUCTIONS = `${JUDGE_INSTRUCTIONS}
 - 先判斷單的大小（level）：
   - 小：不用看程式碼，只根據單的內容審閱。
   - 一般或複雜：到判斷出的專案資料夾裡「大略」看程式碼，只做三件事：找到相關的頁面或模組、確認單上提到的欄位或 API 在程式碼裡大概有沒有、看看有沒有明顯會互相影響的地方。
-  - 看程式碼只看大方向：最多執行 10 個查詢或讀檔指令，不要逐行細讀，整體控制在一分鐘內。資料夾目前可能停在別的分支，只當作參考。
+  - 看程式碼只看大方向：最多執行 12 個查詢或讀檔指令，不要逐行細讀，整體控制在一分鐘內。
+  - 資料夾可能停在任何分支（常常是別張單、別的商戶），不要看工作目錄裡的檔案。一律用 git 直接讀這張單要開發的商戶的「遠端基底分支」，不用切換分支：
+    git grep -n 關鍵字 origin/<基底分支> -- src、git show origin/<基底分支>:檔案路徑、git ls-tree -r --name-only origin/<基底分支> -- 資料夾
+    各專案的基底分支寫在下面的資料夾清單。
+  - 多商戶的專案（例如 PlatformWeb）：各商戶的程式可能不一樣（實際發生過：新版獎金中心 /bonuses 只有 m8、m10 有，其他商戶是舊的 /voucher/bonus）。
+    先決定要做哪些商戶，再把相關頁面或模組在「每個選到的商戶」的基底分支都查一次（git grep 一次查多個分支就好，例如 git grep -n 關鍵字 origin/master-1 origin/master-8 -- src）。
+    sourceMerchant（來源商戶，先開發、再移植到其他商戶）選「程式最符合需求」的那個，例如需求說的頁面只有某些商戶有，就選其中一個；都一樣才照預設的優先順序。
+    各商戶的結構不一樣時，一定要列一個「範圍不清」的問題，寫出哪些商戶有、哪些沒有、建議怎麼做；pages 也寫清楚是哪個商戶的路徑。
   - 只能讀，不能修改任何檔案。
 - 審閱結果會整理成開發用的需求分析交給開發的 AI，所以也要填：
   - pages（牽涉頁面）：路由、選單、頁面或元件；看過程式碼就寫實際的路徑或元件名稱。
@@ -86,6 +95,18 @@ export const REVIEW_INSTRUCTIONS = `${JUDGE_INSTRUCTIONS}
 - 不要使用任何技能（skills），也不要去讀任何 SKILL.md；照這裡的說明做就好。
 - 照實回報：沒有看程式碼就把 codeChecked 填 false；有任何一步沒做到（例如讀不到程式碼、資料不足），complete 填 false，problem 寫原因。不要把「我還沒做、需要你提供什麼」寫進 summary 或其他欄位。`;
 
+function folderList(settings: Settings): string {
+  return Object.entries(settings.projects)
+    .map(([project, rule]) => {
+      const folder = settings.folders.find((f) => f.project === project);
+      return folder ? `- ${project}：${folder.path}（${baseBranchHint(rule)}）` : null;
+    })
+    .filter(Boolean)
+    .join('\n');
+}
+
+const FOLDERS_TITLE = '## 各專案的程式碼資料夾（一般、複雜的單才需要看；用 git 讀括號裡的遠端基底分支，不要看工作目錄）';
+
 export function buildReviewPrompt(
   ticket: JiraTicket,
   sub: IssueContext,
@@ -93,23 +114,39 @@ export function buildReviewPrompt(
   settings: Settings,
   history: PastDecision[],
 ): string {
-  const folders = Object.keys(settings.projects)
-    .map((project) => {
-      const folder = settings.folders.find((f) => f.project === project);
-      return folder ? `- ${project}：${folder.path}` : null;
-    })
-    .filter(Boolean)
-    .join('\n');
-  return [buildJudgePrompt(ticket, sub, main, settings, history), '', '## 各專案的程式碼資料夾（一般、複雜的單才需要看）', folders].join('\n');
+  return [buildJudgePrompt(ticket, sub, main, settings, history), '', FOLDERS_TITLE, folderList(settings)].join('\n');
 }
 
-/** 一般、複雜的單 AI 第一輪沒看程式碼時，追加的這一輪：指定到判斷出的專案資料夾大略看 */
-export function buildCodeCheckPrompt(projects: string[], settings: Settings): string | null {
-  const folders = projects.map((p) => settings.folders.find((f) => f.project === p)).filter(Boolean);
-  if (!folders.length) return null;
+/** 好幾張單合成一個任務的審閱：每張子任務和（不重複的）主單都給 AI 看 */
+export function buildGroupReviewPrompt(ticket: JiraTicket, subs: IssueContext[], mains: IssueContext[], settings: Settings, history: PastDecision[]): string {
+  return [buildGroupJudgePrompt(ticket, subs, mains, settings, history), '', FOLDERS_TITLE, folderList(settings)].join('\n');
+}
+
+/** 基底分支怎麼來：多商戶的寫出規則和例子（例如 master-{商戶}，m1 是 origin/master-1） */
+function baseBranchHint(rule: Settings['projects'][string]): string {
+  if (!rule.merchants?.length) return `基底分支 origin/${rule.baseBranch}`;
+  const examples = rule.merchants.slice(0, 3).map((m) => `m${m} 是 origin/${fill(rule.baseBranch, { merchant: m, key: '' })}`).join('、');
+  return `多商戶，基底分支 ${rule.baseBranch}：${examples}…；預設的來源商戶優先順序 ${(rule.sourcePriority ?? []).join(' > ') || '數字小的'}`;
+}
+
+/** 一般、複雜的單 AI 第一輪沒看程式碼時，追加的這一輪：指定到判斷出的專案、商戶的基底分支大略看 */
+export function buildCodeCheckPrompt(entries: PlanEntry[], settings: Settings): string | null {
+  const lines = entries
+    .map((e) => {
+      const folder = settings.folders.find((f) => f.project === e.project);
+      const rule = settings.projects[e.project];
+      if (!folder || !rule) return null;
+      const bases = rule.merchants?.length && e.merchants.length
+        ? e.merchants.map((m) => `m${m}：origin/${fill(rule.baseBranch, { merchant: m, key: '' })}`).join('、')
+        : `origin/${rule.baseBranch}`;
+      return `- ${e.project}：${folder.path}（用 git 讀這些分支，不要看工作目錄：${bases}）`;
+    })
+    .filter(Boolean);
+  if (!lines.length) return null;
   return [
-    '這張單不是小單，請到下面的資料夾「大略」看一下程式碼，然後回傳完整的審閱結果（同樣的格式；有看程式碼 codeChecked 才填 true）：',
-    ...folders.map((f) => `- ${f!.project}：${f!.path}`),
+    '這張單不是小單，請「大略」看一下程式碼，然後回傳完整的審閱結果（同樣的格式；有看程式碼 codeChecked 才填 true）：',
+    ...lines,
+    '多商戶的話每個選到的商戶都查一次，結構不一樣就列成問題，並照「程式最符合需求」選 sourceMerchant。',
     '',
     '只做三件事：找到相關的頁面或模組、確認單上提到的欄位或 API 在程式碼裡大概有沒有、看看有沒有明顯會互相影響的地方。',
     '最多執行 10 個查詢或讀檔指令（例如 rg 搜尋關鍵字、看相關檔案的開頭），不要逐行細讀；只能讀，不能修改。',
@@ -136,12 +173,13 @@ function sanitizeIssue(raw: Partial<ReviewIssue>, fallbackFrom: string): ReviewI
 }
 
 export function sanitizeReview(raw: any, ticket: JiraTicket, settings: Settings, now = new Date()): Review {
-  const judgement = sanitizeJudgement(raw, ticket.key, settings);
+  // 合成任務的標題列出全部單號：feat(ALL-1, ALL-2) …
+  const judgement = sanitizeJudgement(raw, ticketKeys(ticket), settings);
   const level = ['小', '一般', '複雜'].includes(raw?.level) ? raw.level : '一般';
   const issues = (raw?.issues ?? [])
     .map((i: Partial<ReviewIssue>) => sanitizeIssue(i, ticket.key))
     .filter(Boolean)
-    .slice(0, 6) as ReviewIssue[];
+    .slice(0, ticket.members?.length ? 10 : 6) as ReviewIssue[];
   issues.sort((a, b) => (a.importance === b.importance ? 0 : a.importance === '重要' ? -1 : 1));
   const list = (v: unknown) => (Array.isArray(v) ? v.map((x) => String(x).trim()).filter(Boolean) : []);
   return {

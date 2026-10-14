@@ -18,7 +18,7 @@ export function PortPanel({ item, all }: { item: WorkItem; all: WorkItem[] }) {
 
   async function port() {
     const ok = window.confirm(
-      `把 ${item.ticketKey} 從 m${item.merchant} 移植到 ${names(missing)}？\n\n每個商戶會變成一張新的工作：從各自的 master 開分支，AI 照 m${item.merchant} 的改動在那個商戶重新實作，接著自動測試、等你測試。\n提交、推送、發 PR 一樣由你決定。\n\nm${item.merchant} 的分支要先推送到遠端。`,
+      `把 ${item.ticketKey} 從 m${item.merchant} 移植到 ${names(missing)}？\n\n每個商戶會變成一張新的工作：從各自的 master 開分支，AI 照 m${item.merchant} 的改動在那個商戶重新實作，接著自動測試、等你測試。\n提交、推送、發 PR 一樣由你決定。\n\nm${item.merchant} 的分支不用先推送：FlowPilot 會從本機的資料夾抓過去。`,
     );
     if (!ok) return;
     setBusy(true);

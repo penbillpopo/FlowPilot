@@ -12,6 +12,15 @@ export interface JiraTicket {
   url: string;
   /** 上層主單；被指派的本身就是主單時為 null */
   parent: { key: string; summary: string; url: string } | null;
+  /** 合成一個任務的好幾張單（同一條分支、同一段對話、一個 PR）；這張是代表（單號用主單＝單號最小的那張） */
+  members?: JiraTicket[];
+}
+
+/** 合成一個任務的單，每張的單號、標題、網址 */
+export interface TicketRef {
+  key: string;
+  summary: string;
+  url: string;
 }
 
 /** 交給技能的 Jira 單：有主單用主單，沒有就用自己 */
@@ -340,6 +349,8 @@ export interface WorkItem {
   prs: PrRecord[];
   /** 從來源商戶移植過來的（多商戶的單）；一般開發是 null */
   portOf: PortSource | null;
+  /** 好幾張單合成一個任務時的全部成員（含代表的那張）；一般的單是空的 */
+  members: TicketRef[];
   /** 自動測試的結果（AI 回覆最後一行的「測試結果：…」；沒開始成也算沒測成） */
   autotestResult: TestResult | null;
   /** 最近一次瀏覽器測試的報告：預期結果對照、要你手動測的清單（勾選狀態會保留） */
@@ -495,6 +506,8 @@ export interface FlowPilotApi {
   planDrafts(): Promise<PlanDraft[]>;
   /** 把單加進計畫表（AI 在背景審閱） */
   planAdd(tickets: JiraTicket[]): Promise<PlanDraft[]>;
+  /** 好幾張單合成一個任務加進計畫表（同一條分支、同一段對話、一個 PR） */
+  planAddGroup(tickets: JiraTicket[]): Promise<PlanDraft[]>;
   /** 存下你在計畫表改過的內容 */
   planSaveDraft(ticketKey: string, plan: TicketPlan): Promise<void>;
   /** 不做了：從計畫表拿掉，審閱紀錄也刪掉 */
@@ -586,6 +599,10 @@ export interface FlowPilotApi {
   rerunAutotest(itemId: number): Promise<void>;
   /** 單列表的標記：在工作台上（不能再選）、分支已經存在 */
   ticketMarks(keys: string[]): Promise<Record<string, TicketMark>>;
+  /** 這張單現在可以切到哪些 Jira 狀態 */
+  ticketTransitions(key: string): Promise<{ id: string; name: string; to: string }[]>;
+  /** 切換 Jira 狀態（FlowPilot 對 Jira 唯一的寫入），回傳切換後的狀態 */
+  transitionTicket(key: string, transitionId: string): Promise<string>;
   /** 在計畫表返回、沒有確認的單：審閱紀錄不留 */
   pr: {
     /** 發 PR 視窗的預設值、可選的目標分支和審核人 */

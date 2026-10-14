@@ -13,7 +13,7 @@ const LINES = {
   building: 'Building.',
   complete: 'Construction complete.',
   authorize: 'Authorization required.',
-  orders: 'Awaiting orders, commander.',
+  orders: 'Awaiting orders.',
   unable: 'Unable to comply.',
   canceled: 'Canceled.',
   accomplished: 'Mission accomplished.',

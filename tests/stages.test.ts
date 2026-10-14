@@ -78,7 +78,7 @@ function setup({ account = true } = {}) {
   const complete = async (lastMessage?: string) => {
     if (lastMessage !== undefined) store.updateWorkItem(item.id, { lastMessage });
     listener({ method: 'turn/completed', params: { threadId: 'th', turn: { status: 'completed' } } });
-    await new Promise((r) => setTimeout(r, 20));
+    await new Promise((r) => setTimeout(r, 80));
   };
   const lastTurn = () => requests.filter((r) => r.method === 'turn/start').at(-1)!.params;
   return { root, folder, store, runner, id: item.id, requests, replies, emit: (m: RpcMessage) => listener(m), sites, reached, stopped, setBackendUp: (v: boolean) => (backendUp = v), complete, lastTurn, unload: () => (loaded = false), get: () => store.getWorkItem(item.id)! };
@@ -303,16 +303,16 @@ describe('流程階段', () => {
     t.emit({ method: 'item/started', params: { threadId: 'th', item: { type: 'subAgentActivity', kind: 'started', agentThreadId: '01a12bdf-f9b1-7f30-acaa-eb7f28cbf76c' } } });
     // 子 AI 要執行安全的指令：自動同意
     t.emit({ id: 77, method: 'item/commandExecution/requestApproval', params: { threadId: '01a12bdf-f9b1-7f30-acaa-eb7f28cbf76c', command: 'ls -la' } });
-    await new Promise((r) => setTimeout(r, 20));
+    await new Promise((r) => setTimeout(r, 80));
     expect(t.replies).toContainEqual({ id: 77, result: { decision: 'accept' } });
     // 子 AI 要推送：轉給你
     t.emit({ id: 78, method: 'item/commandExecution/requestApproval', params: { threadId: '01a12bdf-f9b1-7f30-acaa-eb7f28cbf76c', command: 'git push origin x' } });
-    await new Promise((r) => setTimeout(r, 20));
+    await new Promise((r) => setTimeout(r, 80));
     expect(t.get().pending).toMatchObject({ kind: 'approval', requestId: 78 });
     // 子 AI 做完不算這張單的進度
     t.store.updateWorkItem(t.id, { status: 'running', pending: null });
     t.emit({ method: 'turn/completed', params: { threadId: '01a12bdf-f9b1-7f30-acaa-eb7f28cbf76c', turn: { status: 'completed' } } });
-    await new Promise((r) => setTimeout(r, 20));
+    await new Promise((r) => setTimeout(r, 80));
     expect(t.get()).toMatchObject({ status: 'running', stage: 'develop' });
   });
 

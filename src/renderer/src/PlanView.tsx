@@ -22,7 +22,7 @@ function problemOf(plan: TicketPlan, options: PlanOptions): string | null {
     if (project?.merchants && !entry.merchants.length) return `${entry.project} 還沒選商戶`;
   }
   if (new Set(plan.entries.map((e) => e.project)).size !== plan.entries.length) return '同一個專案出現兩次';
-  if (!/^feat\([A-Z]+-\d+\) \S/.test(plan.prTitle)) return '標題格式要是 feat(單號) 英文描述';
+  if (!/^feat\([A-Z]+-\d+(, ?[A-Z]+-\d+)*\) \S/.test(plan.prTitle)) return '標題格式要是 feat(單號) 英文描述';
   return null;
 }
 
@@ -94,7 +94,7 @@ function BriefBlocks({ review }: { review: Review }) {
 interface Props {
   /** 計畫表裡的單（加進來就留著，返回也不會清掉） */
   drafts: PlanDraft[];
-  /** 計畫表裡的單變了（確認開工、不做了） */
+  /** 計畫表裡的單變了（確認開工、移除） */
   onChange(drafts: PlanDraft[]): void;
   onBack(): void;
   /** 計畫表裡的單都確認開工了 */
@@ -260,7 +260,7 @@ export function PlanView({ drafts, onChange, onBack, onConfirmed }: Props) {
   }
 
   async function discard(key: string) {
-    if (!window.confirm(`${key} 不做了？會從計畫表拿掉，AI 的審閱和討論紀錄也會刪掉。之後要做可以再從單列表加進來（會重新審閱）。`)) return;
+    if (!window.confirm(`從計畫表移除 ${key}？\n\nAI 的審閱、討論紀錄和你改過的內容都會刪掉，單列表上的「計畫中」也會消失，回到原本的樣子。之後要做可以再從單列表加進來（會重新審閱）。`)) return;
     try {
       const rest = await api.planDiscard([key]);
       started.current.delete(key);
@@ -308,12 +308,24 @@ export function PlanView({ drafts, onChange, onBack, onConfirmed }: Props) {
                     <button className="link" onClick={() => window.confirm('重新審閱這張單？目前的問題、你的回答和討論都會被新的結果取代。') && judge(ticket, true)}>重新審閱</button>
                   </span>
                 )}
+                {/* 隨時可以移除（審閱中也可以），不用捲到最下面找 */}
+                <button className="link danger" title="從計畫表拿掉，審閱和討論紀錄一起刪掉，回到原本的樣子" onClick={() => discard(ticket.key)}>移除</button>
               </div>
+              {!!ticket.members?.length && (
+                <ul className="group-members">
+                  <span className="mark group">合成 {ticket.members.length} 張</span>
+                  {ticket.members.map((m) => (
+                    <li key={m.key}>
+                      <a href={m.url} onClick={(e) => { e.preventDefault(); api.openExternal(m.url); }}>{m.key}</a> <span className="muted small">{m.summary}</span>
+                    </li>
+                  ))}
+                </ul>
+              )}
 
               {!plan && !error && <p className="muted">AI 審閱中…（讀單、判斷專案；一般或複雜的單會大略看程式碼，約 1 分鐘）</p>}
               {error && (
                 <div className="error">
-                  AI 審閱失敗：{error} <button onClick={() => judge(ticket)}>重試</button> <button className="link danger" onClick={() => discard(ticket.key)}>不做了</button>
+                  AI 審閱失敗：{error} <button onClick={() => judge(ticket)}>重試</button> <button className="link danger" onClick={() => discard(ticket.key)}>移除</button>
                 </div>
               )}
 
@@ -479,7 +491,7 @@ export function PlanView({ drafts, onChange, onBack, onConfirmed }: Props) {
                   )}
 
                   <div className="plan-actions">
-                    <button className="link danger" onClick={() => discard(ticket.key)}>不做了</button>
+                    <button className="link danger" onClick={() => discard(ticket.key)}>移除</button>
                     {blockerOf(ticket.key) && <span className="muted small">{blockerOf(ticket.key)}</span>}
                     <button className="primary" disabled={!!blockerOf(ticket.key) || !!confirming} onClick={() => confirm([ticket.key])}>
                       {confirming?.includes(ticket.key) ? '確認中…' : `確認 ${ticket.key}，開始開發`}

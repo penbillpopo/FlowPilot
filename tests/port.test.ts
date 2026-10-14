@@ -53,7 +53,7 @@ function setup(pushSource: boolean, opts: { envDirty?: boolean } = {}) {
     await runner.schedule();
     await new Promise((r) => setTimeout(r, 1500));
   };
-  return { store, runner, id: item.id, folder, start };
+  return { store, runner, id: item.id, folder, start, root, settings };
 }
 
 describe('移植到其他商戶', () => {
@@ -81,9 +81,33 @@ describe('移植到其他商戶', () => {
     expect(git(t.folder, 'branch', '--show-current')).toBe('ban/m2/ALL-1');
   });
 
-  it('來源還沒推送：不能移植（別的資料夾要從遠端讀來源的改動）', async () => {
+  it('來源還沒推送也可以移植：從本機有這條分支的資料夾抓過去（拿得到沒推送的提交）', async () => {
     const t = setup(false);
     t.store.updateWorkItem(t.id, { status: 'committed' });
-    await expect(t.runner.port(t.id)).rejects.toThrow('請先推送 m1');
+    expect(await t.runner.port(t.id)).toEqual(['ban/m2/ALL-1', 'ban/m7/ALL-1']);
+    // 另一個資料夾（例如 PlatformWeb-2）抓來源
+    const other = join(t.root, 'PlatformWeb-2');
+    git(t.root, 'clone', '-q', join(t.root, 'remote.git'), other);
+    t.settings.folders.push({ name: 'PlatformWeb-2', path: other, project: 'PlatformWeb' });
+    const src = { merchant: 1, branch: 'ban/m1/ALL-1', baseBranch: 'master-1' };
+    const ref = await (t.runner as unknown as { fetchPortSource(cwd: string, project: string, s: typeof src): Promise<string> }).fetchPortSource(other, 'PlatformWeb', src);
+    expect(ref).toBe('refs/flowpilot-source/ban/m1/ALL-1');
+    expect(git(other, 'rev-parse', ref)).toBe(git(t.folder, 'rev-parse', 'ban/m1/ALL-1'));
+    expect(git(other, 'diff', '--name-only', `origin/master-1...${ref}`)).toBe('a.ts');
+  });
+
+  it('來源分支比基底沒有任何提交（AI 沒真的開發）：不能移植', async () => {
+    const t = setup(false);
+    t.store.updateWorkItem(t.id, { status: 'committed' });
+    git(t.folder, 'branch', '-f', 'ban/m1/ALL-1', 'master-1');
+    await expect(t.runner.port(t.id)).rejects.toThrow('沒有東西可以移植');
+    expect(t.store.listWorkItems().filter((i) => i.portOf)).toEqual([]);
+  });
+
+  it('本機和遠端都沒有來源分支：不能移植', async () => {
+    const t = setup(false);
+    t.store.updateWorkItem(t.id, { status: 'committed' });
+    git(t.folder, 'branch', '-D', 'ban/m1/ALL-1');
+    await expect(t.runner.port(t.id)).rejects.toThrow('本機的資料夾和遠端都沒有');
   });
 });

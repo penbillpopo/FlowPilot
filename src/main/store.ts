@@ -1,7 +1,7 @@
 // 資料庫：~/Library/Application Support/FlowPilot/flowpilot.db（SQLite，用 Node 內建的 node:sqlite）
 // 每次狀態改變先寫進來，重新啟動才接得回去。
 import { DatabaseSync } from 'node:sqlite';
-import type { AcceptanceItem, JiraTicket, PlanDraft, PortSource, PrRecord, Judgement, PendingRequest, Review, RunSummary, TestReport, TestResult, TicketPlan, WorkItem, WorkLane, WorkStage, WorkStatus } from '../shared/types';
+import type { AcceptanceItem, JiraTicket, PlanDraft, PortSource, PrRecord, TicketRef, Judgement, PendingRequest, Review, RunSummary, TestReport, TestResult, TicketPlan, WorkItem, WorkLane, WorkStage, WorkStatus } from '../shared/types';
 import type { PastDecision } from './planner/judge';
 
 // 依序執行的資料庫結構變更；只能往後加，不能改前面的
@@ -96,6 +96,8 @@ const MIGRATIONS: string[] = [
    UPDATE work_items SET prs = json_array(json_object('id', 0, 'url', pr_url, 'target', '', 'title', '')) WHERE pr_url IS NOT NULL;`,
   // 多商戶的單：從來源商戶移植過來的工作，記下來源分支
   `ALTER TABLE work_items ADD COLUMN port_of TEXT;`,
+  // 好幾張單合成一個任務：全部成員的單號、標題、網址
+  `ALTER TABLE work_items ADD COLUMN members TEXT;`,
 ];
 
 /** 還佔著資料夾的狀態 */
@@ -104,7 +106,7 @@ export const OCCUPYING: WorkStatus[] = ['preparing', 'running', 'waiting', 'revi
 /** 已經結束的狀態 */
 export const FINISHED: WorkStatus[] = ['failed', 'stopped', 'removed', 'committed'];
 
-type NewWorkItem = Omit<WorkItem, 'id' | 'folder' | 'lane' | 'status' | 'activity' | 'threadId' | 'lastMessage' | 'pending' | 'stage' | 'autotested' | 'autotestResult' | 'testReport' | 'updatedAt' | 'prs' | 'portOf'> & { portOf?: PortSource | null };
+type NewWorkItem = Omit<WorkItem, 'id' | 'folder' | 'lane' | 'status' | 'activity' | 'threadId' | 'lastMessage' | 'pending' | 'stage' | 'autotested' | 'autotestResult' | 'testReport' | 'updatedAt' | 'prs' | 'portOf' | 'members'> & { portOf?: PortSource | null; members?: TicketRef[] };
 
 interface WorkItemRow {
   id: number;
@@ -133,6 +135,7 @@ interface WorkItemRow {
   pr_url: string | null;
   prs: string | null;
   port_of: string | null;
+  members: string | null;
   stage: WorkStage;
   autotested: number;
   autotest_result: string | null;
@@ -174,6 +177,7 @@ function toWorkItem(row: WorkItemRow): WorkItem & { branchCreated: boolean; comm
     commitSha: row.commit_sha,
     prs: row.prs ? (JSON.parse(row.prs) as PrRecord[]) : [],
     portOf: row.port_of ? (JSON.parse(row.port_of) as PortSource) : null,
+    members: row.members ? (JSON.parse(row.members) as TicketRef[]) : [],
   };
 }
 
@@ -282,8 +286,8 @@ export class Store {
   createWorkItems(items: NewWorkItem[], now = new Date()): StoredWorkItem[] {
     const insert = this.db.prepare(
       `INSERT INTO work_items (run_id, ticket_key, ticket_summary, main_key, main_url, project, merchant, target_merchants,
-         branch, base_branch, skill, pr_title, preferred_folder, port_of, status, created_at, updated_at)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'queued', ?, ?)`,
+         branch, base_branch, skill, pr_title, preferred_folder, port_of, members, status, created_at, updated_at)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'queued', ?, ?)`,
     );
     const ids: number[] = [];
     this.db.exec('BEGIN');
@@ -291,7 +295,7 @@ export class Store {
       for (const i of items) {
         const t = now.toISOString();
         const r = insert.run(i.runId, i.ticketKey, i.ticketSummary, i.mainKey, i.mainUrl, i.project, i.merchant, JSON.stringify(i.targetMerchants),
-          i.branch, i.baseBranch, i.skill, i.prTitle, i.preferredFolder, i.portOf ? JSON.stringify(i.portOf) : null, t, t);
+          i.branch, i.baseBranch, i.skill, i.prTitle, i.preferredFolder, i.portOf ? JSON.stringify(i.portOf) : null, i.members?.length ? JSON.stringify(i.members) : null, t, t);
         ids.push(Number(r.lastInsertRowid));
       }
       if (items.length) this.db.prepare("UPDATE runs SET status = 'started' WHERE id = ?").run(items[0].runId);
@@ -364,12 +368,18 @@ export class Store {
 
   /** 這張單（單號）在不在工作台上：還沒被移除的都算，包括已完成的（多專案的單可能有好幾列） */
   hasActiveTicket(ticketKey: string): boolean {
-    return !!this.db.prepare("SELECT 1 FROM work_items WHERE ticket_key = ? AND status != 'removed' LIMIT 1").get(ticketKey);
+    return this.activeRowsOf(ticketKey).length > 0;
+  }
+
+  /** 工作台上跟這張單有關的工作：單號一樣，或這張單是某個合成任務的成員 */
+  private activeRowsOf(ticketKey: string): { status: string }[] {
+    const rows = this.db.prepare("SELECT status, ticket_key, members FROM work_items WHERE status != 'removed'").all() as { status: string; ticket_key: string; members: string | null }[];
+    return rows.filter((r) => r.ticket_key === ticketKey || (r.members ? (JSON.parse(r.members) as TicketRef[]).some((m) => m.key === ticketKey) : false));
   }
 
   /** 這張單在工作台上的狀態：每一列都已完成才算「已完成」，其他（含失敗、停止、排隊）都算「進行中」；不在工作台上回 null */
   ticketWorkState(ticketKey: string): 'active' | 'done' | null {
-    const rows = this.db.prepare("SELECT status FROM work_items WHERE ticket_key = ? AND status != 'removed'").all(ticketKey) as { status: string }[];
+    const rows = this.activeRowsOf(ticketKey);
     if (!rows.length) return null;
     return rows.every((r) => r.status === 'committed') ? 'done' : 'active';
   }
@@ -397,8 +407,9 @@ export class Store {
     for (const key of ticketKeys) del.run(key);
   }
 
+  /** 這張單在計畫表裡（自己一張，或是某個合成任務的成員） */
   isDraft(ticketKey: string): boolean {
-    return !!this.db.prepare('SELECT 1 FROM plan_drafts WHERE ticket_key = ?').get(ticketKey);
+    return this.listDrafts().some((d) => d.ticket.key === ticketKey || d.ticket.members?.some((m) => m.key === ticketKey));
   }
 
   /** 同一個專案、同一條分支還沒結束的工作項目（避免重複建立） */

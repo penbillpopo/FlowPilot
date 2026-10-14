@@ -4,7 +4,7 @@ import { execFile } from 'node:child_process';
 import { existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { homedir } from 'node:os';
 import { dirname, join } from 'node:path';
-import type { BoardState, BranchInfo, ChatEvent, Env, RemoveResult, Review, TestReport, TestResult, PendingRequest, SkillInfo, TestState, TicketPlan, WorkStage } from '../../shared/types';
+import type { BoardState, BranchInfo, ChatEvent, Env, PortSource, RemoveResult, Review, TestReport, TestResult, PendingRequest, SkillInfo, TestState, TicketPlan, WorkStage } from '../../shared/types';
 import { toEntry } from '../chat';
 import { apiHosts, ENVIRONMENT_FILE, readApiUrl, readEnvironment, setEnvironment } from '../environment';
 import { reviewBrief } from '../planner/review';
@@ -255,6 +255,14 @@ export class Runner {
     this.deps.notify(title, body, id);
   }
 
+  /** 這張單的資料夾有沒有改動：比基底多的提交，或還沒提交的修改（environment.ts 不算） */
+  private async hasChanges(item: StoredWorkItem): Promise<boolean> {
+    const cwd = this.folderPath(item.folder!);
+    if ((await currentBranch(cwd).catch(() => '')) !== item.branch) return true; // 不在這張單的分支上：看不出來，不擋
+    if ((await commitsSinceBase(cwd, item.baseBranch)) > 0) return true;
+    return (await dirtyFiles(cwd)).some((f) => !isEnvironmentFile(f));
+  }
+
   /** 工作台以外的地方改了單（例如發了 PR），通知畫面更新 */
   notifyChanged() {
     this.deps.onChange();
@@ -295,6 +303,7 @@ export class Runner {
           skill: settings.projects[b.project]?.devSkill ?? 'frontend-development',
           prTitle: plan.prTitle,
           preferredFolder: plan.entries.find((e) => e.project === b.project)?.folder ?? null,
+          members: (plan.ticket.members ?? []).map((m) => ({ key: m.key, summary: m.summary, url: m.url })),
         }));
     });
     const skipped = items.filter((i) => store.activeWorkItem(i.project, i.branch)).map((i) => i.branch);
@@ -565,11 +574,12 @@ export class Runner {
         ? `- 【先處理】FlowPilot 正在把分支 rebase 到最新的 origin/${item.baseBranch}（基底有 ${state.rebase.behind} 個新提交），遇到衝突停住了。請先解衝突：用 git status 看哪些檔案衝突，照兩邊的意圖合併好，git add 之後用 GIT_EDITOR=true git rebase --continue 繼續，直到 rebase 完成；不要 git rebase --abort。在回覆裡說明每個衝突怎麼解的。rebase 完成後再開始開發。`
         : `- FlowPilot 已經把分支 rebase 到最新的 origin/${item.baseBranch}（基底有 ${state.rebase.behind} 個新提交），沒有衝突。`;
     const src = item.portOf;
+    const sourceRef = src ? await this.fetchPortSource(cwd, item.project, src) : '';
     const instructions = src ? [
       `請使用 $${skill} 把 ${item.ticketKey} 從商戶 ${src.merchant} 移植到商戶 ${item.merchant}。以下是 FlowPilot 的安排，跟技能預設規則不同的地方以這裡為準：`,
       rebaseLine,
       '',
-      `- 來源：${src.baseBranch} → ${src.branch}（已經推送到遠端）。先 git fetch origin ${src.branch} ${src.baseBranch}，用 git diff origin/${src.baseBranch}...origin/${src.branch} 看來源的完整改動，搞清楚這個功能的目的。`,
+      `- 來源：${src.baseBranch} → ${src.branch}。FlowPilot 已經把來源抓到這個資料夾（${sourceRef}），用 git diff origin/${src.baseBranch}...${sourceRef} 看來源的完整改動，搞清楚這個功能的目的；不要另外 fetch 來源分支。`,
       `- 目標：${item.baseBranch} → ${item.branch}。` + (state.continuing
         ? `這條分支已經存在、之前做過一部分（比基底多 ${state.commits} 個提交、${state.dirty} 個未提交的修改），先看過現有的差異再接著做。`
         : `FlowPilot 已經在這個資料夾從 origin/${item.baseBranch} 開好並切換到 ${item.branch}。`) + '直接在目前分支做，不要切換分支、不要另外建分支。',
@@ -582,10 +592,21 @@ export class Runner {
       '- 最後說明：來源改了什麼、在這個商戶怎麼對應、有哪些地方跟來源不一樣（為什麼）。',
       brief,
     ] : [
-      `請使用 $${skill} 處理這張 Jira：${item.mainUrl}`,
-      rebaseLine,
-      '',
-      `- 指派給我的子任務是 ${item.ticketKey}（${item.ticketSummary}）；需求內容寫在主單 ${item.mainKey}。`,
+      ...(item.members.length
+        ? [
+            `請使用 $${skill} 一起處理這 ${item.members.length} 張 Jira（合成一個任務：同一條分支、最後一個 PR）：`,
+            ...item.members.map((m) => `  - ${m.key}（${m.summary}）：${m.url}`),
+            rebaseLine,
+            '',
+            `- 每張單的需求都要做完，完成時對照各自的預期結果逐項確認；需求內容也可能寫在它們的主單 ${item.mainKey}。`,
+            '- 這幾張單之間如果有衝突或重複，說明你怎麼處理。',
+          ]
+        : [
+            `請使用 $${skill} 處理這張 Jira：${item.mainUrl}`,
+            rebaseLine,
+            '',
+            `- 指派給我的子任務是 ${item.ticketKey}（${item.ticketSummary}）；需求內容寫在主單 ${item.mainKey}。`,
+          ]),
       '- 需求以單上的「需求 / Requirements」與「預期結果 / Acceptance Criteria」為準，完成時要對照預期結果逐項確認；不理會「原始需求 / Merchant Requirements」。',
       brief ? '' : '- 這張單沒有開發前的審閱結果：請自己讀 Jira 單，整理成開發內容重點、牽涉頁面、後端API規格、預計執行內容、疑問五段之後再開發，不用要我先跑 jira-frontend-analysis。',
       branchLine,
@@ -925,6 +946,11 @@ export class Runner {
         } else if (looksLikeQuestion(latest.lastMessage)) {
           this.update(item.id, { status: 'waiting', activity: 'AI 在問你問題', pending: null });
           this.notify(item.id, `${item.ticketKey} 在等你回答`, short(latest.lastMessage.slice(-200)));
+        } else if (latest.stage === 'develop' && latest.folder && !(await this.hasChanges(latest))) {
+          // 開發完卻沒有改任何檔案：多半是 AI 遇到問題停下來了（例如需求說的頁面不存在）。
+          // 不要繼續自我審查、自動測試（實際發生過：一路空轉，還被按了完成、移植到 6 個商戶）
+          this.update(item.id, { status: 'waiting', activity: 'AI 沒有改任何檔案：看一下它最後說的原因，決定怎麼處理', pending: null });
+          this.notify(item.id, `${item.ticketKey} 沒有任何改動`, short(latest.lastMessage.slice(-200)));
         } else if (latest.stage === 'develop') {
           // 開發完：檢查計畫要自我審查就先審查，否則直接做無頭測試
           // 移植的不做自我審查：來源商戶開發時已經審過，移植只是照著改（自動測試照樣跑）
@@ -1178,6 +1204,13 @@ export class Runner {
         result = { branchDeleted: false, reason: `刪除失敗：${(error as Error).message}` };
       }
     }
+    // 移植時抓過來的來源（refs/flowpilot-source/…）一起清掉；同一個來源還有別的移植在做就留著
+    const sharing = this.deps.store.listWorkItems().some((i) => i.id !== id && i.portOf?.branch === item.portOf?.branch);
+    if (item.portOf && !sharing) {
+      for (const f of this.deps.settings().folders.filter((x) => x.project === item.project)) {
+        await runGit(f.path, ['update-ref', '-d', `refs/flowpilot-source/${item.portOf.branch}`]).catch(() => null);
+      }
+    }
     this.update(id, { status: 'removed', lane: 'done', activity: result.branchDeleted ? '你從看板移除了，也刪掉了本機分支' : '你從看板移除了', pending: null });
     this.forgetReview(item.ticketKey);
     void this.schedule();
@@ -1238,9 +1271,42 @@ export class Runner {
   }
 
   /**
+   * 移植的來源分支在哪裡：先找本機的資料夾（不用先推送，也拿得到還沒推送的提交），找不到才看遠端。
+   * 回傳 { folder: 本機資料夾路徑 } 或 { remote: true }；都沒有就是 null。
+   */
+  private async findPortSource(project: string, branch: string): Promise<{ folder: string } | { remote: true } | null> {
+    const folders = this.deps.settings().folders.filter((f) => f.project === project);
+    for (const f of folders) if (await localBranchExists(f.path, branch).catch(() => false)) return { folder: f.path };
+    for (const f of folders) {
+      const remote = await runGit(f.path, ['ls-remote', '--heads', 'origin', branch]).catch(() => null);
+      if (remote?.code === 0 && remote.stdout.trim()) return { remote: true };
+    }
+    return null;
+  }
+
+  /**
+   * 把移植的來源抓到要做移植的資料夾，回傳可以拿來比對的 ref。
+   * 來源在同一個資料夾就直接用本機分支；在別的資料夾就從那個資料夾抓（git fetch 本機路徑）；都沒有才從遠端抓。
+   */
+  private async fetchPortSource(cwd: string, project: string, src: PortSource): Promise<string> {
+    await runGit(cwd, ['fetch', 'origin', src.baseBranch]).catch(() => null);
+    const where = await this.findPortSource(project, src.branch);
+    if (!where) throw new Error(`找不到移植的來源 ${src.branch}：本機的資料夾和遠端都沒有`);
+    if ('folder' in where) {
+      if (where.folder === cwd) return src.branch;
+      const ref = `refs/flowpilot-source/${src.branch}`;
+      const result = await runGit(cwd, ['fetch', where.folder, `+refs/heads/${src.branch}:${ref}`]);
+      if (result.code !== 0) throw new Error(`從 ${where.folder} 抓 ${src.branch} 失敗：${result.stderr.trim()}`);
+      return ref;
+    }
+    await runGit(cwd, ['fetch', 'origin', src.branch]);
+    return `origin/${src.branch}`;
+  }
+
+  /**
    * 多商戶的單：來源商戶完成之後，把功能移植到其他商戶。每個商戶一張新的工作（各自的分支、資料夾、對話），
    * 跟一般開發一樣排隊、開發（用 platform-web-copy 的做法）、自動測試、等你測試、提交推送發 PR 由你決定。
-   * 來源分支要先推送：移植可能在別的資料夾做，要從遠端讀來源的改動。
+   * 來源分支不用先推送：移植前 FlowPilot 會從本機有這條分支的資料夾抓過來（都沒有才從遠端抓）。
    */
   async port(id: number): Promise<string[]> {
     const source = this.deps.store.getWorkItem(id)!;
@@ -1250,8 +1316,15 @@ export class Runner {
     const rule = settings.projects[source.project];
     const folder = settings.folders.find((f) => f.project === source.project);
     if (!rule || !folder) throw new Error(`設定檔裡沒有 ${source.project} 的專案或資料夾`);
-    const remote = await runGit(folder.path, ['ls-remote', '--heads', 'origin', source.branch]);
-    if (remote.code !== 0 || !remote.stdout.trim()) throw new Error(`遠端還沒有 ${source.branch}，請先推送 m${source.merchant} 的分支再移植`);
+    // 來源分支在本機任何一個資料夾、或在遠端都可以（不用先推送）
+    const where = await this.findPortSource(source.project, source.branch);
+    if (!where) throw new Error(`找不到 ${source.branch}：本機的資料夾和遠端都沒有`);
+    // 來源要真的有改動（比基底多提交）；沒有的話移植過去也是空的
+    const at = 'folder' in where ? where.folder : folder.path;
+    const ref = 'folder' in where ? source.branch : `origin/${source.branch}`;
+    if (!('folder' in where)) await runGit(at, ['fetch', 'origin', source.branch]);
+    const ahead = await runGit(at, ['rev-list', '--count', `origin/${source.baseBranch}..${ref}`]);
+    if (ahead.code === 0 && Number(ahead.stdout.trim()) === 0) throw new Error(`m${source.merchant} 的分支 ${source.branch} 比 ${source.baseBranch} 沒有任何提交，沒有東西可以移植`);
     const items = source.targetMerchants
       .map((m) => ({ m, branch: fill(rule.branch, { merchant: m, key: source.ticketKey }), baseBranch: fill(rule.baseBranch, { merchant: m, key: source.ticketKey }) }))
       .filter((t) => !this.deps.store.activeWorkItem(source.project, t.branch));

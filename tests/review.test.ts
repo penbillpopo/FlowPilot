@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { applyDiscussion, buildDiscussionPrompt, buildFigmaPrompt, buildReviewPrompt, REVIEW_INSTRUCTIONS, reviewBrief, reviewSchema, sanitizeReview } from '../src/main/planner/review';
+import { applyDiscussion, buildCodeCheckPrompt, buildDiscussionPrompt, buildFigmaPrompt, buildReviewPrompt, REVIEW_INSTRUCTIONS, reviewBrief, reviewSchema, sanitizeReview } from '../src/main/planner/review';
 import { DEFAULT_SETTINGS_YAML, parseSettings } from '../src/main/settings';
 import type { JiraTicket } from '../src/shared/types';
 
@@ -31,6 +31,18 @@ describe('審閱', () => {
   it('提示內容附上各專案的程式碼資料夾', () => {
     const issue = { key: 'ALL-14324', summary: '', issueType: '', description: '', comments: [], subtasks: [], resources: [], textAttachments: [], imageAttachments: [], snapshot: { key: 'ALL-14575', summary: '', description: '', comments: [], attachments: [], takenAt: '' } };
     expect(buildReviewPrompt(ticket, issue, null, settings, [])).toContain('PlatformAdmin：');
+  });
+
+  it('看程式碼用 git 讀這張單要開發的商戶的遠端基底分支，不看資料夾當時剛好在的分支', () => {
+    const issue = { key: 'ALL-1', summary: '', issueType: '', description: '', comments: [], subtasks: [], resources: [], textAttachments: [], imageAttachments: [], snapshot: { key: 'ALL-1', summary: '', description: '', comments: [], attachments: [], takenAt: '' } };
+    const prompt = buildReviewPrompt(ticket, issue, null, settings, []);
+    expect(prompt).toContain('m1 是 origin/master-1');
+    expect(prompt).toContain('用 git 讀括號裡的遠端基底分支');
+    expect(REVIEW_INSTRUCTIONS).toContain('不要看工作目錄裡的檔案');
+    expect(REVIEW_INSTRUCTIONS).toContain('每個選到的商戶');
+    // 追加看程式碼的那一輪：列出每個選到的商戶的基底分支
+    const code = buildCodeCheckPrompt([{ project: 'PlatformWeb', merchants: [1, 8], sourceMerchant: 8, reason: '' }], settings)!;
+    expect(code).toContain('m1：origin/master-1、m8：origin/master-8');
   });
 
   it('整理問題：重要的排前面、不認得的類型改成需求不明確、空的丟掉、補上出處與編號', () => {

@@ -4,13 +4,14 @@ import { execFileSync } from 'node:child_process';
 import { appendFileSync, mkdirSync, writeFileSync } from 'node:fs';
 import { randomUUID } from 'node:crypto';
 import { join } from 'node:path';
+import { groupTicket } from '../shared/group';
 import { AzureRepo, defaultPrTitle, prDescription, prIdFromUrl } from './azure';
 import type { Env, JiraTicket, PrOptions, PrRecord, WorkItem, Judgement, PlanOptions, Review, ReviewChecks, ReviewIssue, TicketMark, TicketPlan, TicketSnapshot } from '../shared/types';
 import { CodexRpc } from './codex/rpc';
 import { listSkills, runStructured } from './codex/structured';
 import { checkExisting, runGit } from './git';
-import { buildJql, downloadAttachment, getIssueContext, loadCredentials, searchTickets, statusIdsByName } from './jira';
-import { applyDiscussion, buildCodeCheckPrompt, buildDiscussionPrompt, buildFigmaPrompt, buildReviewPrompt, discussionSchema, REVIEW_INSTRUCTIONS, reviewSchema, sanitizeReview } from './planner/review';
+import { buildJql, downloadAttachment, getIssueContext, getTransitions, loadCredentials, searchTickets, statusIdsByName, transitionIssue } from './jira';
+import { applyDiscussion, buildCodeCheckPrompt, buildDiscussionPrompt, buildFigmaPrompt, buildGroupReviewPrompt, buildReviewPrompt, discussionSchema, REVIEW_INSTRUCTIONS, reviewSchema, sanitizeReview } from './planner/review';
 import { deriveBranches, planProblem } from './planner/rules';
 import { loadHistory } from './chat';
 import { FolderTerminals } from './folderterminals';
@@ -147,14 +148,19 @@ function reviewTicket(ticket: JiraTicket, force = false): Promise<Review> {
 async function runReview(ticket: JiraTicket): Promise<Review> {
   const settings = loadSettings(settingsFile);
   const credentials = loadCredentials(settings.jira.envFile);
-  const [sub, main] = await Promise.all([
-    getIssueContext(credentials, ticket.key),
-    ticket.parent ? getIssueContext(credentials, ticket.parent.key) : Promise.resolve(null),
+  // 合成任務：每張成員單都讀，上層主單不重複
+  const members = ticket.members?.length ? ticket.members : [ticket];
+  const parentKeys = [...new Set(members.map((m) => m.parent?.key).filter((k): k is string => !!k))];
+  const [subs, mains] = await Promise.all([
+    Promise.all(members.map((m) => getIssueContext(credentials, m.key))),
+    Promise.all(parentKeys.map((k) => getIssueContext(credentials, k))),
   ]);
+  const sub = subs[0];
+  const main = mains[0] ?? null;
   // 圖片附件（需求常畫在截圖裡）：主單在前，最多 5 張、每張 5MB 以內，讀不到就略過
   const images: string[] = [];
   const imageDir = join(dataDir, 'attachments', 'review', ticket.key);
-  for (const img of [...(main?.imageAttachments ?? []), ...sub.imageAttachments].filter((a) => a.size <= 5_000_000).slice(0, 5)) {
+  for (const img of [...mains.flatMap((m) => m.imageAttachments), ...subs.flatMap((x) => x.imageAttachments)].filter((a) => a.size <= 5_000_000).slice(0, 5)) {
     try {
       mkdirSync(imageDir, { recursive: true });
       const dest = join(imageDir, img.filename.replace(/[^\w.\-]+/g, '_'));
@@ -164,20 +170,22 @@ async function runReview(ticket: JiraTicket): Promise<Review> {
       log(`${ticket.key} 下載圖片 ${img.filename} 失敗：${(error as Error).message}`);
     }
   }
+  // 審閱要用 git 讀各商戶的遠端基底分支（審閱的對話是唯讀的，自己不能抓），先抓一次，看到的才是最新的
+  await Promise.all(settings.folders.map((f) => runGit(f.path, ['fetch', 'origin', '--quiet'], 60_000).catch(() => null)));
   const { result, threadId } = await withJudgeSlot(() =>
     runStructured<any>(codex, {
       cwd: dataDir,
       keep: true, // 保留對話，之後可以接著討論
       developerInstructions: REVIEW_INSTRUCTIONS,
       images,
-      prompt: buildReviewPrompt(ticket, sub, main, settings, store.recentDecisions()) + (images.length ? `\n\n（附上單上的 ${images.length} 張圖片）` : ''),
+      prompt: (ticket.members?.length ? buildGroupReviewPrompt(ticket, subs, mains, settings, store.recentDecisions()) : buildReviewPrompt(ticket, sub, main, settings, store.recentDecisions())) + (images.length ? `\n\n（附上單上的 ${images.length} 張圖片）` : ''),
       schema: reviewSchema(settings),
       timeoutMs: 300_000,
     }),
   );
   let review = sanitizeReview(result, ticket, settings);
   // 一般、複雜的單一定要大略看過程式碼：AI 第一輪沒看，就在同一段對話追加一輪，指定專案資料夾
-  const codePrompt = review.level !== '小' && !review.codeChecked ? buildCodeCheckPrompt(review.entries.map((e) => e.project), settings) : null;
+  const codePrompt = review.level !== '小' && !review.codeChecked ? buildCodeCheckPrompt(review.entries, settings) : null;
   if (codePrompt) {
     try {
       const checked = await withJudgeSlot(() =>
@@ -191,7 +199,7 @@ async function runReview(ticket: JiraTicket): Promise<Review> {
   }
   // 參考資料直接從 Jira 擷取（主單在前），不經過 AI；同一個網址只留一筆
   const seen = new Set<string>();
-  const resources = [...(main?.resources ?? []), ...sub.resources].filter((r) => !seen.has(r.url) && seen.add(r.url));
+  const resources = [...mains.flatMap((m) => m.resources), ...subs.flatMap((x) => x.resources)].filter((r) => !seen.has(r.url) && seen.add(r.url));
   // 檢查計畫要對照 Figma、單上也有 Figma 連結：追加一輪，用 Figma 工具看設計稿（只看流程與描述）
   const figmaUrls = resources.filter((r) => r.kind === 'figma').map((r) => r.url).slice(0, 3);
   if (review.checks?.figma.need && figmaUrls.length) {
@@ -206,7 +214,7 @@ async function runReview(ticket: JiraTicket): Promise<Review> {
   }
   review.resources = resources;
   // 存下這次讀到的內容，之後比對 PM 有沒有改單
-  review.snapshot = [sub.snapshot, ...(main ? [main.snapshot] : [])];
+  review.snapshot = [...subs.map((x) => x.snapshot), ...mains.map((m) => m.snapshot)];
   store.saveReview(review, threadId);
   return review;
 }
@@ -222,7 +230,7 @@ async function requestRequirementUpdate(itemId: number): Promise<void> {
   if (!item) throw new Error('找不到這張單');
   if (!item.threadId) throw new Error('這張單還沒開始開發，開始之後才能更新需求');
   const saved = store.getReview(item.ticketKey);
-  const keys = saved?.review.snapshot?.map((s) => s.key) ?? [...new Set([item.ticketKey, item.mainKey])];
+  const keys = saved?.review.snapshot?.map((s) => s.key) ?? [...new Set([item.ticketKey, ...item.members.map((m) => m.key), item.mainKey])];
   const credentials = loadCredentials(loadSettings(settingsFile).jira.envFile);
   const fresh: TicketSnapshot[] = [];
   for (const key of keys) fresh.push((await getIssueContext(credentials, key)).snapshot);
@@ -481,6 +489,13 @@ function registerIpc() {
     const credentials = loadCredentials(settings.jira.envFile);
     return searchTickets(credentials, buildJql(settings.jira.filter, statuses, await statusIdsByName(credentials)));
   });
+  // Jira 唯一的寫入：切換狀態（其他一律只讀）
+  ipcMain.handle('tickets:transitions', (_event, key: string) => getTransitions(loadCredentials(loadSettings(settingsFile).jira.envFile), key));
+  ipcMain.handle('tickets:transition', async (_event, key: string, transitionId: string) => {
+    const to = await transitionIssue(loadCredentials(loadSettings(settingsFile).jira.envFile), key, transitionId);
+    log(`${key}：Jira 狀態切換成「${to}」`);
+    return to;
+  });
   ipcMain.handle('tickets:statusOptions', () => {
     const { statuses, defaultStatuses } = loadSettings(settingsFile).jira;
     return { statuses, defaultStatuses };
@@ -497,6 +512,15 @@ function registerIpc() {
     store.addDrafts(tickets);
     // 審閱在背景跑：你可以先回單列表或去作戰室，回來時結果已經存好
     for (const ticket of tickets) void reviewTicket(ticket).catch((error) => log(`${ticket.key} 背景審閱失敗：${(error as Error).message}`));
+    return store.listDrafts();
+  });
+  // 好幾張單合成一個任務：計畫表裡變成一張，審閱、分支、對話、PR 都只有一份
+  ipcMain.handle('plan:addGroup', (_event, tickets: JiraTicket[]) => {
+    const busy = tickets.filter((t) => store.hasActiveTicket(t.key) || store.isDraft(t.key)).map((t) => t.key);
+    if (busy.length) throw new Error(`${busy.join('、')} 已經在工作台或計畫表裡了`);
+    const group = groupTicket(tickets);
+    store.addDrafts([group]);
+    void reviewTicket(group).catch((error) => log(`${group.key} 合成任務背景審閱失敗：${(error as Error).message}`));
     return store.listDrafts();
   });
   ipcMain.handle('plan:saveDraft', (_event, ticketKey: string, plan: TicketPlan) => store.saveDraftPlan(ticketKey, plan));

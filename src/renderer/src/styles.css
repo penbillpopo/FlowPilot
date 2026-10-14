@@ -487,3 +487,19 @@ tbody tr.planning input { cursor: pointer; }
 .pr-results li.bad { color: var(--blocked); }
 .port-list { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 4px; }
 .port-list li { display: flex; gap: 8px; align-items: center; }
+.group-members { list-style: none; margin: -4px 0 0; padding: 0; display: flex; flex-direction: column; gap: 2px; font-size: 13px; }
+.group-members a { color: var(--accent); text-decoration: none; font-weight: 600; }
+.mark.group { background: var(--selected); color: var(--accent); font-weight: 600; align-self: flex-start; }
+/* 單列表上的 Jira 狀態：點一下切換 */
+.status-switch { position: relative; display: inline-block; }
+.status-switch > button.status { display: inline-flex; align-items: center; gap: 6px; border: 1px solid var(--line); cursor: pointer; font: inherit; font-size: 12px; line-height: 1.6; padding: 1px 8px; white-space: nowrap; }
+.status-switch .caret { font-size: 9px; opacity: 0.6; }
+/* 盟軍／蘇聯外觀的狀態前面有一顆 LED 小燈（絕對定位在左邊），左邊留位置給它，不要跟字疊在一起 */
+[data-skin] .status-switch > button.status { padding: 2px 8px 2px 18px; letter-spacing: 0.5px; }
+[data-skin] .status-switch > button.status::before { left: 7px; }
+.status-menu { position: absolute; z-index: 20; top: calc(100% + 4px); right: 0; min-width: 150px; background: var(--bg); border: 1px solid var(--line); border-radius: 8px; padding: 4px; display: flex; flex-direction: column; box-shadow: 0 6px 20px rgba(0,0,0,0.3); }
+.status-menu button { border: none; text-align: left; padding: 6px 10px; font-size: 13px; }
+.status-menu .muted { padding: 6px 10px; }
+[data-skin] .status-menu { border: 2px solid transparent; background: var(--glass) padding-box, var(--steel) border-box; }
+[data-skin] .status-menu button { background: none; border: none; box-shadow: none; text-shadow: none; font-family: inherit; letter-spacing: normal; border-radius: 4px; }
+[data-skin] .status-menu button:hover:not(:disabled) { background: rgba(var(--fx-rgb), 0.14); box-shadow: inset 2px 0 0 var(--fx); }

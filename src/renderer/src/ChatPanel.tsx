@@ -379,12 +379,17 @@ export function ChatPanel({ item }: { item: WorkItem }) {
   async function finish() {
     // 還有提交沒推送就先提醒（照平常的流程，推送後才算完成）
     let unpushed = 0;
+    let empty = false;
     try {
       const git = await api.git.state(item.id);
       unpushed = git.hasRemote ? (git.unpushed ?? 0) : git.ahead;
+      // 比基底沒有多任何提交、也沒有沒提交的改動：這張單其實什麼都沒做（實際發生過：AI 停下來沒開發，卻被按了完成）
+      const changes = [...git.staged, ...git.unstaged].filter((f) => !/(^|\/)src\/environments\/environment[^/]*\.ts$/.test(f.path));
+      empty = git.branch === item.branch && git.ahead === 0 && changes.length === 0;
     } catch {}
     const pending = pendingChecks(item);
     const warning =
+      (empty ? `\n\n🛑 這張單沒有任何改動：${item.branch} 比 ${item.baseBranch} 沒有多任何提交。AI 可能沒有真的開發（看一下對話裡它說的原因）。` : '') +
       (unpushed > 0 ? `\n\n⚠️ 還有 ${unpushed} 個提交沒推送。完成之後還是可以推送，但要記得。` : '') +
       (pending ? `\n\n⚠️ 驗收表還有 ${pending} 項要你測、還沒勾「我測過了」。` : '');
     const ok = window.confirm(
@@ -448,6 +453,11 @@ export function ChatPanel({ item }: { item: WorkItem }) {
           {/* 開始對話前沒有階段可看，才顯示狀態 */}
           {!item.threadId && <span className={`status ${item.status}`}>{STATUS_LABEL[item.status]}</span>}
           <strong>{item.ticketKey}</strong>
+          {item.members.length > 0 && (
+            <span className="mark group" title={item.members.map((m) => `${m.key} ${m.summary}`).join('\n')}>
+              ＋{item.members.filter((m) => m.key !== item.ticketKey).map((m) => m.key).join('、')}
+            </span>
+          )}
           <span className="item-title" title={item.ticketSummary}>{item.ticketSummary}</span>
         </div>
         <div className="row head-actions">

@@ -33,6 +33,7 @@ function Row({ item, selected, onSelect, extra }: { item: WorkItem; selected: bo
         <strong>{item.ticketKey}</strong>
         {item.status !== 'queued' && <span className={`status ${item.status}`}>{STATUS_LABEL[item.status]}</span>}
         {item.portOf && <span className="mark" title={`從 ${item.portOf.branch} 移植過來的`}>移植自 m{item.portOf.merchant}</span>}
+        {item.members.length > 0 && <span className="mark group" title={item.members.map((m) => `${m.key} ${m.summary}`).join('\n')}>合成 {item.members.length} 張</span>}
         {item.prs.length > 0 && <span className="mark done" title={item.prs.map((p) => `→ ${p.target || '？'}`).join('\n')}>已發 PR{item.prs.length > 1 ? ` ×${item.prs.length}` : ''}</span>}
         {extra}
       </div>

@@ -7,6 +7,7 @@ const api: FlowPilotApi = {
   statusOptions: () => ipcRenderer.invoke('tickets:statusOptions'),
   planDrafts: () => ipcRenderer.invoke('plan:drafts'),
   planAdd: (tickets) => ipcRenderer.invoke('plan:add', tickets),
+  planAddGroup: (tickets) => ipcRenderer.invoke('plan:addGroup', tickets),
   planSaveDraft: (key, plan) => ipcRenderer.invoke('plan:saveDraft', key, plan),
   planDiscard: (keys) => ipcRenderer.invoke('plan:discard', keys),
   latestRun: () => ipcRenderer.invoke('run:latest'),
@@ -93,6 +94,8 @@ const api: FlowPilotApi = {
   retest: (id) => ipcRenderer.invoke('item:retest', id),
   rerunAutotest: (id) => ipcRenderer.invoke('item:rerunAutotest', id),
   ticketMarks: (keys) => ipcRenderer.invoke('tickets:marks', keys),
+  ticketTransitions: (key) => ipcRenderer.invoke('tickets:transitions', key),
+  transitionTicket: (key, id) => ipcRenderer.invoke('tickets:transition', key, id),
   pr: {
     options: (id) => ipcRenderer.invoke('pr:options', id),
     refresh: (id) => ipcRenderer.invoke('pr:refresh', id),

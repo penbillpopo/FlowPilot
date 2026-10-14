@@ -2,7 +2,7 @@ import { mkdtempSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { describe, expect, it } from 'vitest';
-import { loadCredentials, parseEnv, readTextAttachments, searchTickets } from '../src/main/jira';
+import { getTransitions, loadCredentials, parseEnv, readTextAttachments, searchTickets, transitionIssue } from '../src/main/jira';
 import { mainTicketKey } from '../src/shared/types';
 
 const credentials = { baseUrl: 'https://example.atlassian.net', email: 'me@example.com', token: 'secret' };
@@ -207,5 +207,34 @@ describe('文字附件', () => {
     expect(result[0].text).toBe('https://j/api 的內容');
     expect(result[3].text.endsWith('…（後面省略）')).toBe(true);
     expect(result[3].text.length).toBeLessThan(8100);
+  });
+});
+
+describe('切換 Jira 狀態（唯一的寫入）', () => {
+  const creds = { baseUrl: 'https://x.atlassian.net', email: 'a@b', token: 't' };
+  const transitions = { transitions: [{ id: '11', name: '進行中', to: { name: '進行中' } }, { id: '31', name: 'READY TO TEST', to: { name: 'READY TO TEST' } }] };
+
+  it('列出可以切到的狀態；切換時送出 transition id，回傳新狀態', async () => {
+    const calls: { url: string; method?: string; body?: string }[] = [];
+    const fake = (async (url: string, init?: RequestInit) => {
+      calls.push({ url, method: init?.method, body: init?.body as string });
+      if (init?.method === 'POST') return new Response(null, { status: 204 });
+      return new Response(JSON.stringify(transitions), { status: 200 });
+    }) as unknown as typeof fetch;
+    expect(await getTransitions(creds, 'ALL-1', fake)).toEqual([{ id: '11', name: '進行中', to: '進行中' }, { id: '31', name: 'READY TO TEST', to: 'READY TO TEST' }]);
+    expect(await transitionIssue(creds, 'ALL-1', '31', fake)).toBe('READY TO TEST');
+    const post = calls.find((c) => c.method === 'POST')!;
+    expect(post.url).toBe('https://x.atlassian.net/rest/api/3/issue/ALL-1/transitions');
+    expect(JSON.parse(post.body!)).toEqual({ transition: { id: '31' } });
+  });
+
+  it('現在不能切到那個狀態（例如被別人改過了）：不送出，直接告訴你', async () => {
+    let posted = false;
+    const fake = (async (_url: string, init?: RequestInit) => {
+      if (init?.method === 'POST') posted = true;
+      return new Response(JSON.stringify(transitions), { status: 200 });
+    }) as unknown as typeof fetch;
+    await expect(transitionIssue(creds, 'ALL-1', '99', fake)).rejects.toThrow('現在不能切到這個狀態');
+    expect(posted).toBe(false);
   });
 });

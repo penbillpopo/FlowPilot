@@ -1,16 +1,16 @@
 // 執行器：把確認好的計畫變成工作項目，分配資料夾、建立並切換分支、啟動 Codex 執行技能，
 // 並追蹤每段對話的進度、提問與同意請求。
 import { execFile } from 'node:child_process';
-import { existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, readFileSync, renameSync, rmSync, writeFileSync } from 'node:fs';
 import { homedir } from 'node:os';
-import { dirname, join } from 'node:path';
-import type { BoardState, BranchInfo, ChatEvent, Env, PortSource, RemoveResult, Review, TestReport, TestResult, PendingRequest, SkillInfo, TestState, TicketPlan, WorkStage } from '../../shared/types';
+import { basename, dirname, join } from 'node:path';
+import type { BoardState, BranchInfo, ChatEvent, Env, PortSource, RemoveResult, Review, TestReport, TestResult, PendingRequest, SkillInfo, TestState, TicketPlan, WorkStage, WorkStatus, I18nProgress } from '../../shared/types';
 import { toEntry } from '../chat';
 import { apiHosts, ENVIRONMENT_FILE, readApiUrl, readEnvironment, setEnvironment } from '../environment';
 import { reviewBrief } from '../planner/review';
 import { configFile, resolveAccount, writeAccountFile } from '../testaccounts';
 import type { CodexRpc, RpcMessage } from '../codex/rpc';
-import { listSkills } from '../codex/structured';
+import { askStructured, listSkills, runStructured } from '../codex/structured';
 import {
   aheadBehind,
   commitsSinceBase,
@@ -32,6 +32,7 @@ import { FINISHED, OCCUPYING, type StoredWorkItem, type Store } from '../store';
 import type { VSCode } from '../vscode';
 import { pickFolder } from './allocate';
 import { ACCEPTANCE_NOTE, pendingTests } from '../../shared/acceptance';
+import { fillFromCache, type I18nEntry, i18nWorkFile, saveToCache, translationCacheFile, parseProgress, readWorkFile, remoteKeys, translateAll, TRANSLATION_SCHEMA, translateUrls, usedInCode, writeI18nSheet } from '../i18n-sheet';
 import { commandPolicy, looksLikeQuestion, parseTestReport, parseTestResult } from './policy';
 
 export interface RunnerDeps {
@@ -121,10 +122,56 @@ export function threadConfig(dataDir: string, writeGuard: string, itemId: number
   };
 }
 
+/**
+ * 給開發、修改時的 AI：看 Figma 的方式。設計稿資料很大，讀進來之後每一步都要帶著重讀，
+ * 實際量過：一輪抓了 7 次 get_design_context，Figma 本身只花 1 分鐘，AI 卻花了 7 分多鐘。
+ */
+const FIGMA_LINE =
+  '- 看 Figma 設計稿時：先用 get_metadata 看結構，找出要做的那一塊的節點，只對那幾個節點用 get_design_context 或 get_screenshot；不要整頁抓 get_design_context（資料很大，會拖慢後面每一步）。同一個節點看過就記下重點，不要重複抓。';
+
 /** 給開發、修改時的 AI：怎麼用你和它共用的瀏覽器 */
 const SHARED_BROWSER_LINE =
   `- 我們共用一個瀏覽器（${SHARED_BROWSER} 這個工具，接到我平常用的 Chrome；第一次用時 Chrome 會跳出頁面讓我選要給你的分頁）：我說「看一下我開的畫面」之類的時候，用它看我選的分頁（截圖、頁面結構、主控台、請求），不要另外開測試瀏覽器去看。` +
   '可以幫我點、幫我填，但不要按會存檔、送出、刪除的按鈕：這個瀏覽器沒有寫入防護，資料會真的寫進 SIT／UAT，真的需要就先問我。瀏覽器測試不要用它，照測試的安排用測試瀏覽器。';
+
+/** 給開發、修改時的 AI：我說「改多語系」時怎麼做（翻譯和 Excel 由 FlowPilot 做，AI 只管改程式碼、記下 key 和英文） */
+function i18nLine(workFile: string): string {
+  return [
+    '- 我說「改多語系」「改成多語系」之類的時候，把我指的寫死文字改成多語系（這取代之前說過的 flowpilot-i18n 做法）：',
+    '  - 寫死的文字都是英文。key 照專案現有的命名（小寫、底線，參考附近和專案其他地方怎麼取），先用 rg 確認專案裡沒用過。',
+    "  - 寫法照專案其他地方（例如 HTML 用 {{ 'key' | translate }}，TS 用專案現有的翻譯服務寫法）；有變數的照專案現有翻譯的格式（例如 ${0}）。",
+    `  - 每改完一批（大約 10 段），就把這批附加到「${workFile}」（路徑有空白，要加引號；資料夾不存在就先建），一行一個 JSON：{"key":"…","en-us":"原本的英文"}。用 shell 附加（例如 cat >> "檔案" <<'EOF' … EOF），不要覆蓋掉之前的行。之前已經改好、還沒記進這個檔案的 key 也要補記。`,
+    '  - 你不用翻譯其他語言，也不用做 Excel：FlowPilot 會檢查 key、另外翻好其他語言、存到桌面。',
+    '  - 不要做一點就停下來回報，一直做到全部改完。回覆最後一行寫「多語系進度：完成」，或「多語系進度：未完成（還剩哪些）」。',
+  ].join('\n');
+}
+
+/** 拿掉最後的「多語系進度：…」那行再判斷 AI 是不是在問問題（問題常寫在進度那行前面） */
+function withoutProgress(message: string): string {
+  return message.replace(/^.*多語系進度[：:].*$/gm, '');
+}
+
+/**
+ * 對話用掉上限的這個比例以上，就在它停下來時整理重點、換新對話。
+ * 五成：合成 15 張的單用到五成多開始變懶；四成時 1 個半小時換了 4 次，每次 2～3 分鐘，太頻繁
+ */
+const HANDOFF_AT = 0.5;
+/** 請舊對話整理交接的訊息開頭（對話框接舊紀錄時，從這裡切掉） */
+export const HANDOFF_PROMPT_TITLE = '## 整理交接';
+const HANDOFF_PROMPT = [
+  HANDOFF_PROMPT_TITLE,
+  '這段對話太長了，FlowPilot 要換一段新對話接手這張單。請寫一份交接給接手的 AI（用 Markdown）：它只看得到這份交接和開發規則，看不到這段對話。',
+  '要包含：',
+  '1. 需求和預期結果的重點（合成好幾張的，每張都寫）。',
+  '2. 已經做了什麼、改在哪些檔案（用 git status、git diff 實際確認，不要憑記憶）。',
+  '3. 我交代過的限制、做過的決定和原因（例如哪些不要改、選了哪個做法）。',
+  '4. 還沒做完的事：做到哪裡、下一步是什麼。',
+  '5. 測試狀況、還沒解決的問題、在等我確認的事。',
+  '具體寫，不要客套、不要重複開發規則。這次只整理，不要改任何檔案。',
+].join('\n');
+const HANDOFF_SCHEMA = { type: 'object', additionalProperties: false, required: ['handoff'], properties: { handoff: { type: 'string' } } };
+/** 新對話讀交接的訊息開頭 */
+const HANDOFF_TITLE = '## 換新對話：交接';
 
 const STAGE_DONE: Partial<Record<WorkStage, string>> = {
   autotest: '自動測試完成，等你手動測試',
@@ -160,14 +207,25 @@ export function reportLines(review: Review | null): string[] {
   ];
 }
 
-/** 修改時附在訊息最後：請 AI 一併更新驗收表（畫面上不顯示這段） */
+/**
+ * 修改時附在訊息最後：請 AI 更新驗收表（畫面上不顯示這段）。
+ * 只寫這次有變的條目，其他的 FlowPilot 沿用上一版：以前要它每次重寫完整的表，
+ * 合成 15 張的單光重寫就要寫好幾千字，問一句簡單的話也要等三分多鐘（實際量過）。
+ */
 function acceptanceUpdateNote(review: Review | null): string {
   return [
     '',
     '',
     ACCEPTANCE_NOTE,
-    '改完之後，在回覆最後附上更新過的完整驗收表（格式跟之前一樣，要求如下）。這次有改到的條目照實更新 change、files、howToTest；沒重新測的 result 寫「沒測」、needYou 寫 true；沒動到的條目照抄上一版。',
-    ...reportLines(review).slice(1),
+    '- 這次沒有改任何檔案（只是回答問題、查東西）：不用附驗收表。',
+    '- 有改檔案：在回覆最後附上驗收表的「更新」，JSON 裡加 "update": true，只寫這次有變的部分，沒動到的不要寫（FlowPilot 會沿用上一版）：',
+    '  - acceptance 只放這次有改到的條目，no 用原本的編號，該條的欄位要寫完整；沒重新測的 result 寫「沒測」、needYou 寫 true。',
+    '  - otherChanges、attention、manual 只放這次新增的。',
+    '  ```flowpilot-test',
+    '  {"update":true,"acceptance":[{"no":3,"text":"…","result":"沒測","note":"…","change":"…","why":"…","files":["src/…"],"impact":"…","howToTest":"…","page":"/…","needYou":true}],"otherChanges":[],"attention":[],"manual":[]}',
+    '  ```',
+    '- 各欄位怎麼寫，跟之前一樣：',
+    ...reportLines(review).slice(2, -3),
   ].join('\n');
 }
 
@@ -254,10 +312,28 @@ export class Runner {
     const occupiedBy = new Map(items.filter((i) => i.folder && OCCUPYING.includes(i.status)).map((i) => [i.folder!, i.id]));
     return {
       folders: this.deps.settings().folders.map((f) => ({ ...f, itemId: occupiedBy.get(f.name) ?? null })),
-      items: items.map(({ branchCreated: _, commitSha: __, ...item }) => item),
+      items: items.map((full) => {
+        const { branchCreated: _, commitSha: __, oldThreads: ___, ...item } = full;
+        return { ...item, i18n: this.i18nProgress(full) };
+      }),
       pendingRun: store.pendingPlannedRun(),
       streaming: Object.fromEntries(this.streaming),
     };
+  }
+
+  /** 改多語系的進度：翻譯中、翻完的看記下的結果；工作檔還在就是 AI 還在改（或停下來了） */
+  private i18nProgress(item: StoredWorkItem): I18nProgress | null {
+    if (!['running', 'waiting', 'review'].includes(item.status) && !this.i18nRuns.has(item.id)) return null;
+    const run = this.i18nRuns.get(item.id);
+    const count = readWorkFile(i18nWorkFile(this.deps.dataDir, item.id)).length;
+    if (run?.phase === 'translating') return run;
+    if (count > 0) return { phase: this.turns.get(item.threadId ?? '') || item.status === 'running' ? 'working' : 'paused', count };
+    return run ?? null;
+  }
+
+  /** 這張單最近存好的多語系檔（給「在 Finder 顯示」） */
+  i18nFile(id: number): string | null {
+    return this.i18nRuns.get(id)?.path ?? null;
   }
 
   /** 進行中的單停下來等你、做完或失敗時跳系統通知（每一張進行中的單都會通知） */
@@ -275,6 +351,27 @@ export class Runner {
 
   /** 已經告訴過「有共用瀏覽器」的對話（這次啟動後） */
   private sharedBrowserTold = new Set<string>();
+  /** 每段對話目前用掉上限的幾成 */
+  private contextUse = new Map<string, number>();
+  /** 換新對話後、正在讀交接的對話：讀完回到換之前的狀態 */
+  private warmups = new Map<string, { status: WorkStatus; activity: string; done?: () => void }>();
+  /** 多語系翻譯中、翻完的結果（顯示在對話框上方） */
+  private i18nRuns = new Map<number, I18nProgress & { path?: string }>();
+  /** 正在整理重點、換新對話的單 */
+  private handingOff = new Set<number>();
+  /** 改多語系做到一半的單：自動叫 AI 繼續、請它換 key 名字的次數 */
+  private i18nJobs = new Map<number, { continues: number; renames: number; paused?: boolean }>();
+  /** 修改那一輪開始前資料夾的樣子：結束時比對，看這一輪到底有沒有改到檔案 */
+  private fixSnapshots = new Map<number, string>();
+
+  /** 資料夾目前的樣子（最新提交＋還沒提交的修改內容），用來比對前後有沒有變 */
+  private async folderSnapshot(item: StoredWorkItem): Promise<string> {
+    const cwd = this.folderPath(item.folder!);
+    const git = (args: string[]) =>
+      new Promise<string>((resolve) => execFile('git', args, { cwd, maxBuffer: 50 * 1024 * 1024 }, (_e, stdout) => resolve(String(stdout ?? ''))));
+    const [head, status, diff] = await Promise.all([git(['rev-parse', 'HEAD']), git(['status', '--porcelain']), git(['diff', 'HEAD'])]);
+    return head.trim() ? `${head}\n${status}\n${diff}` : ''; // 不是 git 資料夾：看不出來，不比對
+  }
 
   /** 工作台以外的地方改了單（例如發了 PR），通知畫面更新 */
   notifyChanged() {
@@ -547,6 +644,26 @@ export class Runner {
     return skill.path;
   }
 
+  /** 開一段開發用的新對話（開工、對話太長換新對話都用這個） */
+  private async newThread(item: StoredWorkItem, nameSuffix = ''): Promise<string> {
+    const { codex } = this.deps;
+    const cwd = this.folderPath(item.folder!);
+    const config = threadConfig(this.deps.dataDir, this.deps.writeGuard, item.id, apiHosts(cwd));
+    const { thread } = await codex.request<{ thread: { id: string } }>(
+      'thread/start',
+      {
+        cwd,
+        // 每個指令都先問 FlowPilot，由 FlowPilot 決定自動同意或轉給你（見 policy.ts）
+        approvalPolicy: 'untrusted',
+        sandbox: 'danger-full-access',
+        config,
+      },
+      180_000, // 第一次要下載瀏覽器工具，比較久
+    );
+    await codex.request('thread/name/set', { threadId: thread.id, name: `${item.ticketKey}｜${item.merchant ? `m${item.merchant}｜` : ''}${item.folder}${nameSuffix}` }).catch(() => {});
+    return thread.id;
+  }
+
   private async startAgent(id: number): Promise<void> {
     const { codex } = this.deps;
     const item = this.deps.store.getWorkItem(id)!;
@@ -555,22 +672,8 @@ export class Runner {
     await codex.start();
     this.update(id, { activity: '啟動 Codex' });
     // 一律開新的對話：單離開工作台就不留紀錄，不接回以前的對話（舊對話裡的舊指示會干擾）
-    const config = threadConfig(this.deps.dataDir, this.deps.writeGuard, id, apiHosts(cwd));
-    const thread = (
-      await codex.request<{ thread: { id: string } }>(
-        'thread/start',
-        {
-          cwd,
-          // 每個指令都先問 FlowPilot，由 FlowPilot 決定自動同意或轉給你（見 policy.ts）
-          approvalPolicy: 'untrusted',
-          sandbox: 'danger-full-access',
-          config,
-        },
-        180_000, // 第一次要下載瀏覽器工具，比較久
-      )
-    ).thread;
+    const thread = { id: await this.newThread(item) };
     this.update(id, { threadId: thread.id, status: 'running', stage: 'develop', activity: '開發中' });
-    await codex.request('thread/name/set', { threadId: thread.id, name: `${item.ticketKey}｜${item.merchant ? `m${item.merchant}｜` : ''}${item.folder}` }).catch(() => {});
 
     const state: { continuing: boolean; commits: number; dirty: number; rebase?: { behind: number; conflict: boolean } } = this.prepared.get(id) ?? { continuing: false, commits: 0, dirty: 0 };
     this.prepared.delete(id);
@@ -604,6 +707,8 @@ export class Runner {
       '- 自己做，不要開子 AI（spawn_agent）分工。',
       '- 最後說明：來源改了什麼、在這個商戶怎麼對應、有哪些地方跟來源不一樣（為什麼）。',
       SHARED_BROWSER_LINE,
+      FIGMA_LINE,
+      i18nLine(i18nWorkFile(this.deps.dataDir, item.id)),
       brief,
     ] : [
       ...(item.members.length
@@ -631,6 +736,8 @@ export class Runner {
       '- 不要提交、不要推送；完成後由我審查並提交。',
       '- 自己做，不要開子 AI（spawn_agent）分工。',
       SHARED_BROWSER_LINE,
+      FIGMA_LINE,
+      i18nLine(i18nWorkFile(this.deps.dataDir, item.id)),
       item.targetMerchants.length ? `- 這張單之後還要移植到商戶 ${item.targetMerchants.join('、')}，那是下一階段的事，這次只做目前這個商戶。` : '',
       brief,
     ];
@@ -912,6 +1019,12 @@ export class Runner {
     this.forwardChat(item.id, method, message.params);
 
     switch (method) {
+      case 'thread/tokenUsage/updated': {
+        // 這段對話目前用掉多少（最近一次送給 AI 的量 ÷ 上限）
+        const usage = message.params.tokenUsage;
+        if (usage?.modelContextWindow) this.contextUse.set(threadId, (usage.last?.inputTokens ?? 0) / usage.modelContextWindow);
+        break;
+      }
       case 'turn/started':
         this.turns.set(threadId, message.params.turn?.id);
         if (item.status !== 'running') this.update(item.id, { status: 'running', activity: '執行中', pending: null });
@@ -953,16 +1066,27 @@ export class Runner {
       case 'turn/completed': {
         this.turns.delete(threadId);
         this.streaming.delete(item.id);
+        // 換新對話後讀交接的那一輪：回到換之前的狀態，不走一般的流程
+        const warmup = this.warmups.get(threadId);
+        if (warmup) {
+          this.warmups.delete(threadId);
+          this.update(item.id, { status: warmup.status, activity: `已換新對話（前一段太長，整理了重點交接）；${warmup.activity}`, pending: null });
+          warmup.done?.();
+          break;
+        }
         const turn = message.params.turn ?? {};
         const latest = this.deps.store.getWorkItem(item.id)!;
+        let i18n: { retry: boolean; note?: string } = { retry: false };
         if (turn.status === 'failed') {
           this.update(item.id, { status: 'failed', activity: `AI 失敗：${turn.error?.message ?? '原因不明'}`, pending: null });
           this.notify(item.id, `${item.ticketKey} 失敗`, turn.error?.message ?? '');
           void this.schedule();
         } else if (turn.status === 'interrupted') {
           if (latest.status !== 'stopped') this.update(item.id, { status: 'waiting', activity: '這一輪被中斷了，可以補充指示讓它繼續', pending: null });
-        } else if (looksLikeQuestion(latest.lastMessage)) {
-          this.update(item.id, { status: 'waiting', activity: 'AI 在問你問題', pending: null });
+        } else if ((i18n = await this.handleI18n(latest)).retry) {
+          // key 被用過了：已經請 AI 換名字，等它改完再往下
+        } else if (looksLikeQuestion(withoutProgress(latest.lastMessage))) {
+          this.update(item.id, { status: 'waiting', activity: i18n.note ? `AI 在問你問題；${i18n.note}` : 'AI 在問你問題', pending: null });
           this.notify(item.id, `${item.ticketKey} 在等你回答`, short(latest.lastMessage.slice(-200)));
         } else if (latest.stage === 'develop' && latest.folder && !(await this.hasChanges(latest))) {
           // 開發完卻沒有改任何檔案：多半是 AI 遇到問題停下來了（例如需求說的頁面不存在）。
@@ -978,6 +1102,13 @@ export class Runner {
           void this.startTest(item.id, false);
         } else {
           let activity = STAGE_DONE[latest.stage] ?? '等你測試';
+          // 修改的這一輪什麼檔案都沒改：不要寫「改好了」（多半是回答了問題就停了，或遇到問題）
+          const before = this.fixSnapshots.get(item.id);
+          this.fixSnapshots.delete(item.id);
+          if (latest.stage === 'fix' && before && latest.folder && before === (await this.folderSnapshot(latest).catch(() => ''))) {
+            activity = 'AI 這次沒有改任何檔案：看它最後說了什麼，要它繼續就跟它說';
+          }
+          if (i18n.note) activity += `；${i18n.note}`;
           const tested: { autotestResult?: TestResult; testReport?: TestReport } = {};
           // 修改、整理驗收表時 AI 也會附上更新過的驗收表
           const report = parseTestReport(latest.lastMessage, latest.testReport);
@@ -990,8 +1121,209 @@ export class Runner {
           this.update(item.id, { status: 'review', stage: 'manual', activity, pending: null, ...tested });
           this.notify(item.id, `${item.ticketKey} ${activity}`, short(latest.lastMessage.slice(-200)));
         }
+        // 對話太長：趁它停下來（等你測試、等你回答）時整理重點、換新對話；正在做事、等你同意指令的不換
+        const after = this.deps.store.getWorkItem(item.id)!;
+        if (turn.status === 'completed' && ['review', 'waiting'].includes(after.status) && !after.pending && (this.contextUse.get(threadId) ?? 0) >= HANDOFF_AT) {
+          void this.handoff(item.id);
+        }
         break;
       }
+    }
+  }
+
+  /** 換新對話時給新對話的開發規則（開工指示裡長期有效的部分） */
+  private handoffRules(item: StoredWorkItem): string {
+    const brief = reviewBrief(this.deps.store.getReview(item.ticketKey)?.review ?? null);
+    const tickets = item.members.length
+      ? [`- 這是 ${item.members.length} 張 Jira 合成的一個任務（同一條分支、最後一個 PR）：`, ...item.members.map((m) => `  - ${m.key}（${m.summary}）：${m.url}`)]
+      : [`- 這張單：${item.ticketKey}（${item.ticketSummary}），主單 ${item.mainKey}：${item.mainUrl}`];
+    return [
+      ...tickets,
+      item.portOf ? `- 這是從商戶 ${item.portOf.merchant}（${item.portOf.branch}）移植到商戶 ${item.merchant}：照這個商戶現有的架構實作，不要 merge、cherry-pick 或整個檔案複製。` : '',
+      '- 需求以單上的「需求 / Requirements」與「預期結果 / Acceptance Criteria」為準；不理會「原始需求 / Merchant Requirements」。',
+      `- 目前在分支 ${item.branch}（基底 origin/${item.baseBranch}），FlowPilot 已經切好，不要切換分支、不要另外建分支。`,
+      '- 改完跑一次跟提交時一樣的 lint，只檢查改到的檔案，不要加 --fix。',
+      `- 不要修改 ${ENVIRONMENT_FILE}（SIT／UAT 由 FlowPilot 切換）。`,
+      '- 不要提交、不要推送；由我審查後提交。',
+      '- 自己做，不要開子 AI（spawn_agent）分工。',
+      SHARED_BROWSER_LINE,
+      FIGMA_LINE,
+      i18nLine(i18nWorkFile(this.deps.dataDir, item.id)),
+      brief,
+    ].filter(Boolean).join('\n');
+  }
+
+  /**
+   * 對話太長（用掉上限的四成以上）：請舊對話寫交接，開一段新對話、讓它讀規則和交接，之後都在新對話做。
+   * 為什麼：對話太長 AI 會變懶、混淆（實際發生過：合成 15 張的單用到五成多，改多語系每輪只回一句「未完成」就停）。
+   * 先把單換到新對話再請舊對話整理：舊對話整理時的事件就不會被當成這張單的進度。
+   */
+  /** wait：等新對話讀完交接才回來（送出訊息前換的，接著要把訊息交給新對話） */
+  private async handoff(id: number, wait = false) {
+    const { codex } = this.deps;
+    const item = this.deps.store.getWorkItem(id)!;
+    if (!item.threadId || !item.folder || this.handingOff.has(id)) return;
+    this.handingOff.add(id);
+    const oldThread = item.threadId;
+    const before = { status: item.status, activity: item.activity };
+    this.update(id, { activity: '對話太長：整理重點、換新對話中（大約一分鐘）' });
+    try {
+      const threadId = await this.newThread(item, '（續）');
+      this.update(id, { threadId, oldThreads: [...item.oldThreads, oldThread] });
+      this.sharedBrowserTold.add(threadId); // 規則裡已經寫了
+      this.i18nJobs.delete(id);
+      let summary: string;
+      try {
+        const { result } = await runStructured<{ handoff: string }>(codex, {
+          cwd: this.folderPath(item.folder),
+          threadId: oldThread,
+          prompt: HANDOFF_PROMPT,
+          schema: HANDOFF_SCHEMA,
+          timeoutMs: 300_000,
+        });
+        summary = result.handoff.trim();
+      } catch (error) {
+        this.deps.log(`${item.ticketKey}：整理交接失敗：${(error as Error).message}`);
+        summary = `（前一段對話整理交接失敗，以下是它最後的回覆）\n\n${item.lastMessage}`;
+      }
+      const skill = item.portOf ? PORT_SKILL : this.deps.settings().projects[item.project]?.devSkill ?? item.skill;
+      const text = [
+        HANDOFF_TITLE,
+        '前一段對話太長了，FlowPilot 幫你換了這段新對話接手。下面是開發規則和前一段對話寫的交接。讀完回一句「了解」就好，先不要做任何事，等我下一句話。',
+        '',
+        '### 開發規則',
+        this.handoffRules(item),
+        '',
+        '### 交接',
+        summary,
+      ].join('\n');
+      const warmup: { status: WorkStatus; activity: string; done?: () => void } = { ...before };
+      const read = new Promise<void>((resolve) => {
+        warmup.done = resolve;
+        setTimeout(resolve, 180_000);
+      });
+      this.warmups.set(threadId, warmup);
+      const current = this.deps.store.getWorkItem(id)!;
+      await this.startTurn(current, [
+        { type: 'skill', name: skill, path: await this.skillPath(skill) },
+        { type: 'text', text, text_elements: [] },
+      ]);
+      this.deps.log(`${item.ticketKey}：對話太長，換新對話（${oldThread} → ${threadId}）`);
+      if (wait) await read;
+    } catch (error) {
+      this.deps.log(`${item.ticketKey}：換新對話失敗：${(error as Error).message}`);
+      // 換不成就留在原本的對話
+      this.update(id, { threadId: oldThread, oldThreads: item.oldThreads, status: before.status, activity: `${before.activity}（對話太長，想換新對話但失敗了）` });
+    } finally {
+      this.handingOff.delete(id);
+    }
+  }
+
+  /**
+   * 改多語系：AI 這一輪結束時看工作檔和它寫的進度。
+   * 沒做完 → 自動叫它繼續（最多 5 次）；做完 → 檢查 key 有沒有被用過（被用過請它換名字，最多 2 次）→ 在背景分批翻譯、存到桌面。
+   * retry 是 true 表示已經叫 AI 接著做，這一輪的其他處理先跳過
+   */
+  private async handleI18n(item: StoredWorkItem): Promise<{ retry: boolean; note?: string }> {
+    const workFile = i18nWorkFile(this.deps.dataDir, item.id);
+    const progress = parseProgress(item.lastMessage);
+    const entries = readWorkFile(workFile);
+    if (!entries.length && progress === null) return { retry: false };
+    const state = this.i18nJobs.get(item.id) ?? { continues: 0, renames: 0 };
+    this.i18nJobs.set(item.id, state);
+    const stopJob = (note: string) => {
+      this.i18nJobs.delete(item.id);
+      return { retry: false, note };
+    };
+
+    if (progress !== 'done') {
+      // 在問你問題就不自動繼續，等你回答
+      // 在問你問題、或叫了 5 次還沒做完：暫停自動繼續，等你說到「多語系」再接手
+      if (state.paused || looksLikeQuestion(withoutProgress(item.lastMessage)) || state.continues >= 5) {
+        state.paused = true;
+        return { retry: false, note: `多語系還沒做完（已記下 ${entries.length} 條），要它接著做就跟它說「繼續改多語系」` };
+      }
+      state.continues++;
+      await this.reply(
+        item.id,
+        [
+          '## 繼續改多語系',
+          `還沒做完：目前工作檔記下 ${entries.length} 條。接著把剩下的寫死英文改完，每批照樣附加到工作檔，全部做完才停。`,
+          '回覆最後一行寫「多語系進度：完成」或「多語系進度：未完成（還剩哪些）」。',
+        ].join('\n'),
+        [],
+        { noReportNote: true, activity: `多語系：已記下 ${entries.length} 條，自動請 AI 繼續（第 ${state.continues} 次）` },
+      );
+      return { retry: true };
+    }
+    if (!entries.length) return stopJob('AI 說多語系做完了，但工作檔裡沒有任何 key，跟 AI 確認一下');
+    if (!item.folder || item.merchant === null) return stopJob('多語系沒產生：這張單沒有資料夾或商戶');
+
+    const cwd = this.folderPath(item.folder);
+    const keys = entries.map((e) => e.key);
+    let environment = '';
+    try {
+      environment = readFileSync(join(cwd, 'src/environments/environment.ts'), 'utf8');
+    } catch {}
+    const [code, remote] = await Promise.all([usedInCode(cwd, item.baseBranch, keys), remoteKeys(translateUrls(environment, item.merchant))]);
+    const taken = keys.filter((k) => code.has(k) || remote.keys.has(k));
+    if (taken.length) {
+      if (state.renames >= 2) return stopJob(`多語系沒產生：key 還是跟現有的重複（${taken.join('、')}）`);
+      state.renames++;
+      const where = (k: string) => [remote.keys.has(k) ? '遠端翻譯檔' : '', ...(code.get(k) ?? [])].filter(Boolean).join('、');
+      await this.reply(
+        item.id,
+        [
+          '## 多語系 key 重複',
+          ...taken.map((k) => `- ${k}：已經用在 ${where(k)}`),
+          `這些 key 換一個沒用過的名字：程式碼裡一起改，工作檔「${workFile}」裡對應的那幾行也改掉（可以直接改檔案）。`,
+          '改完回覆最後一行寫「多語系進度：完成」。',
+        ].join('\n'),
+        [],
+        { noReportNote: true, activity: `多語系 key 重複（${taken.join('、')}），請 AI 換名字` },
+      );
+      return { retry: true };
+    }
+
+    this.i18nJobs.delete(item.id);
+    // 工作檔先搬走：翻譯途中你又叫 AI 改多語系，新的會記在新的工作檔
+    const taking = `${workFile}.${Date.now()}`;
+    renameSync(workFile, taking);
+    void this.translateI18n(item, entries, cwd, taking);
+    return { retry: false, note: `多語系 ${entries.length} 條翻譯中` };
+  }
+
+  /** 在背景分批翻譯、存到桌面；進度和結果寫在狀態列 */
+  private async translateI18n(item: StoredWorkItem, entries: I18nEntry[], cwd: string, taken: string) {
+    const show = (activity: string) => this.update(item.id, { activity });
+    const count = entries.length;
+    const cacheFile = translationCacheFile(this.deps.dataDir);
+    const todo = fillFromCache(entries, cacheFile);
+    this.i18nRuns.set(item.id, { phase: 'translating', count, batches: { done: 0, total: Math.ceil(todo.length / 10) } });
+    this.deps.onChange();
+    try {
+      const missing = await translateAll(
+        todo,
+        (prompt) => askStructured(this.deps.codex, { cwd, prompt, schema: TRANSLATION_SCHEMA, timeoutMs: 600_000 }),
+        (done, total) => {
+          this.i18nRuns.set(item.id, { phase: 'translating', count, batches: { done, total } });
+          show(`多語系翻譯中（${done}/${total} 批）`);
+        },
+      );
+      saveToCache(todo, cacheFile);
+      const { path } = await writeI18nSheet(entries, item.merchant!);
+      const lack = missing.length ? `，其中 ${missing.length} 條沒翻好（Excel 裡那幾格是空的：${missing.slice(0, 5).join('、')}${missing.length > 5 ? '…' : ''}）` : '';
+      this.i18nRuns.set(item.id, { phase: 'saved', count, file: basename(path), path, note: lack.replace(/^，/, '') || undefined });
+      show(`多語系 ${entries.length} 條已存到桌面 ${basename(path)}${lack}`);
+      this.deps.log(`${item.ticketKey}：多語系 ${entries.length} 條寫進 ${path}${lack}`);
+      this.notify(item.id, `${item.ticketKey} 多語系檔好了`, `${entries.length} 條，存到桌面 ${basename(path)}`);
+    } catch (error) {
+      // 翻譯失敗：把工作檔放回去，之後再叫 AI 說「多語系進度：完成」就會重新翻
+      try {
+        renameSync(taken, i18nWorkFile(this.deps.dataDir, item.id));
+      } catch {}
+      this.i18nRuns.set(item.id, { phase: 'failed', count, note: (error as Error).message });
+      show(`多語系翻譯失敗：${(error as Error).message}`);
     }
   }
 
@@ -1068,11 +1400,17 @@ export class Runner {
   }
 
   /** asFix 為 false 時不當成「要求修改」（例如更新需求），做完說明不會寫「改好了」 */
-  async reply(id: number, text: string, images: string[] = [], options: { asFix?: boolean; activity?: string } = {}) {
+  async reply(id: number, text: string, images: string[] = [], options: { asFix?: boolean; activity?: string; noReportNote?: boolean } = {}) {
     const { codex } = this.deps;
-    const item = this.deps.store.getWorkItem(id)!;
+    let item = this.deps.store.getWorkItem(id)!;
     if (!item.threadId) throw new Error('這張單還沒有 AI 對話');
+    if (this.handingOff.has(id)) throw new Error('對話太長，FlowPilot 正在整理重點、換新對話，大約一分鐘，好了再說');
     await codex.start();
+    // 要開新的一輪、對話卻已經太長（例如自動叫它繼續、或上一輪結束時沒換成）：先換新對話，再把這句交給新對話
+    if (!this.turns.get(item.threadId) && !item.pending && (this.contextUse.get(item.threadId) ?? 0) >= HANDOFF_AT) {
+      await this.handoff(id, true);
+      item = this.deps.store.getWorkItem(id)!;
+    }
     if (item.pending?.kind === 'userInput') {
       // 只有一題就直接當答案；好幾題時整段文字都交給每一題
       const answers = Object.fromEntries(item.pending.questions.map((q) => [q.id, { answers: [text] }]));
@@ -1080,13 +1418,15 @@ export class Runner {
       this.update(id, { status: 'running', activity: '已回答，繼續執行', pending: null });
       return;
     }
+    // 你又說到多語系：暫停的自動繼續重新開始算
+    if (/多語系/.test(text) && !text.startsWith('## ')) this.i18nJobs.delete(id);
     // 等你測試時要求修改：附上請 AI 一併更新驗收表的說明
-    const asFix = !this.turns.get(item.threadId) && item.stage === 'manual' && options.asFix !== false;
-    let note = asFix && text.trim() ? acceptanceUpdateNote(this.deps.store.getReview(item.ticketKey)?.review ?? null) : '';
+    const asFix = !this.turns.get(item.threadId!) && item.stage === 'manual' && options.asFix !== false;
+    let note = asFix && text.trim() && !options.noReportNote ? acceptanceUpdateNote(this.deps.store.getReview(item.ticketKey)?.review ?? null) : '';
     // 這段對話在這次啟動後第一次收到你的話：告訴它有共用瀏覽器可以用（新功能之前就開工的單，開工指示裡沒寫）
-    if (text.trim() && !this.sharedBrowserTold.has(item.threadId)) {
-      this.sharedBrowserTold.add(item.threadId);
-      note += `\n\n${ACCEPTANCE_NOTE}\n${SHARED_BROWSER_LINE}`;
+    if (text.trim() && !this.sharedBrowserTold.has(item.threadId!)) {
+      this.sharedBrowserTold.add(item.threadId!);
+      note += `\n\n${ACCEPTANCE_NOTE}\n${SHARED_BROWSER_LINE}\n${FIGMA_LINE}\n${i18nLine(i18nWorkFile(this.deps.dataDir, item.id))}`;
     }
     // 測試做到一半（例如重試、補充指示）：本機網站可能已經關了（FlowPilot 重新啟動時會跟著關），先確認有在跑
     if (['autotest', 'retest'].includes(item.stage) && item.folder) {
@@ -1097,7 +1437,13 @@ export class Runner {
       ...images.map((path) => ({ type: 'localImage', path })),
     ];
     if (input.length === 0) throw new Error('訊息是空的');
-    const turnId = this.turns.get(item.threadId);
+    const turnId = this.turns.get(item.threadId!);
+    // AI 做到一半你插話：它常常回答完就結束這一輪，原本的工作沒做完（實際發生過：問了「語系檔放哪」，答完就停，還顯示改好了）
+    const first = input[0] as { type: string; text?: string } | undefined;
+    if (turnId && first?.type === 'text' && text.trim()) first.text += `\n\n${ACCEPTANCE_NOTE}\n回答或照做完這句之後，繼續剛才還沒做完的工作，全部做完才停（除非我這句是叫你停）。`;
+    if (!turnId && item.folder && (item.stage === 'manual' || item.stage === 'fix') && options.asFix !== false) {
+      this.fixSnapshots.set(id, await this.folderSnapshot(item).catch(() => ''));
+    }
     if (turnId) {
       await codex.request('turn/steer', { threadId: item.threadId, input, expectedTurnId: turnId });
     } else {

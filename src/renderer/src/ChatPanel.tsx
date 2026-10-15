@@ -1,6 +1,6 @@
 // 工作台中間：跟 AI 對話。完整的對話紀錄（思考、指令、改動、工具）、即時更新、輸入框（可貼截圖）。
 import { useEffect, useRef, useState } from 'react';
-import type { BranchInfo, ChatEntry, ChatEvent, WorkItem, WorkStage, WorkStatus } from '../../shared/types';
+import type { BranchInfo, ChatEntry, ChatEvent, I18nProgress, WorkItem, WorkStage, WorkStatus } from '../../shared/types';
 import { DiffView } from './DiffView';
 import { commitPrefs, deliveryOf, gitChanged, useGitState } from './delivery';
 import { useImageAttach } from './ImageAttach';
@@ -79,6 +79,9 @@ function flowPilotLabel(text: string): string | null {
   if (text.startsWith('## 更新需求')) return '更新需求';
   if (text.startsWith('## 自我審查')) return '自我審查指示';
   if (text.startsWith('## 整理驗收表')) return '整理驗收表指示';
+  if (text.startsWith('## 換新對話')) return '對話太長，整理重點後換新對話（點開看交接內容）';
+  if (text.startsWith('## 多語系 key 重複')) return '多語系 key 重複，請 AI 換名字';
+  if (text.startsWith('## 繼續改多語系')) return '多語系還沒做完，請 AI 繼續';
   if (text.startsWith('## 接上你的 Chrome')) return '接上你的 Chrome（Chrome 會跳出頁面讓你選分頁）';
   if (text.startsWith('## 看我的畫面')) {
     const ask = text.match(/^我想問：(.+)$/m)?.[1];
@@ -206,7 +209,7 @@ function Entry({ entry }: { entry: ChatEntry }) {
       const label = flowPilotLabel(entry.text);
       if (label)
         return (
-          <Collapsible title={<span><span className="fp-tag">FlowPilot</span> {label.startsWith('看你開的畫面') || label.startsWith('接上你的 Chrome') ? `請 AI ${label}` : `交給 AI 的${label}`}</span>} tone="soft flowpilot">
+          <Collapsible title={<span><span className="fp-tag">FlowPilot</span> {label.startsWith('對話太長') ? label : label.startsWith('看你開的畫面') || label.startsWith('接上你的 Chrome') ? `請 AI ${label}` : `交給 AI 的${label}`}</span>} tone="soft flowpilot">
             <Markdown text={entry.text} />
           </Collapsible>
         );
@@ -273,6 +276,29 @@ function Entry({ entry }: { entry: ChatEntry }) {
     default:
       return <div className="muted small">— {entry.text} —</div>;
   }
+}
+
+/** 改多語系的進度：放在對話最後，跟 AI 正在跑的指令分開顯示，不會被蓋掉 */
+function I18nBar({ id, progress }: { id: number; progress: I18nProgress }) {
+  const { phase, count, batches, file, note } = progress;
+  const text =
+    phase === 'working' ? `AI 正在改寫死的文字（已記下 ${count} 條）`
+    : phase === 'paused' ? `還沒做完，AI 停下來了（已記下 ${count} 條）：要它接著做，就跟它說「繼續改多語系」`
+    : phase === 'translating' ? `AI 改完了，FlowPilot 翻譯其他語言中（${batches?.done ?? 0}/${batches?.total ?? 0} 批，共 ${count} 條）`
+    : phase === 'saved' ? `${count} 條已存到桌面 ${file}${note ? `（${note}）` : ''}`
+    : `翻譯失敗：${note}（已記下的 ${count} 條還在，AI 說做完時會重新翻）`;
+  return (
+    <div className={`i18n-bar ${phase}`}>
+      {(phase === 'working' || phase === 'translating') && <span className="spinner" />}
+      <span className="fp-tag">多語系</span>
+      <span>{text}</span>
+      {phase === 'saved' && (
+        <button className="link small push-right" onClick={() => api.revealI18n(id)}>
+          在 Finder 顯示
+        </button>
+      )}
+    </div>
+  );
 }
 
 /** 哪些單開著「看我的」模式（放在元件外面，換單再回來還記得） */
@@ -621,6 +647,8 @@ export function ChatPanel({ item }: { item: WorkItem }) {
         {entries.map((entry) => (
           <Entry key={entry.id} entry={entry} />
         ))}
+        {/* 多語系進度放在對話最後，跟訊息一起捲動 */}
+        {item.i18n && <I18nBar id={item.id} progress={item.i18n} />}
         {running && <div className="muted small typing">AI 工作中…</div>}
 
         {item.pending?.kind === 'approval' && (

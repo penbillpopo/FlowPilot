@@ -100,6 +100,8 @@ const MIGRATIONS: string[] = [
   `ALTER TABLE work_items ADD COLUMN members TEXT;`,
   // 計畫表的補充資料（Confluence 網址、文字、截圖）
   `ALTER TABLE plan_drafts ADD COLUMN extras_json TEXT;`,
+  // 對話太長時換新對話：換掉的舊對話（對話框照樣顯示它們的紀錄）
+  `ALTER TABLE work_items ADD COLUMN old_threads TEXT;`,
 ];
 
 /** 還佔著資料夾的狀態 */
@@ -132,6 +134,7 @@ interface WorkItemRow {
   thread_id: string | null;
   last_message: string;
   pending_json: string | null;
+  old_threads: string | null;
   branch_created: number;
   commit_sha: string | null;
   pr_url: string | null;
@@ -147,7 +150,7 @@ interface WorkItemRow {
   updated_at: string;
 }
 
-function toWorkItem(row: WorkItemRow): WorkItem & { branchCreated: boolean; commitSha: string | null } {
+function toWorkItem(row: WorkItemRow): WorkItem & { branchCreated: boolean; commitSha: string | null; oldThreads: string[] } {
   return {
     id: row.id,
     runId: row.run_id,
@@ -180,6 +183,8 @@ function toWorkItem(row: WorkItemRow): WorkItem & { branchCreated: boolean; comm
     prs: row.prs ? (JSON.parse(row.prs) as PrRecord[]) : [],
     portOf: row.port_of ? (JSON.parse(row.port_of) as PortSource) : null,
     members: row.members ? (JSON.parse(row.members) as TicketRef[]) : [],
+    /** 對話太長換新對話前的舊對話（舊到新） */
+    oldThreads: row.old_threads ? (JSON.parse(row.old_threads) as string[]) : [],
   };
 }
 
@@ -336,7 +341,7 @@ export class Store {
 
   updateWorkItem(
     id: number,
-    patch: Partial<Pick<StoredWorkItem, keyof typeof PATCH_COLUMNS>> & { pending?: PendingRequest | null; autotestResult?: TestResult | null; testReport?: TestReport | null; prs?: PrRecord[] },
+    patch: Partial<Pick<StoredWorkItem, keyof typeof PATCH_COLUMNS>> & { pending?: PendingRequest | null; autotestResult?: TestResult | null; testReport?: TestReport | null; prs?: PrRecord[]; oldThreads?: string[] },
     now = new Date(),
   ): StoredWorkItem {
     const sets: string[] = ['updated_at = ?'];
@@ -347,6 +352,10 @@ export class Store {
         const v = (patch as Record<string, unknown>)[key];
         values.push(typeof v === 'boolean' ? Number(v) : (v as string | number | null));
       }
+    }
+    if ('oldThreads' in patch) {
+      sets.push('old_threads = ?');
+      values.push(patch.oldThreads?.length ? JSON.stringify(patch.oldThreads) : null);
     }
     if ('prs' in patch) {
       sets.push('prs = ?');

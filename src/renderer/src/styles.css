@@ -545,3 +545,9 @@ li.ticket.status-parked { border-left-color: var(--warn); }
 .site-starting .spinner { width: 12px; height: 12px; border: 2px solid currentColor; border-right-color: transparent; border-radius: 50%; animation: fp-spin 0.8s linear infinite; }
 .site-last-line { flex-basis: 100%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--muted); }
 @keyframes fp-spin { to { transform: rotate(360deg); } }
+
+/* 改多語系的進度條（輸入框上方） */
+.i18n-bar { display: flex; align-items: center; gap: 8px; margin: 6px 0; padding: 6px 10px; border: 1px solid var(--accent, #4aa3ff); border-radius: 6px; font-size: 13px; }
+.i18n-bar.paused, .i18n-bar.failed { border-color: #e0a030; }
+.i18n-bar.saved { border-color: #34c759; }
+.i18n-bar .spinner { width: 12px; height: 12px; border: 2px solid currentColor; border-right-color: transparent; border-radius: 50%; animation: fp-spin 0.8s linear infinite; flex: none; }

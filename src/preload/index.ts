@@ -13,6 +13,7 @@ const api: FlowPilotApi = {
   planDiscard: (keys) => ipcRenderer.invoke('plan:discard', keys),
   latestRun: () => ipcRenderer.invoke('run:latest'),
   openExternal: (url) => ipcRenderer.invoke('shell:openExternal', url),
+  revealI18n: (id) => ipcRenderer.invoke('i18n:reveal', id),
   openSettingsFile: () => ipcRenderer.invoke('settings:open'),
   planOptions: () => ipcRenderer.invoke('plan:options'),
   listSkills: () => ipcRenderer.invoke('skills:list'),

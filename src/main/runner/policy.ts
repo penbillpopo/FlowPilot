@@ -83,6 +83,19 @@ export function parseTestReport(message: string, previous: TestReport | null = n
     // 同樣的手動測試項目，之前勾過的保留勾選
     const done = new Set((previous?.manual ?? []).filter((m) => m.done).map((m) => m.text));
     const manual = list(data.manual).map((t) => ({ text: t, done: done.has(t) }));
+    if (data.update === true && previous) {
+      // 只寫了有變的部分：沒寫到的條目沿用上一版（不算有變動），其他欄位接在上一版後面
+      const updated = new Map(acceptance.map((a) => [a.no, a]));
+      const kept = previous.acceptance.map((a) => updated.get(a.no) ?? { ...a, changed: false });
+      const added = acceptance.filter((a) => !before.has(a.no));
+      const unique = <T,>(items: T[], key: (t: T) => string) => [...new Map(items.map((t) => [key(t), t])).values()];
+      return {
+        attention: unique([...previous.attention, ...list(data.attention)], (t) => t),
+        acceptance: [...kept, ...added],
+        otherChanges: unique([...previous.otherChanges, ...otherChanges], (c) => c.change),
+        manual: unique([...previous.manual, ...manual.filter((m) => !previous.manual.some((p) => p.text === m.text))], (m) => m.text),
+      };
+    }
     return { attention: list(data.attention), acceptance, otherChanges, manual };
   } catch {
     return null;

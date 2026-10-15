@@ -95,6 +95,22 @@ describe('測試報告', () => {
     expect(next.acceptance.map((a) => [a.checked, a.changed])).toEqual([[true, false], [false, true]]);
   });
 
+  it('只寫有變的部分（update）：沒寫到的條目沿用上一版、保留勾選，其他欄位接在後面', () => {
+    const item = (no: number, change: string) => ({ no, text: `第 ${no} 條`, result: '通過', change, files: ['a.ts'], needYou: true });
+    const first = parseTestReport(block({ acceptance: [item(1, '原本'), item(2, '原本'), item(3, '原本')], manual: ['舊的手動項目'], attention: ['舊的注意'] }))!;
+    const checked = { ...first, acceptance: first.acceptance.map((a) => ({ ...a, checked: true })) };
+    const next = parseTestReport(block({ update: true, acceptance: [item(2, '改過了'), item(4, '新的')], manual: ['新的手動項目'], otherChanges: [{ change: '順便修了樣式', files: ['b.scss'] }] }), checked)!;
+    expect(next.acceptance.map((a) => [a.no, a.change, a.checked, a.changed])).toEqual([
+      [1, '原本', true, false],
+      [2, '改過了', false, true],
+      [3, '原本', true, false],
+      [4, '新的', false, true],
+    ]);
+    expect(next.manual.map((m) => m.text)).toEqual(['舊的手動項目', '新的手動項目']);
+    expect(next.attention).toEqual(['舊的注意']);
+    expect(next.otherChanges.map((c) => c.change)).toEqual(['順便修了樣式']);
+  });
+
   it('沒有報告或格式不對就是 null', () => {
     expect(parseTestReport('測試結果：通過')).toBeNull();
     expect(parseTestReport('```flowpilot-test\n{壞掉的 JSON\n```')).toBeNull();

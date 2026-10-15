@@ -366,6 +366,8 @@ export interface WorkItem {
   portOf: PortSource | null;
   /** 好幾張單合成一個任務時的全部成員（含代表的那張）；一般的單是空的 */
   members: TicketRef[];
+  /** 改多語系的進度（沒在改就沒有） */
+  i18n?: I18nProgress | null;
   /** 自動測試的結果（AI 回覆最後一行的「測試結果：…」；沒開始成也算沒測成） */
   autotestResult: TestResult | null;
   /** 最近一次瀏覽器測試的報告：預期結果對照、要你手動測的清單（勾選狀態會保留） */
@@ -379,6 +381,19 @@ export interface FolderState {
   project: string;
   /** 目前在這個資料夾的工作項目 */
   itemId: number | null;
+}
+
+/** 改多語系的進度：AI 改程式碼 → 停下來（還沒做完）→ FlowPilot 翻譯 → 存到桌面（或失敗） */
+export interface I18nProgress {
+  phase: 'working' | 'paused' | 'translating' | 'saved' | 'failed';
+  /** 已記下的 key 數 */
+  count: number;
+  /** 翻譯中：第幾批 / 共幾批 */
+  batches?: { done: number; total: number };
+  /** 存好的檔名（桌面） */
+  file?: string;
+  /** 失敗原因、沒翻好的說明 */
+  note?: string;
 }
 
 export interface BoardState {
@@ -531,6 +546,8 @@ export interface FlowPilotApi {
   planDiscard(ticketKeys: string[]): Promise<PlanDraft[]>;
   latestRun(): Promise<RunSummary | null>;
   openExternal(url: string): Promise<void>;
+  /** 在 Finder 顯示這張單產生的多語系檔 */
+  revealI18n(id: number): Promise<void>;
   openSettingsFile(): Promise<void>;
   /** 計畫表需要的設定（專案、商戶） */
   planOptions(): Promise<PlanOptions>;

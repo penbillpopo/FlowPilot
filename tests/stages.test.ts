@@ -5,6 +5,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { describe, expect, it } from 'vitest';
 import type { CodexRpc, RpcMessage } from '../src/main/codex/rpc';
+import { i18nWorkFile } from '../src/main/i18n-sheet';
 import { Runner } from '../src/main/runner/runner';
 import { DEFAULT_SETTINGS_YAML, parseSettings } from '../src/main/settings';
 import { Store } from '../src/main/store';
@@ -35,13 +36,15 @@ function setup({ account = true } = {}) {
   settings.folders = [{ name: 'PlatformAdmin', path: folder, project: 'PlatformAdmin', port: 4300 }];
   settings.testConfigDir = configs;
 
-  let listener: (m: RpcMessage) => void = () => {};
+  // 可以掛好幾個監聽者（整理交接時 FlowPilot 會另外聽舊對話）
+  const listeners: ((m: RpcMessage) => void)[] = [];
+  const listener = (m: RpcMessage) => [...listeners].forEach((l) => l(m));
   const requests: { method: string; params: any }[] = [];
   const replies: { id: number; result: unknown }[] = [];
   let turn = 0;
   let loaded = true; // 對話在不在 Codex 的記憶體裡（FlowPilot 重新啟動後，失敗的單不會自動接回）
   const codex = {
-    on: (l: (m: RpcMessage) => void) => ((listener = l), () => {}),
+    on: (l: (m: RpcMessage) => void) => (listeners.push(l), () => listeners.splice(listeners.indexOf(l), 1)),
     setDisconnectHandler: () => {},
     start: async () => {},
     reply: (id: number, result: unknown) => replies.push({ id, result }),
@@ -51,6 +54,7 @@ function setup({ account = true } = {}) {
       if (method === 'thread/resume') loaded = true;
       if (method === 'turn/start' && !loaded) throw new Error(`thread not found: ${params.threadId}`);
       if (method === 'turn/start') return { turn: { id: `turn-${++turn}` } };
+      if (method === 'thread/start') return { thread: { id: `th-new-${++turn}` } };
       return {};
     },
   } as unknown as CodexRpc;
@@ -140,6 +144,125 @@ describe('流程階段', () => {
     await t.complete();
     expect(t.get()).toMatchObject({ stage: 'manual', status: 'review', activity: '改好了，等你測試' });
     expect(t.requests.filter((r) => r.method === 'turn/start').length).toBe(turns);
+  });
+
+  it('修改那一輪沒改到任何檔案：不寫「改好了」；有改才寫', async () => {
+    const t = setup();
+    const git = (...args: string[]) => execFileSync('git', ['-c', 'user.name=t', '-c', 'user.email=t@t', ...args], { cwd: t.folder });
+    git('init', '-q');
+    git('add', '.');
+    git('commit', '-qm', 'init');
+    t.store.updateWorkItem(t.id, { stage: 'manual', status: 'review' });
+    await t.runner.reply(t.id, '語系檔放哪？');
+    await t.complete('不放在專案內。');
+    expect(t.get().activity).toContain('AI 這次沒有改任何檔案');
+    await t.runner.reply(t.id, '按鈕改成藍色');
+    writeFileSync(join(t.folder, 'a.html'), '<button>');
+    await t.complete('改好了');
+    expect(t.get().activity).toBe('改好了，等你測試');
+  });
+
+  it('AI 做到一半插話：補一句要它答完繼續原本的工作', async () => {
+    const t = setup();
+    t.store.updateWorkItem(t.id, { stage: 'manual', status: 'review' });
+    await t.runner.reply(t.id, '把這些改多語系');
+    await t.runner.reply(t.id, '語系檔放哪？');
+    const steer = t.requests.filter((r) => r.method === 'turn/steer').at(-1)!.params;
+    expect(steer.input[0].text).toContain('語系檔放哪？');
+    expect(steer.input[0].text).toContain('繼續剛才還沒做完的工作');
+  });
+
+  it('改多語系沒做完：自動叫 AI 繼續；它在問問題就不叫，等你再說到多語系', async () => {
+    const t = setup();
+    t.store.updateWorkItem(t.id, { stage: 'manual', status: 'review' });
+    await t.runner.reply(t.id, '把這些改多語系');
+    const work = i18nWorkFile(join(t.root, 'data'), t.id);
+    mkdirSync(join(work, '..'), { recursive: true });
+    writeFileSync(work, '{"key":"seo_a","en-us":"A"}\n');
+    await t.complete('第一批改好了。\n多語系進度：未完成（還剩 Casino）');
+    expect(t.lastTurn().input[0].text).toContain('## 繼續改多語系');
+    expect(t.lastTurn().input[0].text).not.toContain('驗收表');
+    expect(t.get()).toMatchObject({ status: 'running', activity: '多語系：已記下 1 條，自動請 AI 繼續（第 1 次）' });
+    const turns = t.requests.filter((r) => r.method === 'turn/start').length;
+    await t.complete('Casino 的優惠條款要不要也改？請確認。\n多語系進度：未完成');
+    expect(t.requests.filter((r) => r.method === 'turn/start').length).toBe(turns);
+    expect(t.get().activity).toContain('多語系還沒做完');
+  });
+
+  it('對話用掉五成以上：停下來時請舊對話整理交接、換新對話讀交接，讀完回到原本的狀態', async () => {
+    const t = setup();
+    t.store.updateWorkItem(t.id, { stage: 'manual', status: 'review' });
+    await t.runner.reply(t.id, '按鈕改成藍色');
+    t.emit({ method: 'thread/tokenUsage/updated', params: { threadId: 'th', turnId: 't', tokenUsage: { last: { inputTokens: 140_000 }, modelContextWindow: 258_000 } } });
+    writeFileSync(join(t.folder, 'a.html'), '<button>');
+    await t.complete('改好了');
+    // 先換到新對話，再請舊對話整理
+    const newThread = t.get().threadId!;
+    expect(newThread).toMatch(/^th-new-/);
+    expect(t.get().oldThreads).toEqual(['th']);
+    const ask = t.lastTurn();
+    expect(ask.threadId).toBe('th');
+    expect(ask.input[0].text).toContain('## 整理交接');
+    await expect(t.runner.reply(t.id, '再改一次')).rejects.toThrow('換新對話');
+    t.emit({ method: 'item/completed', params: { threadId: 'th', item: { type: 'agentMessage', text: '{"handoff":"按鈕已改成藍色，在 a.html"}' } } });
+    t.emit({ method: 'turn/completed', params: { threadId: 'th', turn: { status: 'completed' } } });
+    await new Promise((r) => setTimeout(r, 80));
+    const warm = t.lastTurn();
+    expect(warm.threadId).toBe(newThread);
+    expect(warm.input[1].text).toContain('## 換新對話：交接');
+    expect(warm.input[1].text).toContain('按鈕已改成藍色，在 a.html');
+    expect(warm.input[1].text).toContain('不要提交、不要推送');
+    // 舊對話的整理不會被當成這張單的進度
+    expect(t.get().activity).toContain('整理重點、換新對話中');
+    t.emit({ method: 'turn/completed', params: { threadId: newThread, turn: { status: 'completed' } } });
+    await new Promise((r) => setTimeout(r, 80));
+    expect(t.get()).toMatchObject({ status: 'review', stage: 'manual' });
+    expect(t.get().activity).toContain('已換新對話');
+    expect(t.get().activity).toContain('改好了，等你測試');
+  });
+
+  it('送出訊息時對話已經太長：先換新對話、讀完交接，再把這句交給新對話', async () => {
+    const t = setup();
+    t.store.updateWorkItem(t.id, { stage: 'manual', status: 'review' });
+    t.emit({ method: 'thread/tokenUsage/updated', params: { threadId: 'th', turnId: 't', tokenUsage: { last: { inputTokens: 150_000 }, modelContextWindow: 258_000 } } });
+    const sending = t.runner.reply(t.id, '繼續改多語系');
+    await new Promise((r) => setTimeout(r, 50));
+    expect(t.lastTurn().input[0].text).toContain('## 整理交接');
+    t.emit({ method: 'item/completed', params: { threadId: 'th', item: { type: 'agentMessage', text: '{"handoff":"多語系做到第 11 段"}' } } });
+    t.emit({ method: 'turn/completed', params: { threadId: 'th', turn: { status: 'completed' } } });
+    await new Promise((r) => setTimeout(r, 50));
+    const newThread = t.get().threadId!;
+    expect(t.lastTurn().input[1].text).toContain('多語系做到第 11 段');
+    t.emit({ method: 'turn/completed', params: { threadId: newThread, turn: { status: 'completed' } } });
+    await sending;
+    const sent = t.lastTurn();
+    expect(sent.threadId).toBe(newThread);
+    expect(sent.input[0].text).toContain('繼續改多語系');
+    expect(t.get()).toMatchObject({ status: 'running', stage: 'fix' });
+  });
+
+  it('對話還短、或停在等你同意指令：不換', async () => {
+    const t = setup();
+    t.store.updateWorkItem(t.id, { stage: 'manual', status: 'review' });
+    await t.runner.reply(t.id, '按鈕改成藍色');
+    t.emit({ method: 'thread/tokenUsage/updated', params: { threadId: 'th', turnId: 't', tokenUsage: { last: { inputTokens: 50_000 }, modelContextWindow: 258_000 } } });
+    await t.complete('改好了');
+    expect(t.get().threadId).toBe('th');
+    expect(t.requests.some((r) => r.method === 'thread/start')).toBe(false);
+  });
+
+  it('多語系進度：AI 在做就是「正在改」，停下來就是「還沒做完」，沒在改就沒有', async () => {
+    const t = setup();
+    const progress = () => t.runner.board().items.find((i) => i.id === t.id)!.i18n;
+    expect(progress()).toBeNull();
+    t.store.updateWorkItem(t.id, { stage: 'manual', status: 'review' });
+    await t.runner.reply(t.id, '把這些改多語系');
+    const work = i18nWorkFile(join(t.root, 'data'), t.id);
+    mkdirSync(join(work, '..'), { recursive: true });
+    writeFileSync(work, '{"key":"seo_a","en-us":"A"}\n{"key":"seo_b","en-us":"B"}\n');
+    expect(progress()).toEqual({ phase: 'working', count: 2 });
+    await t.complete('Casino 要不要改？請確認。\n多語系進度：未完成');
+    expect(progress()).toEqual({ phase: 'paused', count: 2 });
   });
 
   it('開瀏覽器測給我看：有頭、先確認測試計畫；帳號照帳號檔裡這個環境的', async () => {

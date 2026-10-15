@@ -20,7 +20,7 @@ import { loadHistory } from './chat';
 import { FolderTerminals } from './folderterminals';
 import { commitAll, commitStaged, discard, fileDiff, gitState, pushBranch, stage, unstage } from './gitpanel';
 import { diffSnapshots, updateMessage } from './requirements';
-import { HEADLESS_BROWSER_NAME, Runner, threadConfig } from './runner/runner';
+import { HANDOFF_PROMPT_TITLE, HEADLESS_BROWSER_NAME, Runner, threadConfig } from './runner/runner';
 import { VSCode } from './vscode';
 import { loadSettings } from './settings';
 import { Store } from './store';
@@ -575,6 +575,11 @@ function registerIpc() {
     return shell.openExternal(url);
   });
   ipcMain.handle('settings:open', () => shell.openPath(settingsFile).then(() => undefined));
+  ipcMain.handle('i18n:reveal', (_event, id: number) => {
+    const file = runner.i18nFile(id);
+    if (!file) throw new Error('這張單還沒有產生多語系檔');
+    shell.showItemInFolder(file);
+  });
   ipcMain.handle('plan:options', (): PlanOptions => {
     const settings = loadSettings(settingsFile);
     return {
@@ -654,9 +659,18 @@ function registerIpc() {
     if (!existsSync(file)) return null;
     return { path: file, dataUrl: `data:image/png;base64,${readFileSync(file).toString('base64')}` };
   });
-  ipcMain.handle('chat:history', (_event, id: number) => {
+  ipcMain.handle('chat:history', async (_event, id: number) => {
     const item = store.getWorkItem(id);
-    return item?.threadId ? loadHistory(daemon, item.threadId) : [];
+    if (!item?.threadId) return [];
+    // 對話太長換過新對話的：先接上舊對話的紀錄（到請它整理交接之前為止），再接目前的
+    const entries = [];
+    for (const old of item.oldThreads) {
+      const history = await loadHistory(daemon, old).catch(() => []);
+      const cut = history.findIndex((e) => e.kind === 'user' && e.text.startsWith(HANDOFF_PROMPT_TITLE));
+      entries.push(...(cut >= 0 ? history.slice(0, cut) : history));
+    }
+    entries.push(...(await loadHistory(daemon, item.threadId)));
+    return entries;
   });
   ipcMain.handle('git:state', async (_event, id: number) => {
     const { item, folder } = folderOf(id);

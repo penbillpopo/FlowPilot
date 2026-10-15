@@ -63,6 +63,7 @@ export function AcceptancePanel({ item }: { item: WorkItem }) {
       <div className="ac-summary">
         <strong>{left ? `要你測 ${left} 條` : forYou.length ? '要你測的都測過了' : '都由 AI 測過了'}</strong>
         <span className="muted small">共 {report.acceptance.length} 條</span>
+        <button className="link small ac-export" title="匯出成 CSV（Excel 打得開）" onClick={() => run(() => api.test.exportCsv(item.id))}>匯出 CSV</button>
       </div>
 
       {(report.attention.length > 0 || unexplained.length > 0) && (
@@ -283,6 +284,18 @@ export function FolderTerminalPanel({ item, onSiteUrl }: { item: WorkItem; onSit
   const [error, setError] = useState<string | null>(null);
   const [exited, setExited] = useState(false);
   const [showTerminal, setShowTerminal] = useState(false);
+  // 按了「啟動」到網站起來之前：顯示啟動中、經過幾秒、終端機最後一行（不然看起來像沒反應）
+  const [starting, setStarting] = useState<number | null>(null);
+  const [lastLine, setLastLine] = useState('');
+  const [now, setNow] = useState(Date.now());
+  useEffect(() => {
+    if (starting === null) return;
+    const timer = setInterval(() => setNow(Date.now()), 1000);
+    return () => clearInterval(timer);
+  }, [starting]);
+  useEffect(() => {
+    if (url) setStarting(null);
+  }, [url]);
 
   useEffect(() => {
     if (!item.folder) return;
@@ -302,9 +315,19 @@ export function FolderTerminalPanel({ item, onSiteUrl }: { item: WorkItem; onSit
     term.open(host.current!);
     fit.fit();
     let current: string | null = null;
-    const offData = api.folderTerminal.onData((f, data) => f === current && term.write(data));
+    const offData = api.folderTerminal.onData((f, data) => {
+      if (f !== current) return;
+      term.write(data);
+      // 終端機最後一行有字的輸出（拿掉顏色控制碼），啟動中顯示給你看進度
+      const line = data.replace(/\x1b\[[0-9;?]*[A-Za-z]/g, '').split(/[\r\n]+/).map((l) => l.trim()).filter(Boolean).pop();
+      if (line) setLastLine(line.slice(0, 120));
+    });
     const offUrl = api.folderTerminal.onUrl((f, u) => f === current && setUrl(u));
-    const offExit = api.folderTerminal.onExit((f) => f === current && setExited(true));
+    const offExit = api.folderTerminal.onExit((f) => {
+      if (f !== current) return;
+      setExited(true);
+      setStarting(null);
+    });
     api.folderTerminal
       .open(item.id, term.cols, term.rows)
       .then((opened) => {
@@ -346,14 +369,47 @@ export function FolderTerminalPanel({ item, onSiteUrl }: { item: WorkItem; onSit
         {url ? (
           <>
             <button className="primary" onClick={() => api.openUrl(url).catch((e) => setError(errorText(e)))}>打開網頁</button>
+            <button
+              title="在對話框掛上「看你開的畫面」，打你要 AI 看什麼再送出。Chrome 要先裝 Playwright 擴充功能"
+              // 不直接叫 AI 做事：先讓你在對話框說要它看什麼，送出時才一起交給 AI
+              onClick={() => window.dispatchEvent(new CustomEvent('flowpilot:look', { detail: item.id }))}
+            >
+              看我的
+            </button>
             <button onClick={() => folder && api.folderTerminal.interrupt(folder)}>停止</button>
           </>
         ) : (
-          <button className="primary" onClick={() => api.folderTerminal.startSite(item.id).catch((e) => setError(errorText(e)))}>啟動</button>
+          <button
+            className="primary"
+            disabled={starting !== null}
+            onClick={() => {
+              setStarting(Date.now());
+              setNow(Date.now());
+              setLastLine('');
+              api.folderTerminal.startSite(item.id).catch((e) => {
+                setStarting(null);
+                setError(errorText(e));
+              });
+            }}
+          >
+            {starting !== null ? '啟動中…' : '啟動'}
+          </button>
         )}
         {/* 終端機是開發者的工具，平常收起來；真的需要時再打開 */}
         <button className="link small push-right" onClick={() => setShowTerminal(!showTerminal)}>{showTerminal ? '收起終端機' : '顯示終端機'}</button>
       </div>
+      {starting !== null && !url && (
+        <div className="site-starting">
+          <span className="spinner" />
+          <span>啟動中，第一次編譯大約要 30 秒到 1 分鐘（已經 {Math.round((now - starting) / 1000)} 秒）</span>
+          {lastLine && <code className="site-last-line" title={lastLine}>{lastLine}</code>}
+        </div>
+      )}
+      <p className="muted small">
+        「打開網頁」用你平常的 Chrome 開。要讓 AI 看得到你開的頁面，Chrome 要先裝 Playwright 官方的擴充功能
+        <button className="link small" onClick={() => api.openExternal('https://chromewebstore.google.com/detail/playwright-extension/mmlmfjhmonkocbjadbfplnigmagldckm')}>（安裝）</button>
+        ；之後按「看我的」、在對話框打你要它看什麼，送出後 Chrome 會跳出頁面讓你選要給 AI 的分頁。
+      </p>
       <div ref={host} className="folder-term" style={showTerminal ? undefined : { display: 'none' }} />
       {exited && <div className="muted small">終端機已結束，切換到別張單再切回來會重新打開。</div>}
       {error && <div className="error">{error}</div>}

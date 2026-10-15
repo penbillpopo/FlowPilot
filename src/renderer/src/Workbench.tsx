@@ -102,7 +102,7 @@ export function Workbench({ onGoTickets }: { onGoTickets(): void }) {
 
   const items = board?.items ?? [];
   // 進行中：已經分到資料夾的（等你回答的排最上面，失敗、停止的也在這裡）；排隊：等專案有空的資料夾；已完成：按過完成、還沒移除的
-  const order: WorkStatus[] = ['waiting', 'blocked', 'failed', 'stopped', 'review', 'running', 'preparing'];
+  const order: WorkStatus[] = ['waiting', 'blocked', 'failed', 'stopped', 'review', 'running', 'preparing', 'parked'];
   const active = items.filter((i) => i.status !== 'queued' && !FINISHED.includes(i.status)).sort((a, b) => order.indexOf(a.status) - order.indexOf(b.status) || a.id - b.id);
   const waitingTurn = items.filter((i) => i.status === 'queued');
   const finished = items.filter((i) => FINISHED.includes(i.status)).sort((a, b) => b.id - a.id);
@@ -187,7 +187,18 @@ export function Workbench({ onGoTickets }: { onGoTickets(): void }) {
       </main>
 
       <aside className="right">
-        {current && ['failed', 'stopped'].includes(current.status) ? (
+        {current?.status === 'parked' ? (
+          // 待補測：不佔資料夾，驗收表照樣能勾、能匯出，也能發 PR；要修就按標題列的「繼續修」
+          <>
+            <div className="panel finished-note">
+              <strong>先交付了，待補測 {pendingChecks(current)} 項</strong>
+              <p className="muted small">資料夾已經讓出，分支、提交、對話都留著。補測完勾「我測過了」，全部勾完才能完成；要修時按上方的「繼續修」（資料夾都在用時會告訴你哪張單在用）。</p>
+              <p className="small">分支：<code>{current.branch}</code></p>
+            </div>
+            <AcceptancePanel item={current} />
+            <PrPanel key={current.id} item={current} />
+          </>
+        ) : current && ['failed', 'stopped'].includes(current.status) ? (
           <div className="panel finished-note">
             <strong>這張單停下來了</strong>
             <p className="muted small">資料夾 {current.folder ?? '—'} 已經讓出，可能正在做別張單。按「重試」會重新分配資料夾接著做；不做了可以從「更多 → 移除」拿掉。</p>

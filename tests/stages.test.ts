@@ -344,3 +344,18 @@ describe('流程階段', () => {
     expect(t.store.getReview('ALL-9')).toBeNull();
   });
 });
+
+describe('共用瀏覽器的說明', () => {
+  it('每段對話這次啟動後第一次收到你的話，附上一次（對話裡看不到），之後不再附', async () => {
+    const { toEntry } = await import('../src/main/chat');
+    const t = setup();
+    t.store.updateWorkItem(t.id, { status: 'review', stage: 'manual' });
+    await t.runner.reply(t.id, '看一下我開的畫面');
+    const first: string = t.lastTurn().input[0].text;
+    expect(first).toContain('flowpilot_shared_browser');
+    expect(toEntry({ type: 'userMessage', id: 'u', content: [{ type: 'text', text: first }] })!.text).toBe('看一下我開的畫面');
+    await t.complete('好');
+    await t.runner.reply(t.id, '再看一次');
+    expect(t.lastTurn().input[0].text).not.toContain('flowpilot_shared_browser');
+  });
+});

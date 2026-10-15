@@ -512,9 +512,36 @@ tbody tr.planning input { cursor: pointer; }
 .supplement-input textarea { flex: 1; font: inherit; font-size: 13px; color: var(--fg); background: var(--bg); border: 1px solid var(--line); border-radius: 6px; padding: 6px 8px; resize: vertical; }
 /* 附圖：縮圖、拖曳時的外框、附圖按鈕 */
 .attach-thumbs { display: flex; gap: 8px; flex-wrap: wrap; margin: 4px 0; }
+.look-chip { display: flex; align-items: center; gap: 6px; margin: 4px 0; padding: 4px 8px; border: 1px dashed var(--accent, #4aa3ff); border-radius: 6px; font-size: 12px; }
+.look-chip .link { margin-left: auto; }
 .attach-thumb { position: relative; width: 72px; height: 54px; border-radius: 6px; overflow: hidden; border: 1px solid var(--line); background: var(--code-bg); }
 .attach-thumb img { width: 100%; height: 100%; object-fit: cover; display: block; }
 .attach-thumb button { position: absolute; top: 2px; right: 2px; width: 18px; height: 18px; padding: 0; border-radius: 50%; background: rgba(0, 0, 0, 0.65) !important; color: #fff !important; font-size: 12px; line-height: 18px; text-align: center; }
 .composer.dragging, .discuss-box.dragging { outline: 2px dashed var(--accent); outline-offset: 2px; border-radius: 8px; }
 .discuss-box { align-items: flex-end; }
 .attach-button { white-space: nowrap; }
+.ac-summary .ac-export { margin-left: auto; }
+/* 待補測：已交付、還有測試沒勾 */
+.status.parked { color: var(--warn); font-weight: 600; }
+li.ticket.status-parked { border-left-color: var(--warn); }
+[data-skin] .status.parked { color: #ffc24a; }
+[data-skin] li.ticket.status-parked { border-left-color: #ffc24a; }
+/* 截圖編輯 */
+.shot-overlay { position: fixed; inset: 0; z-index: 10000; background: rgba(0, 0, 0, 0.72); display: flex; align-items: center; justify-content: center; padding: 24px; }
+.shot-editor { width: 100%; height: 100%; display: flex; flex-direction: column; gap: 10px; background: var(--bg); border: 1px solid var(--line); border-radius: 10px; padding: 10px; box-shadow: 0 20px 60px rgba(0, 0, 0, 0.6); }
+.shot-toolbar { display: flex; align-items: center; gap: 6px; flex-wrap: wrap; }
+.shot-toolbar .push-right { margin-left: auto; }
+.shot-sep { width: 1px; height: 22px; background: var(--line); margin: 0 4px; }
+.shot-color { width: 22px; height: 22px; padding: 0 !important; border-radius: 50% !important; border: 2px solid var(--line) !important; }
+.shot-color.on { outline: 2px solid var(--accent); outline-offset: 2px; }
+.shot-width { display: inline-flex; align-items: center; gap: 6px; font-size: 12px; color: var(--muted); }
+.shot-width input { width: 90px; }
+.shot-area { flex: 1; min-height: 0; display: flex; align-items: center; justify-content: center; overflow: hidden; background: repeating-conic-gradient(#2a2a2a 0 25%, #333 0 50%) 0 0 / 16px 16px; border-radius: 6px; }
+.shot-stage { position: relative; }
+.shot-stage canvas { display: block; touch-action: none; }
+.shot-text { position: absolute; min-width: 160px; font-weight: 600; background: rgba(0, 0, 0, 0.55) !important; border: 1px dashed currentColor !important; border-radius: 4px; padding: 2px 4px; resize: both; outline: none; }
+/* 本機網站啟動中 */
+.site-starting { display: flex; flex-wrap: wrap; align-items: center; gap: 4px 8px; font-size: 13px; color: var(--accent); }
+.site-starting .spinner { width: 12px; height: 12px; border: 2px solid currentColor; border-right-color: transparent; border-radius: 50%; animation: fp-spin 0.8s linear infinite; }
+.site-last-line { flex-basis: 100%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--muted); }
+@keyframes fp-spin { to { transform: rotate(360deg); } }

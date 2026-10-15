@@ -31,7 +31,7 @@ import type { Settings } from '../settings';
 import { FINISHED, OCCUPYING, type StoredWorkItem, type Store } from '../store';
 import type { VSCode } from '../vscode';
 import { pickFolder } from './allocate';
-import { ACCEPTANCE_NOTE } from '../../shared/acceptance';
+import { ACCEPTANCE_NOTE, pendingTests } from '../../shared/acceptance';
 import { commandPolicy, looksLikeQuestion, parseTestReport, parseTestResult } from './policy';
 
 export interface RunnerDeps {
@@ -82,6 +82,8 @@ const APPROVAL_METHODS = /requestApproval$|^execCommandApproval$|^applyPatchAppr
 const HEADLESS_BROWSER = 'flowpilot_browser_headless';
 export const HEADLESS_BROWSER_NAME = HEADLESS_BROWSER;
 const HEADED_BROWSER = 'flowpilot_browser';
+/** 你和 AI 共用的瀏覽器（Chrome 遠端除錯模式） */
+const SHARED_BROWSER = 'flowpilot_shared_browser';
 
 /**
  * 開發用對話的設定（只在 FlowPilot 開的對話裡生效，不改你的 ~/.codex/config.toml）：
@@ -112,9 +114,17 @@ export function threadConfig(dataDir: string, writeGuard: string, itemId: number
       ...(hasOwnPlaywright ? { playwright: { enabled: false } } : {}),
       [HEADLESS_BROWSER]: browser(['--headless']),
       [HEADED_BROWSER]: browser(['--browser', 'chrome']),
+      // 你和 AI 共用的瀏覽器：你平常用的 Chrome（要裝 Playwright 官方的擴充功能），第一次接上時你選要給 AI 的分頁。
+      // 不套寫入防護：那是你自己在操作的瀏覽器，套了你手動存檔也會變成假的成功
+      [SHARED_BROWSER]: { command: 'npx', args: ['-y', '@playwright/mcp@latest', '--extension', '--caps', 'devtools', '--output-dir', outputDir] },
     },
   };
 }
+
+/** 給開發、修改時的 AI：怎麼用你和它共用的瀏覽器 */
+const SHARED_BROWSER_LINE =
+  `- 我們共用一個瀏覽器（${SHARED_BROWSER} 這個工具，接到我平常用的 Chrome；第一次用時 Chrome 會跳出頁面讓我選要給你的分頁）：我說「看一下我開的畫面」之類的時候，用它看我選的分頁（截圖、頁面結構、主控台、請求），不要另外開測試瀏覽器去看。` +
+  '可以幫我點、幫我填，但不要按會存檔、送出、刪除的按鈕：這個瀏覽器沒有寫入防護，資料會真的寫進 SIT／UAT，真的需要就先問我。瀏覽器測試不要用它，照測試的安排用測試瀏覽器。';
 
 const STAGE_DONE: Partial<Record<WorkStage, string>> = {
   autotest: '自動測試完成，等你手動測試',
@@ -262,6 +272,9 @@ export class Runner {
     if ((await commitsSinceBase(cwd, item.baseBranch)) > 0) return true;
     return (await dirtyFiles(cwd)).some((f) => !isEnvironmentFile(f));
   }
+
+  /** 已經告訴過「有共用瀏覽器」的對話（這次啟動後） */
+  private sharedBrowserTold = new Set<string>();
 
   /** 工作台以外的地方改了單（例如發了 PR），通知畫面更新 */
   notifyChanged() {
@@ -590,6 +603,7 @@ export class Runner {
       `- 不要修改 ${ENVIRONMENT_FILE}（SIT／UAT 由 FlowPilot 切換）。`,
       '- 自己做，不要開子 AI（spawn_agent）分工。',
       '- 最後說明：來源改了什麼、在這個商戶怎麼對應、有哪些地方跟來源不一樣（為什麼）。',
+      SHARED_BROWSER_LINE,
       brief,
     ] : [
       ...(item.members.length
@@ -616,6 +630,7 @@ export class Runner {
       `- 不要修改 ${ENVIRONMENT_FILE}（SIT／UAT 由 FlowPilot 切換）。`,
       '- 不要提交、不要推送；完成後由我審查並提交。',
       '- 自己做，不要開子 AI（spawn_agent）分工。',
+      SHARED_BROWSER_LINE,
       item.targetMerchants.length ? `- 這張單之後還要移植到商戶 ${item.targetMerchants.join('、')}，那是下一階段的事，這次只做目前這個商戶。` : '',
       brief,
     ];
@@ -680,6 +695,7 @@ export class Runner {
         // 實測：AI 曾試著在瀏覽器裡讀這個檔案（讀不到）就放棄登入，所以寫清楚用終端機讀
         `- 登入：先用終端機指令讀 ${accountFile}（例如 cat）取得帳號密碼，再用瀏覽器工具填進登入表單自動登入（登入畫面要 OTP 時，填檔案裡的 otp）。這個檔案在電腦上，瀏覽器裡讀不到，不要在瀏覽器裡讀。不要停下來等我登入，也不要把密碼印出來或寫進任何檔案、回覆。`,
         '- 第一步先登入：登入失敗（帳號密碼錯、OTP、被擋）就立刻停止，不要再試別的，直接回報「測試結果：沒測成（登入失敗：原因）」。',
+        '- 按下登入後什麼都沒發生（沒有送出登入請求、還停在登入畫面）：先看表單有沒有錯誤提示、欄位要求的格式（例如欄位要信箱、帳號檔給的卻是帳號名稱），把具體原因寫進結果（例如「帳號格式不符：登入欄位要信箱，帳號檔是 bantest」），不要猜是攔截或驗證碼的問題。',
         '- 看到跨網域（CORS）錯誤先不要下結論：重新整理再試一次，並用終端機 curl 帶 Origin 標頭（例如 curl -sI -H "Origin: 本機網站網址" 後端網址/version）看後端有沒有回 Access-Control-Allow-Origin。後端有回就不是後端的問題，重試或換方式繼續測；確定是環境問題才回報沒測成，並附上 curl 的結果。',
         '- 失敗時先判斷原因：是前端程式的問題就直接修正，然後重測失敗的部分，最多 3 輪；不是前端的問題（後端、資料、權限、環境）就記下來，不要修。API 回 404 通常是後端還沒部署這支 API，不是前端的錯。',
         '- 不要提交、不要推送。自己做，不要開子 AI（spawn_agent）分工。',
@@ -691,7 +707,7 @@ export class Runner {
         ? [
             `請使用 $${rule.testSkill} 開瀏覽器重新測試給我看（我手動測過，也可能請你改過了）。以下是 FlowPilot 的安排，跟技能預設規則不同的地方以這裡為準：`,
             '',
-            `- 這次是有頭模式：只能用 ${HEADED_BROWSER} 這個瀏覽器工具（會開出視窗讓我看）；不要用 ${HEADLESS_BROWSER}，也不要另外寫 Playwright 腳本開瀏覽器。`,
+            `- 這次是有頭模式：只能用 ${HEADED_BROWSER} 這個瀏覽器工具（會開出視窗讓我看）；不要用 ${HEADLESS_BROWSER}、${SHARED_BROWSER}（共用瀏覽器沒有寫入防護），也不要另外寫 Playwright 腳本開瀏覽器。`,
             '- 先列出測試計畫（要測的頁面、操作、預期的 API），等我確認後才開始。重點放在我在這段對話裡要求修改的部分，再加上這張單的主要流程。',
             '- 新增、儲存這類操作可以直接做，不用每一步問我：寫入一律會被擋下（見下面），資料不會寫進後端。',
             ...common,
@@ -699,7 +715,7 @@ export class Runner {
         : [
             `請使用 $${rule.testSkill} 測試剛才完成的開發（這是開發完 FlowPilot 自動安排的測試，只是先幫我抓明顯的錯，我之後一定會自己手動測）。以下是 FlowPilot 的安排，跟技能預設規則不同的地方以這裡為準：`,
             '',
-            `- 我已經授權這次用無頭模式：只能用 ${HEADLESS_BROWSER} 這個瀏覽器工具（不會開出視窗）；不要用 ${HEADED_BROWSER}，也不要另外寫 Playwright 腳本開有頭的瀏覽器。`,
+            `- 我已經授權這次用無頭模式：只能用 ${HEADLESS_BROWSER} 這個瀏覽器工具（不會開出視窗）；不要用 ${HEADED_BROWSER}、${SHARED_BROWSER}（共用瀏覽器沒有寫入防護），也不要另外寫 Playwright 腳本開有頭的瀏覽器。`,
             '- 不用先給我確認測試計畫：列出測試案例後直接開始測，中途也不要停下來問我。',
             '- 新增、編輯、儲存的流程也要測（這通常是最容易出錯的地方）：寫入一律會被擋下（見下面），不用跳過，也不用問我。',
             ...common,
@@ -1066,7 +1082,12 @@ export class Runner {
     }
     // 等你測試時要求修改：附上請 AI 一併更新驗收表的說明
     const asFix = !this.turns.get(item.threadId) && item.stage === 'manual' && options.asFix !== false;
-    const note = asFix && text.trim() ? acceptanceUpdateNote(this.deps.store.getReview(item.ticketKey)?.review ?? null) : '';
+    let note = asFix && text.trim() ? acceptanceUpdateNote(this.deps.store.getReview(item.ticketKey)?.review ?? null) : '';
+    // 這段對話在這次啟動後第一次收到你的話：告訴它有共用瀏覽器可以用（新功能之前就開工的單，開工指示裡沒寫）
+    if (text.trim() && !this.sharedBrowserTold.has(item.threadId)) {
+      this.sharedBrowserTold.add(item.threadId);
+      note += `\n\n${ACCEPTANCE_NOTE}\n${SHARED_BROWSER_LINE}`;
+    }
     // 測試做到一半（例如重試、補充指示）：本機網站可能已經關了（FlowPilot 重新啟動時會跟著關），先確認有在跑
     if (['autotest', 'retest'].includes(item.stage) && item.folder) {
       await this.deps.ensureSite(item.folder).catch((error) => this.deps.log(`${item.ticketKey}：啟動本機網站失敗：${(error as Error).message}`));
@@ -1103,6 +1124,69 @@ export class Runner {
     void this.schedule();
   }
 
+  // ---- 先交付、待補測 ----
+
+  /** 本機有這張單分支的資料夾（待補測的單不佔資料夾，分支留在原本做的那個資料夾） */
+  private async folderHolding(item: StoredWorkItem): Promise<string | null> {
+    for (const f of this.deps.settings().folders.filter((x) => x.project === item.project)) {
+      if (await localBranchExists(f.path, item.branch).catch(() => false)) return f.path;
+    }
+    return null;
+  }
+
+  /**
+   * 先交付、待補測：改動都提交了、還有測試沒勾。讓出資料夾給下一張（分支、提交、對話都留著），
+   * 驗收表照樣看得到、勾得到，也可以發 PR；要修時按「繼續修」。
+   */
+  async park(id: number) {
+    const item = this.deps.store.getWorkItem(id)!;
+    if (['running', 'preparing'].includes(item.status)) throw new Error('AI 還在執行，請先等它停下來（或中斷）');
+    if (!item.folder) throw new Error('這張單沒有在用資料夾');
+    const owed = pendingTests(item.testReport);
+    if (!owed) throw new Error('測試都勾完了，直接「完成這張單」就好');
+    const cwd = this.folderPath(item.folder);
+    if ((await currentBranch(cwd)) === item.branch) {
+      for (const file of (await dirtyFiles(cwd)).filter(isEnvironmentFile)) await runGit(cwd, ['restore', '--staged', '--worktree', '--', file]);
+      const dirty = await dirtyFiles(cwd);
+      if (dirty.length) throw new Error(`還有 ${dirty.length} 個沒提交的改動（${dirty.slice(0, 3).join('、')}${dirty.length > 3 ? ' 等' : ''}），先提交再交付`);
+    }
+    this.deps.stopSite?.(item.folder);
+    this.update(id, { status: 'parked', folder: null, pending: null, activity: `先交付了，待補測 ${owed} 項；要修時按「繼續修」` });
+    await this.schedule();
+  }
+
+  /**
+   * 繼續修待補測的單：拿一個資料夾（先找原本有這條分支的；被佔用就找同專案其他空的），切回分支，接著原本的對話。
+   * 資料夾都在用就不動，告訴你哪張單在用——不會去搶別張單的資料夾。
+   */
+  async resume(id: number) {
+    const item = this.deps.store.getWorkItem(id)!;
+    if (item.status !== 'parked') throw new Error('只有待補測的單可以繼續修');
+    const settings = this.deps.settings();
+    const folders = settings.folders.filter((f) => f.project === item.project);
+    const items = this.deps.store.listWorkItems();
+    const owner = (name: string) => items.find((i) => i.folder === name && OCCUPYING.includes(i.status));
+    const free = folders.filter((f) => !owner(f.name));
+    if (!free.length) {
+      throw new Error(`${item.project} 的資料夾都在用（${folders.map((f) => `${f.name} 在做 ${owner(f.name)!.ticketKey}`).join('、')}），等其中一張完成或先交付再繼續修`);
+    }
+    // 原本有這條分支的資料夾優先（不用再抓、也保留本機才有的提交）
+    let folder = free[0];
+    for (const f of free) if (await localBranchExists(f.path, item.branch).catch(() => false)) { folder = f; break; }
+    const cwd = folder.path;
+    if ((await currentBranch(cwd)) !== item.branch) {
+      for (const file of (await dirtyFiles(cwd)).filter(isEnvironmentFile)) await runGit(cwd, ['restore', '--staged', '--worktree', '--', file]);
+      const dirty = await dirtyFiles(cwd);
+      if (dirty.length) throw new Error(`${folder.name} 有沒提交的修改（${dirty.slice(0, 3).join('、')}），請先處理`);
+      await fetchOrigin(cwd).catch(() => {});
+      if (await localBranchExists(cwd, item.branch)) await switchBranch(cwd, item.branch);
+      else if (await remoteBranchExists(cwd, item.branch)) await switchToRemoteBranch(cwd, item.branch);
+      else throw new Error(`找不到 ${item.branch}：${folder.name} 本機和遠端都沒有，原本做的資料夾可能已經刪掉了`);
+    }
+    this.update(id, { status: 'review', stage: 'manual', folder: folder.name, activity: `繼續修（在 ${folder.name}）：跟 AI 說要改什麼` });
+    await this.schedule();
+  }
+
   // ---- 完成 ----
 
   /**
@@ -1112,6 +1196,9 @@ export class Runner {
   async finish(id: number, restoreEnvironment: boolean) {
     const item = this.deps.store.getWorkItem(id)!;
     if (['running', 'preparing'].includes(item.status)) throw new Error('AI 還在執行，請先等它停下來（或中斷）');
+    // 欠的測試要補完才能完成（可以先「先交付，待補測」讓出資料夾）
+    const owed = pendingTests(item.testReport);
+    if (owed) throw new Error(`還有 ${owed} 項測試沒勾「我測過了」，補測完才能完成；要先讓出資料夾，按「先交付，待補測」`);
     if (item.folder) {
       const cwd = this.folderPath(item.folder);
       if ((await currentBranch(cwd)) === item.branch) {
@@ -1123,7 +1210,8 @@ export class Runner {
         if (dirty.length) throw new Error(`還有 ${dirty.length} 個未提交的修改（${dirty.slice(0, 3).join('、')}${dirty.length > 3 ? ' 等' : ''}），請先提交或捨棄`);
       }
     }
-    const sha = item.folder ? (await runGit(this.folderPath(item.folder), ['rev-parse', '--short', 'HEAD'])).stdout.trim() : null;
+    const holder = item.folder ? this.folderPath(item.folder) : await this.folderHolding(item);
+    const sha = holder ? (await runGit(holder, ['rev-parse', '--short', item.folder ? 'HEAD' : item.branch])).stdout.trim() || null : null;
     // 讓出資料夾時順便停掉本機網站（下一張單會自己重新啟動）
     if (item.folder) this.deps.stopSite?.(item.folder);
     this.update(id, {
@@ -1146,8 +1234,9 @@ export class Runner {
   /** 移除前查分支的狀況，讓你決定要不要一起刪；還沒分到資料夾的回傳 null */
   async branchInfo(id: number): Promise<BranchInfo | null> {
     const item = this.deps.store.getWorkItem(id)!;
-    if (!item.folder) return null;
-    const cwd = this.folderPath(item.folder);
+    // 待補測的單不佔資料夾：看原本有這條分支的資料夾
+    const cwd = item.folder ? this.folderPath(item.folder) : item.status === 'parked' ? await this.folderHolding(item) : null;
+    if (!cwd) return null;
     const exists = await localBranchExists(cwd, item.branch);
     const hasRemote = exists && (await remoteBranchExists(cwd, item.branch));
     // 只在這台電腦上的提交：遠端有這條分支就跟遠端比，沒有就跟基底比
@@ -1156,7 +1245,8 @@ export class Runner {
     const unpushed = !exists ? 0 : counted!.code === 0 ? Number(counted!.stdout.trim()) : null;
     const onBranch = (await currentBranch(cwd)) === item.branch;
     const dirty = onBranch ? (await dirtyFiles(cwd)).filter((f) => !isEnvironmentFile(f)) : [];
-    return { branch: item.branch, folder: item.folder, baseBranch: item.baseBranch, exists, hasRemote, unpushed, dirty };
+    const folder = item.folder ?? this.deps.settings().folders.find((f) => f.path === cwd)?.name ?? '';
+    return { branch: item.branch, folder, baseBranch: item.baseBranch, exists, hasRemote, unpushed, dirty };
   }
 
   /**
@@ -1198,10 +1288,13 @@ export class Runner {
     this.streaming.delete(id);
     this.allowed.delete(id);
     let result: RemoveResult = { branchDeleted: false };
-    // 移除一律刪本機分支（遠端不動）；還沒分到資料夾的（排隊中）沒有分支要刪
-    if (item.folder) {
+    // 移除一律刪本機分支（遠端不動）；還沒分到資料夾的（排隊中）沒有分支要刪；
+    // 待補測的單不佔資料夾，分支在原本做的那個資料夾
+    const holder = !item.folder && item.status === 'parked' ? await this.folderHolding(item) : null;
+    const target = holder ? { ...item, folder: this.deps.settings().folders.find((f) => f.path === holder)?.name ?? null } : item;
+    if (target.folder) {
       try {
-        result = await this.deleteLocalBranch(item);
+        result = await this.deleteLocalBranch(target);
       } catch (error) {
         result = { branchDeleted: false, reason: `刪除失敗：${(error as Error).message}` };
       }

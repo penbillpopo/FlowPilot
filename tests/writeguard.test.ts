@@ -46,3 +46,13 @@ describe('寫入防護', () => {
     expect(shouldRecord('https://errors.example.com/api/9/envelope/')).toBe(true); // 不知道後端在哪就全部記
   });
 });
+
+describe('你和 AI 共用的瀏覽器', () => {
+  it('接到你平常的 Chrome（擴充功能模式）；不套寫入防護（你手動存檔才不會變成假的成功）、不是隔離模式（才看得到你的分頁）', async () => {
+    const { threadConfig } = await import('../src/main/runner/runner');
+    const shared = threadConfig('/tmp/fp', 'guard.cjs', 1).mcp_servers.flowpilot_shared_browser;
+    expect(shared.args).toContain('--extension');
+    expect(shared.args).not.toContain('--init-page');
+    expect(shared.args).not.toContain('--isolated');
+  });
+});

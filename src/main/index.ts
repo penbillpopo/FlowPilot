@@ -1,10 +1,12 @@
 // 應用程式主程序：選單列圖示＋主視窗。關掉視窗不會結束，背景繼續跑；從選單列「結束」才真的關掉。
-import { app, BrowserWindow, ipcMain, Menu, nativeImage, Notification, shell, Tray } from 'electron';
-import { execFileSync } from 'node:child_process';
-import { appendFileSync, existsSync, mkdirSync, writeFileSync } from 'node:fs';
+import { app, BrowserWindow, dialog, ipcMain, Menu, nativeImage, Notification, shell, Tray } from 'electron';
+import { execFile, execFileSync } from 'node:child_process';
+import { appendFileSync, existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { randomUUID } from 'node:crypto';
 import { join } from 'node:path';
 import { groupTicket } from '../shared/group';
+import { acceptanceCsv } from './acceptance-csv';
+import { openInChrome } from './shared-browser';
 import { confluencePageId, loadConfluence } from './confluence';
 import { AzureRepo, defaultPrTitle, prDescription, prIdFromUrl } from './azure';
 import type { Env, JiraTicket, PrOptions, PrRecord, SupplementItem, WorkItem, Judgement, PlanOptions, Review, ReviewChecks, ReviewIssue, TicketMark, TicketPlan, TicketSnapshot } from '../shared/types';
@@ -640,6 +642,18 @@ function registerIpc() {
     writeFileSync(file, Buffer.from(bytes));
     return file;
   });
+  // 截圖：用 macOS 內建的 screencapture（跟 ⌘⇧4 同一個工具，拖範圍、空白鍵截視窗、Esc 取消）。
+  // FlowPilot 留在原地不藏起來（藏起來看起來像程式關掉了，使用者覺得可怕）；要截後面的視窗按空白鍵點那個視窗就好。
+  // 不註冊任何快捷鍵。取消就回傳 null
+  ipcMain.handle('shot:capture', async () => {
+    const dir = join(dataDir, 'attachments');
+    mkdirSync(dir, { recursive: true });
+    const file = join(dir, `shot-${randomUUID()}.png`);
+    await new Promise<void>((resolve) => execFile('screencapture', ['-i', '-x', file], () => resolve()));
+    window?.focus();
+    if (!existsSync(file)) return null;
+    return { path: file, dataUrl: `data:image/png;base64,${readFileSync(file).toString('base64')}` };
+  });
   ipcMain.handle('chat:history', (_event, id: number) => {
     const item = store.getWorkItem(id);
     return item?.threadId ? loadHistory(daemon, item.threadId) : [];
@@ -675,9 +689,10 @@ function registerIpc() {
     const { folder, rule } = folderOf(id);
     folderTerminals.run(folder.name, startCommand(rule?.startCommand, folder.port));
   });
+  // 本機網站用你平常的 Chrome 打開：AI 透過 Playwright 擴充功能接得上（你說「看我開的畫面」它就看得到）
   ipcMain.handle('shell:openUrl', (_event, url: string) => {
     if (!/^https?:\/\/(localhost|127\.0\.0\.1)(:\d+)?(\/|$)/.test(url)) throw new Error('只能打開本機網址');
-    return shell.openExternal(url);
+    return openInChrome(url);
   });
   ipcMain.handle('item:retry', (_event, id: number) => runner.retry(id));
   ipcMain.handle('item:retest', (_event, id: number) => runner.retest(id));
@@ -688,8 +703,20 @@ function registerIpc() {
   ipcMain.handle('test:setChecked', (_event, id: number, no: number, checked: boolean) => runner.setChecked(id, no, checked));
   ipcMain.handle('test:requestAcceptance', (_event, id: number) => runner.requestAcceptance(id));
   ipcMain.handle('test:changedFiles', (_event, id: number) => runner.changedFiles(id));
+  // 驗收表匯出成 CSV：選存放位置（預設「下載」），存好在 Finder 標出來；取消就回傳 null
+  ipcMain.handle('test:exportCsv', async (_event, id: number) => {
+    const item = store.getWorkItem(id);
+    if (!item?.testReport) throw new Error('這張單還沒有驗收表');
+    const day = new Date().toISOString().slice(0, 10).replace(/-/g, '');
+    const options = { title: '匯出驗收表', defaultPath: join(app.getPath('downloads'), `${item.ticketKey}-驗收-${day}.csv`), filters: [{ name: 'CSV', extensions: ['csv'] }] };
+    const target = window ? await dialog.showSaveDialog(window, options) : await dialog.showSaveDialog(options);
+    if (target.canceled || !target.filePath) return null;
+    writeFileSync(target.filePath, acceptanceCsv(item.testReport));
+    shell.showItemInFolder(target.filePath);
+    return target.filePath;
+  });
   ipcMain.handle('test:openPage', async (_event, id: number, page: string) => {
-    await shell.openExternal(await runner.pageUrl(id, String(page ?? '')));
+    await openInChrome(await runner.pageUrl(id, String(page ?? '')));
   });
   ipcMain.handle('tickets:marks', (_event, keys: string[]) => ticketMarks(keys));
   ipcMain.handle('test:state', (_event, id: number) => runner.testState(id));
@@ -699,6 +726,8 @@ function registerIpc() {
   });
   ipcMain.handle('item:openInVSCode', (_event, id: number) => runner.openInVSCode(id));
   ipcMain.handle('item:port', (_event, id: number) => runner.port(id));
+  ipcMain.handle('item:park', (_event, id: number) => runner.park(id));
+  ipcMain.handle('item:resume', (_event, id: number) => runner.resume(id));
 }
 
 // 盟軍外觀的提示音、語音：AI 做完時你可能沒在點畫面，也要能播

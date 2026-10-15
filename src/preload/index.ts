@@ -50,6 +50,7 @@ const api: FlowPilotApi = {
   interrupt: (id) => ipcRenderer.invoke('item:interrupt', id),
   send: (id, text, images) => ipcRenderer.invoke('item:send', id, text, images),
   saveImage: (bytes, extension) => ipcRenderer.invoke('chat:saveImage', bytes, extension),
+  captureScreen: () => ipcRenderer.invoke('shot:capture'),
   chatHistory: (id) => ipcRenderer.invoke('chat:history', id),
   onChat: (listener) => {
     const handler = (_event: unknown, batch: [number, Parameters<typeof listener>[1]][]) => batch.forEach(([id, e]) => listener(id, e));
@@ -92,6 +93,8 @@ const api: FlowPilotApi = {
   retry: (id) => ipcRenderer.invoke('item:retry', id),
   openInVSCode: (id) => ipcRenderer.invoke('item:openInVSCode', id),
   port: (id) => ipcRenderer.invoke('item:port', id),
+  park: (id) => ipcRenderer.invoke('item:park', id),
+  resume: (id) => ipcRenderer.invoke('item:resume', id),
   retest: (id) => ipcRenderer.invoke('item:retest', id),
   rerunAutotest: (id) => ipcRenderer.invoke('item:rerunAutotest', id),
   ticketMarks: (keys) => ipcRenderer.invoke('tickets:marks', keys),
@@ -111,6 +114,7 @@ const api: FlowPilotApi = {
     setChecked: (id, no, checked) => ipcRenderer.invoke('test:setChecked', id, no, checked),
     requestAcceptance: (id) => ipcRenderer.invoke('test:requestAcceptance', id),
     changedFiles: (id) => ipcRenderer.invoke('test:changedFiles', id),
+    exportCsv: (id) => ipcRenderer.invoke('test:exportCsv', id),
     openPage: (id, page) => ipcRenderer.invoke('test:openPage', id, page),
   },
 };

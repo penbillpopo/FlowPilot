@@ -79,6 +79,11 @@ function flowPilotLabel(text: string): string | null {
   if (text.startsWith('## 更新需求')) return '更新需求';
   if (text.startsWith('## 自我審查')) return '自我審查指示';
   if (text.startsWith('## 整理驗收表')) return '整理驗收表指示';
+  if (text.startsWith('## 接上你的 Chrome')) return '接上你的 Chrome（Chrome 會跳出頁面讓你選分頁）';
+  if (text.startsWith('## 看我的畫面')) {
+    const ask = text.match(/^我想問：(.+)$/m)?.[1];
+    return `看你開的畫面${ask ? `：${ask}` : ''}`;
+  }
   if (text.trim() === '請從剛才中斷的地方繼續。') return '請 AI 從中斷的地方繼續';
   return null;
 }
@@ -201,7 +206,7 @@ function Entry({ entry }: { entry: ChatEntry }) {
       const label = flowPilotLabel(entry.text);
       if (label)
         return (
-          <Collapsible title={<span><span className="fp-tag">FlowPilot</span> 交給 AI 的{label}</span>} tone="soft flowpilot">
+          <Collapsible title={<span><span className="fp-tag">FlowPilot</span> {label.startsWith('看你開的畫面') || label.startsWith('接上你的 Chrome') ? `請 AI ${label}` : `交給 AI 的${label}`}</span>} tone="soft flowpilot">
             <Markdown text={entry.text} />
           </Collapsible>
         );
@@ -269,6 +274,9 @@ function Entry({ entry }: { entry: ChatEntry }) {
       return <div className="muted small">— {entry.text} —</div>;
   }
 }
+
+/** 哪些單開著「看我的」模式（放在元件外面，換單再回來還記得） */
+const lookModeOn = new Set<number>();
 
 export function ChatPanel({ item }: { item: WorkItem }) {
   const [entries, setEntries] = useState<ChatEntry[]>([]);
@@ -353,9 +361,46 @@ export function ChatPanel({ item }: { item: WorkItem }) {
     }
   }
 
+  /** 「看我的」模式：右邊按了之後一直開著（換單再回來也還在），這段期間你說的每句話都是要 AI 去看你在 Chrome 選的畫面；按 × 才關 */
+  const [lookMode, setLookModeState] = useState(() => lookModeOn.has(item.id));
+  const setLookMode = (on: boolean) => {
+    if (on) lookModeOn.add(item.id);
+    else lookModeOn.delete(item.id);
+    setLookModeState(on);
+  };
+  useEffect(() => {
+    const on = (e: Event) => {
+      if ((e as CustomEvent<number>).detail !== item.id) return;
+      setLookMode(true);
+      input.current?.focus();
+      // Chrome 選分頁的頁面只有在 AI 第一次用共用瀏覽器時才會跳出來：按下去就請 AI 只接上、不做別的
+      api
+        .send(
+          item.id,
+          [
+            '## 接上你的 Chrome',
+            '只呼叫一次 flowpilot_shared_browser 的 browser_tabs（列出分頁），讓 Chrome 跳出頁面讓我選分頁。',
+            '接上後只回一句「接上了」，不要截圖、不要看頁面、不要做任何別的事，等我接著說要看什麼。',
+          ].join('\n'),
+          [],
+        )
+        .catch((err) => setError(errorText(err)));
+    };
+    window.addEventListener('flowpilot:look', on);
+    return () => window.removeEventListener('flowpilot:look', on);
+  }, [item.id]);
+
   async function send() {
     if (!text.trim() && attach.images.length === 0) return;
-    const message = text;
+    // 用「## 看我的畫面」開頭：對話裡顯示成 FlowPilot 的動作標籤，不是一大段你打的話
+    const message = lookMode
+      ? [
+          '## 看我的畫面',
+          '我開著「看我的」模式：我說的話都是在講我在 Chrome 開的畫面。先用共用瀏覽器（flowpilot_shared_browser）看我選給你的分頁（看現在的畫面，不要用之前看過的），只拿回答需要的東西（通常一次畫面快照或截圖就夠），不要多看。',
+          `我想問：${text.trim()}`,
+          '只看不動：不要點擊、填寫或送出；我這句話沒叫你改，就不要改程式碼。',
+        ].join('\n')
+      : text;
     const attached = attach.images;
     await act(async () => {
       await api.send(item.id, message, attached);
@@ -394,6 +439,15 @@ export function ChatPanel({ item }: { item: WorkItem }) {
   const { state: git } = useGitState(item, active && !!item.threadId);
   const delivery = deliveryOf(item, git);
   const canDeliver = active && !!item.folder && !!item.threadId && ['review', 'waiting'].includes(item.status) && !item.pending?.kind?.match(/approval|decision/);
+  // 欠的測試：還有沒勾「我測過了」的，不能完成，只能「先交付，待補測」
+  const owed = pendingChecks(item);
+  const parkStep = {
+    label: `先交付，待補測（${owed} 項）`,
+    title: '改動都提交了、測試還沒測完：讓出資料夾給下一張，欠的測試留著；要修時按「繼續修」',
+    run: () => {
+      if (window.confirm(`先交付 ${item.ticketKey}，讓出 ${item.folder}？\n\n還有 ${owed} 項測試沒勾，會一直留在驗收表上，補測完才能完成。\n可以先發 PR；要修的時候按「繼續修」，會重新拿一個資料夾、接著原本的對話。`)) act(() => api.park(item.id));
+    },
+  };
   let next: { label: string; title?: string; run(): void } | null = null;
   if (canDeliver && delivery?.onBranch && git) {
     if (delivery.changes.length) {
@@ -424,17 +478,20 @@ export function ChatPanel({ item }: { item: WorkItem }) {
         },
       };
     } else if (item.status === 'review') {
-      next = { label: '完成這張單', run: finish };
+      next = owed ? parkStep : { label: '完成這張單', run: finish };
     }
   } else if (item.status === 'review' && item.folder) {
-    next = { label: '完成這張單', run: finish };
+    next = owed ? parkStep : { label: '完成這張單', run: finish };
+  } else if (item.status === 'parked') {
+    // 待補測：補測完就可以完成；要修就「繼續修」（拿資料夾）
+    next = owed ? { label: '繼續修', title: '拿一個空的資料夾、切回這條分支，接著原本的對話', run: () => act(() => api.resume(item.id)) } : { label: '完成這張單', run: finish };
   }
   // 自動測試沒測成或看不出結果時，處理好之後可以再跑一次
   const canRerun = active && !!item.threadId && item.stage === 'manual' && ['review', 'waiting'].includes(item.status) && !item.pending && !!item.autotestResult && item.autotestResult.kind !== 'passed';
   const canRetest = active && !!item.threadId && item.stage === 'manual' && ['review', 'waiting'].includes(item.status) && !item.pending;
   // AI 在等你回話（問問題、被中斷、或有事要你處理）：輸入框加醒目外框
   const awaitingYou = item.status === 'waiting' && (!item.pending || item.pending.kind === 'userInput');
-  const canSend = !!item.threadId && active && !['queued', 'preparing'].includes(item.status) && item.pending?.kind !== 'approval' && item.pending?.kind !== 'decision';
+  const canSend = !!item.threadId && active && !['queued', 'preparing', 'parked'].includes(item.status) && item.pending?.kind !== 'approval' && item.pending?.kind !== 'decision';
 
   return (
     <section className="chat">
@@ -522,7 +579,9 @@ export function ChatPanel({ item }: { item: WorkItem }) {
                   </button>
                 )}
                 {active && item.threadId && item.folder && <button onClick={() => act(() => api.openInVSCode(item.id))}>在 VS Code 查看</button>}
-                {active && item.status !== 'review' && !running && item.status !== 'preparing' && item.folder && <button onClick={finish}>完成這張單</button>}
+                {active && item.status !== 'review' && !running && item.status !== 'preparing' && item.folder && (
+                  <button onClick={finish} disabled={!!owed} title={owed ? `還有 ${owed} 項測試沒勾，補測完才能完成` : undefined}>完成這張單</button>
+                )}
                 <button
                   className="danger"
                   disabled={busy}
@@ -607,6 +666,12 @@ export function ChatPanel({ item }: { item: WorkItem }) {
       {canSend && (
         <div className={`composer ${awaitingYou ? 'attention' : ''} ${attach.dragging ? 'dragging' : ''}`} {...attach.bind}>
           {attach.view}
+          {lookMode && (
+            <div className="look-chip">
+              <span className="fp-tag">FlowPilot</span> 看我的模式開著：你說的話 AI 都會先看你在 Chrome 選的畫面再回答
+              <button className="link" title="關掉看我的模式" onClick={() => setLookMode(false)}>×</button>
+            </div>
+          )}
           <textarea
             ref={input}
             rows={3}

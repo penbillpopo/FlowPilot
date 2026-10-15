@@ -1,5 +1,5 @@
 // 驗收表的共用判斷（主程式和畫面都會用到）
-import type { AcceptanceItem } from './types';
+import type { AcceptanceItem, TestReport } from './types';
 
 /** 修改時附在你的訊息最後、請 AI 一併更新驗收表的說明從這裡開始（對話紀錄裡不顯示） */
 export const ACCEPTANCE_NOTE = '［FlowPilot 附註］';
@@ -7,6 +7,12 @@ export const ACCEPTANCE_NOTE = '［FlowPilot 附註］';
 /** 驗收表裡要你親自看的條目：AI 說要你測的，加上沒通過、沒測的 */
 export function needsYou(a: AcceptanceItem): boolean {
   return a.needYou || a.result !== '通過';
+}
+
+/** 還欠幾項測試：要你測、還沒勾「我測過了」的，加上沒勾的其他手動項目 */
+export function pendingTests(report: TestReport | null): number {
+  if (!report) return 0;
+  return report.acceptance.filter((a) => needsYou(a) && !a.checked).length + report.manual.filter((m) => !m.done).length;
 }
 
 /**

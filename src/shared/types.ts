@@ -230,6 +230,7 @@ export type WorkStatus =
   | 'failed' // 失敗
   | 'stopped' // 你停止了
   | 'removed' // 你從看板移除了（不再顯示）
+  | 'parked' // 先交付、待補測：提交推送過了，還有測試沒勾；讓出資料夾，要修時按「繼續修」
   | 'committed'; // 你審查後提交了，讓出資料夾
 
 /**
@@ -576,6 +577,8 @@ export interface FlowPilotApi {
   send(itemId: number, text: string, images: string[]): Promise<void>;
   /** 存一張貼上的截圖，回傳本機路徑 */
   saveImage(bytes: ArrayBuffer, extension: string): Promise<string>;
+  /** 截圖（跟 ⌘⇧4 一樣拖範圍）；取消是 null */
+  captureScreen(): Promise<{ path: string; dataUrl: string } | null>;
   /** 完整的對話紀錄 */
   chatHistory(itemId: number): Promise<ChatEntry[]>;
   onChat(listener: (itemId: number, event: ChatEvent) => void): () => void;
@@ -608,6 +611,10 @@ export interface FlowPilotApi {
   openUrl(url: string): Promise<void>;
   retry(itemId: number): Promise<void>;
   openInVSCode(itemId: number): Promise<void>;
+  /** 先交付、待補測：讓出資料夾，欠的測試留著 */
+  park(itemId: number): Promise<void>;
+  /** 繼續修待補測的單：拿一個空的資料夾、切回分支（資料夾都在用就失敗並說明） */
+  resume(itemId: number): Promise<void>;
   /** 多商戶的單：來源商戶完成後，移植到其他商戶（每個商戶一張新的工作），回傳建立的分支 */
   port(itemId: number): Promise<string[]>;
   /** 開瀏覽器測給我看：AI 先列測試計畫給你確認，再開有頭的瀏覽器測 */
@@ -643,6 +650,8 @@ export interface FlowPilotApi {
     requestAcceptance(itemId: number): Promise<void>;
     /** 這張單從基底分支到現在改到的檔案（含還沒提交的），用來核對驗收表有沒有漏講 */
     changedFiles(itemId: number): Promise<string[]>;
+    /** 驗收表匯出成 CSV，回傳存放位置；取消是 null */
+    exportCsv(itemId: number): Promise<string | null>;
     /** 在你的瀏覽器打開本機網站的某一頁（網站沒開會先啟動） */
     openPage(itemId: number, page: string): Promise<void>;
     /** 關掉瀏覽器測試開出來的瀏覽器（不會關到你自己的 Chrome），回傳關掉幾個 */

@@ -66,6 +66,7 @@ const STATUS: Record<WorkStatus, [string, string]> = {
   failed: ['失敗', '任務失敗'],
   stopped: ['已停止', '已取消'],
   removed: ['已移除', '已拆除'],
+  parked: ['待補測', '待補測'],
   committed: ['已完成', '任務完成'],
 };
 

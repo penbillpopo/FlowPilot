@@ -1,5 +1,5 @@
 // 工作台中間：跟 AI 對話。完整的對話紀錄（思考、指令、改動、工具）、即時更新、輸入框（可貼截圖）。
-import { useEffect, useRef, useState } from 'react';
+import { Fragment, useEffect, useRef, useState } from 'react';
 import type { BranchInfo, ChatEntry, ChatEvent, I18nProgress, WorkItem, WorkStage, WorkStatus } from '../../shared/types';
 import { DiffView } from './DiffView';
 import { commitPrefs, deliveryOf, gitChanged, useGitState } from './delivery';
@@ -405,8 +405,9 @@ export function ChatPanel({ item }: { item: WorkItem }) {
           item.id,
           [
             '## 接上你的 Chrome',
-            '只呼叫一次 flowpilot_shared_browser 的 browser_tabs（列出分頁），讓 Chrome 跳出頁面讓我選分頁。',
+            "在 exec 裡呼叫一次 tools.mcp__flowpilot_shared_browser__browser_tabs({ action: 'list' })（共用瀏覽器的列出分頁），讓 Chrome 跳出頁面讓我選分頁。",
             '接上後只回一句「接上了」，不要截圖、不要看頁面、不要做任何別的事，等我接著說要看什麼。',
+            '只能用 flowpilot_shared_browser，不要用其他瀏覽器或控制電腦的工具代替。工具清單上看不到它是正常的，它在 exec 的 tools 裡；呼叫失敗就照實回「接不上」和錯誤訊息。',
           ].join('\n'),
           [],
         )
@@ -425,6 +426,7 @@ export function ChatPanel({ item }: { item: WorkItem }) {
           '我開著「看我的」模式：我說的話都是在講我在 Chrome 開的畫面。先用共用瀏覽器（flowpilot_shared_browser）看我選給你的分頁（看現在的畫面，不要用之前看過的），只拿回答需要的東西（通常一次畫面快照或截圖就夠），不要多看。',
           `我想問：${text.trim()}`,
           '只看不動：不要點擊、填寫或送出；我這句話沒叫你改，就不要改程式碼。',
+          '只能用 flowpilot_shared_browser 看（在 exec 裡用 tools.mcp__flowpilot_shared_browser__browser_snapshot、browser_take_screenshot 這類名稱呼叫），不要用其他瀏覽器或控制電腦的工具代替；呼叫失敗就照實說接不上和錯誤訊息。',
         ].join('\n')
       : text;
     const attached = attach.images;
@@ -438,6 +440,8 @@ export function ChatPanel({ item }: { item: WorkItem }) {
 
 
   const running = item.status === 'running';
+  /** 多語系進度排在哪一則訊息後面：開始時間之前的最後一則（-1 是排在最前面） */
+  const i18nAt = item.i18n ? entries.findLastIndex((e) => (e.at ?? 0) <= item.i18n!.at) : -1;
 
   async function finish() {
     // 還有提交沒推送就先提醒（照平常的流程，推送後才算完成）
@@ -644,11 +648,14 @@ export function ChatPanel({ item }: { item: WorkItem }) {
       >
         {loading && <p className="muted small">讀取對話紀錄中…</p>}
         {!item.threadId && <p className="muted">{item.activity || '還沒開始跟 AI 對話。'}</p>}
-        {entries.map((entry) => (
-          <Entry key={entry.id} entry={entry} />
+        {/* 多語系進度像一則訊息：排在開始的時間點，之後的訊息排在它下面，跟著一起捲走 */}
+        {item.i18n && i18nAt < 0 && <I18nBar id={item.id} progress={item.i18n} />}
+        {entries.map((entry, index) => (
+          <Fragment key={entry.id}>
+            <Entry entry={entry} />
+            {item.i18n && index === i18nAt && <I18nBar id={item.id} progress={item.i18n} />}
+          </Fragment>
         ))}
-        {/* 多語系進度放在對話最後，跟訊息一起捲動 */}
-        {item.i18n && <I18nBar id={item.id} progress={item.i18n} />}
         {running && <div className="muted small typing">AI 工作中…</div>}
 
         {item.pending?.kind === 'approval' && (

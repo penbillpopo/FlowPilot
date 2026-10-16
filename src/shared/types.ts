@@ -386,6 +386,8 @@ export interface FolderState {
 /** 改多語系的進度：AI 改程式碼 → 停下來（還沒做完）→ FlowPilot 翻譯 → 存到桌面（或失敗） */
 export interface I18nProgress {
   phase: 'working' | 'paused' | 'translating' | 'saved' | 'failed';
+  /** 開始的時間（毫秒）：對話裡排在這個時間點，像一則訊息，之後的訊息排在它下面 */
+  at: number;
   /** 已記下的 key 數 */
   count: number;
   /** 翻譯中：第幾批 / 共幾批 */

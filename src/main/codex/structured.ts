@@ -1,6 +1,7 @@
 // 請 Codex 依固定格式（JSON Schema）回答：可以是不留紀錄的臨時對話，也可以保留對話之後接著問。
 import type { SkillInfo } from '../../shared/types';
 import type { CodexRpc, RpcMessage } from './rpc';
+import { userBrowserToolsOff } from './user-tools';
 
 export interface StructuredRequest {
   prompt: string;
@@ -39,7 +40,7 @@ export async function runStructured<T>(rpc: CodexRpc, request: StructuredRequest
       approvalPolicy: 'on-request',
       sandbox: 'read-only',
       developerInstructions: request.developerInstructions ?? null,
-      config: { model_reasoning_effort: request.effort ?? 'low', features: { computer_use: false, browser_use: false, browser_use_external: false }, skills, ...request.config },
+      config: { model_reasoning_effort: request.effort ?? 'low', features: { computer_use: false, browser_use: false, browser_use_external: false }, skills, ...request.config, mcp_servers: { ...userBrowserToolsOff(), ...(request.config?.mcp_servers as object | undefined) } },
     });
     threadId = thread.id;
   }

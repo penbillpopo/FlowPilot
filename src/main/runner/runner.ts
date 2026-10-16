@@ -1,8 +1,7 @@
 // 執行器：把確認好的計畫變成工作項目，分配資料夾、建立並切換分支、啟動 Codex 執行技能，
 // 並追蹤每段對話的進度、提問與同意請求。
 import { execFile } from 'node:child_process';
-import { existsSync, mkdirSync, readFileSync, renameSync, rmSync, writeFileSync } from 'node:fs';
-import { homedir } from 'node:os';
+import { existsSync, mkdirSync, readFileSync, renameSync, rmSync, statSync, writeFileSync } from 'node:fs';
 import { basename, dirname, join } from 'node:path';
 import type { BoardState, BranchInfo, ChatEvent, Env, PortSource, RemoveResult, Review, TestReport, TestResult, PendingRequest, SkillInfo, TestState, TicketPlan, WorkStage, WorkStatus, I18nProgress } from '../../shared/types';
 import { toEntry } from '../chat';
@@ -11,6 +10,7 @@ import { reviewBrief } from '../planner/review';
 import { configFile, resolveAccount, writeAccountFile } from '../testaccounts';
 import type { CodexRpc, RpcMessage } from '../codex/rpc';
 import { askStructured, listSkills, runStructured } from '../codex/structured';
+import { userBrowserToolsOff } from '../codex/user-tools';
 import {
   aheadBehind,
   commitsSinceBase,
@@ -105,14 +105,10 @@ export function threadConfig(dataDir: string, writeGuard: string, itemId: number
     args: ['-y', '@playwright/mcp@latest', ...extra, '--isolated', '--caps', 'devtools', '--output-dir', outputDir, '--init-page', writeGuard],
     env: { FLOWPILOT_REQUEST_LOG: requestLogFile(dataDir, itemId), FLOWPILOT_API_HOSTS: hosts.join(',') },
   });
-  let hasOwnPlaywright = false;
-  try {
-    hasOwnPlaywright = /^\[mcp_servers\.playwright\]/m.test(readFileSync(join(homedir(), '.codex/config.toml'), 'utf8'));
-  } catch {}
   return {
     features: { computer_use: false, browser_use: false, browser_use_external: false },
     mcp_servers: {
-      ...(hasOwnPlaywright ? { playwright: { enabled: false } } : {}),
+      ...userBrowserToolsOff(),
       [HEADLESS_BROWSER]: browser(['--headless']),
       [HEADED_BROWSER]: browser(['--browser', 'chrome']),
       // 你和 AI 共用的瀏覽器：你平常用的 Chrome（要裝 Playwright 官方的擴充功能），第一次接上時你選要給 AI 的分頁。
@@ -129,9 +125,17 @@ export function threadConfig(dataDir: string, writeGuard: string, itemId: number
 const FIGMA_LINE =
   '- 看 Figma 設計稿時：先用 get_metadata 看結構，找出要做的那一塊的節點，只對那幾個節點用 get_design_context 或 get_screenshot；不要整頁抓 get_design_context（資料很大，會拖慢後面每一步）。同一個節點看過就記下重點，不要重複抓。';
 
+/**
+ * 新版 Codex 的 AI 是在 exec（執行 JavaScript）裡用 tools.mcp__伺服器__工具 呼叫其他工具，工具清單上看不到伺服器名稱。
+ * 實際發生過：說明只寫「flowpilot_shared_browser 這個工具」，AI 在清單上找不到就回「沒有這個工具」（工具其實在）。
+ */
+export function toolCall(server: string, tool = 'browser_navigate'): string {
+  return `tools.mcp__${server}__${tool}`;
+}
+
 /** 給開發、修改時的 AI：怎麼用你和它共用的瀏覽器 */
 const SHARED_BROWSER_LINE =
-  `- 我們共用一個瀏覽器（${SHARED_BROWSER} 這個工具，接到我平常用的 Chrome；第一次用時 Chrome 會跳出頁面讓我選要給你的分頁）：我說「看一下我開的畫面」之類的時候，用它看我選的分頁（截圖、頁面結構、主控台、請求），不要另外開測試瀏覽器去看。` +
+  `- 我們共用一個瀏覽器（${SHARED_BROWSER} 這個工具，在 exec 裡用 ${toolCall(SHARED_BROWSER, 'browser_tabs')}、${toolCall(SHARED_BROWSER, 'browser_snapshot')} 這類名稱呼叫；接到我平常用的 Chrome，第一次用時 Chrome 會跳出頁面讓我選要給你的分頁）：我說「看一下我開的畫面」之類的時候，用它看我選的分頁（截圖、頁面結構、主控台、請求），不要另外開測試瀏覽器去看。` +
   '可以幫我點、幫我填，但不要按會存檔、送出、刪除的按鈕：這個瀏覽器沒有寫入防護，資料會真的寫進 SIT／UAT，真的需要就先問我。瀏覽器測試不要用它，照測試的安排用測試瀏覽器。';
 
 /** 給開發、修改時的 AI：我說「改多語系」時怎麼做（翻譯和 Excel 由 FlowPilot 做，AI 只管改程式碼、記下 key 和英文） */
@@ -325,9 +329,13 @@ export class Runner {
   private i18nProgress(item: StoredWorkItem): I18nProgress | null {
     if (!['running', 'waiting', 'review'].includes(item.status) && !this.i18nRuns.has(item.id)) return null;
     const run = this.i18nRuns.get(item.id);
-    const count = readWorkFile(i18nWorkFile(this.deps.dataDir, item.id)).length;
+    const workFile = i18nWorkFile(this.deps.dataDir, item.id);
+    const count = readWorkFile(workFile).length;
     if (run?.phase === 'translating') return run;
-    if (count > 0) return { phase: this.turns.get(item.threadId ?? '') || item.status === 'running' ? 'working' : 'paused', count };
+    if (count > 0) {
+      const at = statSync(workFile).birthtimeMs; // 從 AI 記下第一條開始算
+      return { phase: this.turns.get(item.threadId ?? '') || item.status === 'running' ? 'working' : 'paused', count, at };
+    }
     return run ?? null;
   }
 
@@ -814,7 +822,7 @@ export class Runner {
         ? [
             `請使用 $${rule.testSkill} 開瀏覽器重新測試給我看（我手動測過，也可能請你改過了）。以下是 FlowPilot 的安排，跟技能預設規則不同的地方以這裡為準：`,
             '',
-            `- 這次是有頭模式：只能用 ${HEADED_BROWSER} 這個瀏覽器工具（會開出視窗讓我看）；不要用 ${HEADLESS_BROWSER}、${SHARED_BROWSER}（共用瀏覽器沒有寫入防護），也不要另外寫 Playwright 腳本開瀏覽器。`,
+            `- 這次是有頭模式：只能用 ${HEADED_BROWSER} 這個瀏覽器工具（在 exec 裡用 ${toolCall(HEADED_BROWSER)} 這類名稱呼叫，會開出視窗讓我看）；不要用 ${HEADLESS_BROWSER}、${SHARED_BROWSER}（共用瀏覽器沒有寫入防護），也不要另外寫 Playwright 腳本開瀏覽器。`,
             '- 先列出測試計畫（要測的頁面、操作、預期的 API），等我確認後才開始。重點放在我在這段對話裡要求修改的部分，再加上這張單的主要流程。',
             '- 新增、儲存這類操作可以直接做，不用每一步問我：寫入一律會被擋下（見下面），資料不會寫進後端。',
             ...common,
@@ -822,7 +830,7 @@ export class Runner {
         : [
             `請使用 $${rule.testSkill} 測試剛才完成的開發（這是開發完 FlowPilot 自動安排的測試，只是先幫我抓明顯的錯，我之後一定會自己手動測）。以下是 FlowPilot 的安排，跟技能預設規則不同的地方以這裡為準：`,
             '',
-            `- 我已經授權這次用無頭模式：只能用 ${HEADLESS_BROWSER} 這個瀏覽器工具（不會開出視窗）；不要用 ${HEADED_BROWSER}、${SHARED_BROWSER}（共用瀏覽器沒有寫入防護），也不要另外寫 Playwright 腳本開有頭的瀏覽器。`,
+            `- 我已經授權這次用無頭模式：只能用 ${HEADLESS_BROWSER} 這個瀏覽器工具（在 exec 裡用 ${toolCall(HEADLESS_BROWSER)} 這類名稱呼叫，不會開出視窗）；不要用 ${HEADED_BROWSER}、${SHARED_BROWSER}（共用瀏覽器沒有寫入防護），也不要另外寫 Playwright 腳本開有頭的瀏覽器。`,
             '- 不用先給我確認測試計畫：列出測試案例後直接開始測，中途也不要停下來問我。',
             '- 新增、編輯、儲存的流程也要測（這通常是最容易出錯的地方）：寫入一律會被擋下（見下面），不用跳過，也不用問我。',
             ...common,
@@ -1299,21 +1307,22 @@ export class Runner {
     const count = entries.length;
     const cacheFile = translationCacheFile(this.deps.dataDir);
     const todo = fillFromCache(entries, cacheFile);
-    this.i18nRuns.set(item.id, { phase: 'translating', count, batches: { done: 0, total: Math.ceil(todo.length / 10) } });
+    const at = Date.now();
+    this.i18nRuns.set(item.id, { phase: 'translating', count, at, batches: { done: 0, total: Math.ceil(todo.length / 10) } });
     this.deps.onChange();
     try {
       const missing = await translateAll(
         todo,
         (prompt) => askStructured(this.deps.codex, { cwd, prompt, schema: TRANSLATION_SCHEMA, timeoutMs: 600_000 }),
         (done, total) => {
-          this.i18nRuns.set(item.id, { phase: 'translating', count, batches: { done, total } });
+          this.i18nRuns.set(item.id, { phase: 'translating', count, at, batches: { done, total } });
           show(`多語系翻譯中（${done}/${total} 批）`);
         },
       );
       saveToCache(todo, cacheFile);
       const { path } = await writeI18nSheet(entries, item.merchant!);
       const lack = missing.length ? `，其中 ${missing.length} 條沒翻好（Excel 裡那幾格是空的：${missing.slice(0, 5).join('、')}${missing.length > 5 ? '…' : ''}）` : '';
-      this.i18nRuns.set(item.id, { phase: 'saved', count, file: basename(path), path, note: lack.replace(/^，/, '') || undefined });
+      this.i18nRuns.set(item.id, { phase: 'saved', count, at, file: basename(path), path, note: lack.replace(/^，/, '') || undefined });
       show(`多語系 ${entries.length} 條已存到桌面 ${basename(path)}${lack}`);
       this.deps.log(`${item.ticketKey}：多語系 ${entries.length} 條寫進 ${path}${lack}`);
       this.notify(item.id, `${item.ticketKey} 多語系檔好了`, `${entries.length} 條，存到桌面 ${basename(path)}`);
@@ -1322,7 +1331,7 @@ export class Runner {
       try {
         renameSync(taken, i18nWorkFile(this.deps.dataDir, item.id));
       } catch {}
-      this.i18nRuns.set(item.id, { phase: 'failed', count, note: (error as Error).message });
+      this.i18nRuns.set(item.id, { phase: 'failed', count, at, note: (error as Error).message });
       show(`多語系翻譯失敗：${(error as Error).message}`);
     }
   }

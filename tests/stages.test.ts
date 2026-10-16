@@ -260,9 +260,9 @@ describe('流程階段', () => {
     const work = i18nWorkFile(join(t.root, 'data'), t.id);
     mkdirSync(join(work, '..'), { recursive: true });
     writeFileSync(work, '{"key":"seo_a","en-us":"A"}\n{"key":"seo_b","en-us":"B"}\n');
-    expect(progress()).toEqual({ phase: 'working', count: 2 });
+    expect(progress()).toMatchObject({ phase: 'working', count: 2, at: expect.any(Number) });
     await t.complete('Casino 要不要改？請確認。\n多語系進度：未完成');
-    expect(progress()).toEqual({ phase: 'paused', count: 2 });
+    expect(progress()).toMatchObject({ phase: 'paused', count: 2 });
   });
 
   it('開瀏覽器測給我看：有頭、先確認測試計畫；帳號照帳號檔裡這個環境的', async () => {

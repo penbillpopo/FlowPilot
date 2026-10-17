@@ -1,4 +1,5 @@
 // 聊天紀錄：把 Codex 對話裡的各種項目（你的訊息、AI 回覆、思考、指令、檔案改動、工具…）整理成畫面要顯示的格式。
+import { t } from '../shared/i18n';
 import { ACCEPTANCE_NOTE } from '../shared/acceptance';
 import type { ChatEntry } from '../shared/types';
 import type { CodexRpc } from './codex/rpc';
@@ -7,7 +8,7 @@ const MAX_OUTPUT = 20_000;
 
 function clip(text: string | null | undefined): string {
   if (!text) return '';
-  return text.length > MAX_OUTPUT ? `…（前面省略）\n${text.slice(-MAX_OUTPUT)}` : text;
+  return text.length > MAX_OUTPUT ? `${t('…（前面省略）')}\n${text.slice(-MAX_OUTPUT)}` : text;
 }
 
 /** FlowPilot 送出的第一則訊息裡有技能內容，畫面上只顯示我們寫的那段文字 */
@@ -17,7 +18,7 @@ function userText(content: any[]): { text: string; images: string[] } {
   for (const part of content ?? []) {
     // 修改時 FlowPilot 附在後面的說明不顯示，只留你說的話
     if (part.type === 'text') texts.push(String(part.text ?? '').split(ACCEPTANCE_NOTE)[0].trimEnd());
-    else if (part.type === 'skill') texts.push(`［技能：${part.name}］`);
+    else if (part.type === 'skill') texts.push(t('［技能：{name}］', { name: part.name }));
     else if (part.type === 'localImage') images.push(part.path);
     else if (part.type === 'image' && part.url) images.push(part.url);
     else if (part.type === 'mention') texts.push(`@${part.name}`);
@@ -26,16 +27,17 @@ function userText(content: any[]): { text: string; images: string[] } {
 }
 
 function toolText(item: any): string {
-  const name = item.type === 'mcpToolCall' ? `${item.server}：${item.tool}` : `${item.namespace ? `${item.namespace}：` : ''}${item.tool}`;
+  const colon = t('：'); // 英文介面用半形冒號
+  const name = item.type === 'mcpToolCall' ? `${item.server}${colon}${item.tool}` : `${item.namespace ? `${item.namespace}${colon}` : ''}${item.tool}`;
   return name;
 }
 
 function toolOutput(item: any): string {
-  if (item.error?.message) return `錯誤：${item.error.message}`;
+  if (item.error?.message) return t('錯誤：{message}', { message: item.error.message });
   const parts = item.result?.content ?? item.contentItems ?? [];
   return clip(
     parts
-      .map((c: any) => (typeof c?.text === 'string' ? c.text : c?.type === 'image' ? '［圖片］' : ''))
+      .map((c: any) => (typeof c?.text === 'string' ? c.text : c?.type === 'image' ? t('［圖片］') : ''))
       .filter(Boolean)
       .join('\n'),
   );
@@ -82,11 +84,11 @@ export function toEntry(item: any, at: number | null = null): ChatEntry | null {
     case 'webSearch':
       return { id: item.id, kind: 'search', text: item.query ?? '', at };
     case 'enteredReviewMode':
-      return { id: item.id, kind: 'notice', text: '開始程式碼審查', at };
+      return { id: item.id, kind: 'notice', text: t('開始程式碼審查'), at };
     case 'exitedReviewMode':
-      return { id: item.id, kind: 'notice', text: '程式碼審查結束', at };
+      return { id: item.id, kind: 'notice', text: t('程式碼審查結束'), at };
     case 'contextCompaction':
-      return { id: item.id, kind: 'notice', text: '對話太長，AI 已經整理壓縮了前面的內容', at };
+      return { id: item.id, kind: 'notice', text: t('對話太長，AI 已經整理壓縮了前面的內容'), at };
     default:
       return null;
   }

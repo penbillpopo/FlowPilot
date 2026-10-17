@@ -4,6 +4,7 @@
 // 標記下面接著的程式碼行算同一組，碰到空行或下一個標記就結束。
 // 另外 PlatformWeb 有「// uat使用sit的翻译，调试需要解除此注释」：UAT 用 SIT 的多語系，
 // 這個標記下面的 environment.xxx = … 行切到 UAT 時打開、切回 SIT 時註解掉。
+import { t } from '../shared/i18n';
 import { existsSync, readFileSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import type { Env } from '../shared/types';
@@ -79,7 +80,7 @@ const comment = (line: string) => (isCommented(line) ? line : line.replace(/^(\s
 export function switchEnvironment(text: string, target: Env): string {
   const lines = text.split('\n');
   const b = blocks(lines);
-  if (!b) throw new Error('environment.ts 裡找不到 SIT／UAT 的標記');
+  if (!b) throw new Error(t('environment.ts 裡找不到 SIT／UAT 的標記'));
   const other: Env = target === 'sit' ? 'uat' : 'sit';
   for (const i of b[target]) lines[i] = uncomment(lines[i]);
   for (const i of b[other]) lines[i] = comment(lines[i]);

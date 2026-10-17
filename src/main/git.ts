@@ -1,4 +1,5 @@
 // git 操作：只用 execFile 帶參數陣列，不經過 shell，分支名稱有特殊字元也不會被拆開。
+import { t } from '../shared/i18n';
 import { execFile } from 'node:child_process';
 import type { PlanBranch } from '../shared/types';
 import type { FolderSetting } from './settings';
@@ -38,7 +39,7 @@ export function fetchOrigin(cwd: string): Promise<void> {
         await new Promise((r) => setTimeout(r, 1500 * attempt));
         continue;
       }
-      throw new Error(`抓遠端失敗（${cwd}）：${result.stderr.trim().split('\n').pop()}`);
+      throw new Error(t('抓遠端失敗（{cwd}）：{error}', { cwd, error: result.stderr.trim().split('\n').pop() ?? '' }));
     }
   })().finally(() => fetching.delete(cwd));
   fetching.set(cwd, task);
@@ -58,7 +59,7 @@ export async function checkExisting(branches: PlanBranch[], folders: FolderSetti
   const projects = [...new Set(branches.map((b) => b.project))];
   const projectFolders = new Map(projects.map((p) => [p, folders.filter((f) => f.project === p)]));
   for (const [project, list] of projectFolders) {
-    if (list.length === 0) throw new Error(`設定檔裡沒有「${project}」的資料夾`);
+    if (list.length === 0) throw new Error(t('設定檔裡沒有「{project}」的資料夾', { project }));
   }
   if (options.fetch) await Promise.all([...projectFolders.values()].flat().map((f) => fetchOrigin(f.path)));
 
@@ -84,7 +85,7 @@ export async function currentBranch(cwd: string): Promise<string> {
 /** 未提交的修改（包含未追蹤的檔案）；空陣列代表乾淨 */
 export async function dirtyFiles(cwd: string): Promise<string[]> {
   const result = await runGit(cwd, ['status', '--porcelain']);
-  if (result.code !== 0) throw new Error(`讀不到 git 狀態（${cwd}）：${result.stderr.trim()}`);
+  if (result.code !== 0) throw new Error(t('讀不到 git 狀態（{cwd}）：{error}', { cwd, error: result.stderr.trim() }));
   return result.stdout.split('\n').filter(Boolean).map((line) => line.slice(3));
 }
 
@@ -99,12 +100,12 @@ export async function remoteBranchExists(cwd: string, branch: string): Promise<b
 /** 從遠端最新的基底分支建立新分支（不切換） */
 export async function createBranch(cwd: string, branch: string, baseBranch: string): Promise<void> {
   const result = await runGit(cwd, ['branch', '--no-track', branch, `origin/${baseBranch}`]);
-  if (result.code !== 0) throw new Error(`建立分支 ${branch} 失敗：${result.stderr.trim()}`);
+  if (result.code !== 0) throw new Error(t('建立分支 {branch} 失敗：{error}', { branch, error: result.stderr.trim() }));
 }
 
 export async function switchBranch(cwd: string, branch: string): Promise<void> {
   const result = await runGit(cwd, ['switch', branch]);
-  if (result.code !== 0) throw new Error(`切換到 ${branch} 失敗：${result.stderr.trim()}`);
+  if (result.code !== 0) throw new Error(t('切換到 {branch} 失敗：{error}', { branch, error: result.stderr.trim() }));
 }
 
 /** 某個檔案在目前分支的內容雜湊（用來判斷 package-lock.json 有沒有變） */
@@ -115,7 +116,7 @@ export async function fileHash(cwd: string, path: string): Promise<string> {
 /** 本機分支跟遠端分支比：本機多幾個提交、遠端多幾個提交 */
 export async function aheadBehind(cwd: string, branch: string): Promise<{ ahead: number; behind: number }> {
   const result = await runGit(cwd, ['rev-list', '--left-right', '--count', `refs/heads/${branch}...refs/remotes/origin/${branch}`]);
-  if (result.code !== 0) throw new Error(`比對 ${branch} 與遠端失敗：${result.stderr.trim()}`);
+  if (result.code !== 0) throw new Error(t('比對 {branch} 與遠端失敗：{error}', { branch, error: result.stderr.trim() }));
   const [ahead, behind] = result.stdout.trim().split(/\s+/).map(Number);
   return { ahead, behind };
 }
@@ -129,11 +130,11 @@ export async function commitsSinceBase(cwd: string, baseBranch: string): Promise
 /** 只在遠端有的分支：建立追蹤遠端的本機分支並切換 */
 export async function switchToRemoteBranch(cwd: string, branch: string): Promise<void> {
   const result = await runGit(cwd, ['switch', '-c', branch, '--track', `origin/${branch}`]);
-  if (result.code !== 0) throw new Error(`從遠端切換到 ${branch} 失敗：${result.stderr.trim()}`);
+  if (result.code !== 0) throw new Error(t('從遠端切換到 {branch} 失敗：{error}', { branch, error: result.stderr.trim() }));
 }
 
 /** 本機落後遠端、沒有自己的新提交時，快轉到遠端最新 */
 export async function fastForward(cwd: string, branch: string): Promise<void> {
   const result = await runGit(cwd, ['merge', '--ff-only', `origin/${branch}`]);
-  if (result.code !== 0) throw new Error(`快轉 ${branch} 到遠端最新失敗：${result.stderr.trim()}`);
+  if (result.code !== 0) throw new Error(t('快轉 {branch} 到遠端最新失敗：{error}', { branch, error: result.stderr.trim() }));
 }

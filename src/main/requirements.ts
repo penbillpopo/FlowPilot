@@ -1,5 +1,6 @@
 // 需求變更：拿 Jira 上最新的內容跟上次確認過的快照比，找出需求相關的變化。
 // 只比內容（標題、內文、留言、附件），狀態、指派人這類變動不算。比對完全不用 AI。
+import { t } from '../shared/i18n';
 import type { RequirementChange, TicketSnapshot } from '../shared/types';
 
 /** 逐行差異（最長共同子序列）；只回傳新增與刪除的行 */
@@ -34,23 +35,23 @@ function diffOne(before: TicketSnapshot, after: TicketSnapshot, label: string): 
   const changes: RequirementChange[] = [];
   const from = after.key;
   if (before.summary !== after.summary) {
-    changes.push({ kind: 'summary', from, title: `${label}標題被修改`, lines: [{ type: 'del', text: before.summary }, { type: 'add', text: after.summary }] });
+    changes.push({ kind: 'summary', from, title: t('{label}標題被修改', { label }), lines: [{ type: 'del', text: before.summary }, { type: 'add', text: after.summary }] });
   }
   if (before.description !== after.description) {
     const lines = lineDiff(before.description, after.description);
-    if (lines.length) changes.push({ kind: 'description', from, title: `${label}內文被修改`, lines });
+    if (lines.length) changes.push({ kind: 'description', from, title: t('{label}內文被修改', { label }), lines });
   }
   const old = new Map(before.comments.map((c) => [c.id, c]));
   for (const comment of after.comments) {
     const previous = old.get(comment.id);
-    if (!previous) changes.push({ kind: 'newComment', from, title: `${comment.author || '有人'}在${label}新增了一則留言`, text: comment.text });
+    if (!previous) changes.push({ kind: 'newComment', from, title: t('{author}在{label}新增了一則留言', { author: comment.author || t('有人'), label }), text: comment.text });
     else if (previous.text !== comment.text) {
-      changes.push({ kind: 'editedComment', from, title: `${comment.author || '有人'}修改了${label}的留言`, lines: lineDiff(previous.text, comment.text) });
+      changes.push({ kind: 'editedComment', from, title: t('{author}修改了{label}的留言', { author: comment.author || t('有人'), label }), lines: lineDiff(previous.text, comment.text) });
     }
   }
   const oldFiles = new Set(before.attachments);
   const added = after.attachments.filter((f) => !oldFiles.has(f));
-  if (added.length) changes.push({ kind: 'newAttachment', from, title: `${label}新增了 ${added.length} 個附件`, text: added.join('、') });
+  if (added.length) changes.push({ kind: 'newAttachment', from, title: t('{label}新增了 {count} 個附件', { label, count: added.length }), text: added.join('、') });
   return changes;
 }
 
@@ -63,7 +64,7 @@ export function diffSnapshots(before: TicketSnapshot[] | undefined, after: Ticke
   const changes: RequirementChange[] = [];
   for (const snapshot of after) {
     const previous = before.find((s) => s.key === snapshot.key);
-    if (previous) changes.push(...diffOne(previous, snapshot, snapshot.key === subKey ? '子任務' : '主單'));
+    if (previous) changes.push(...diffOne(previous, snapshot, snapshot.key === subKey ? t('子任務') : t('主單')));
   }
   return changes;
 }

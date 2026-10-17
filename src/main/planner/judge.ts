@@ -1,4 +1,5 @@
 // AI 判斷：讀子任務與主單內容，判斷要做在哪個專案、哪些商戶，並擬合併請求標題。
+import { zhOnly } from '../../shared/i18n';
 import type { JiraTicket, Judgement } from '../../shared/types';
 import type { IssueContext } from '../jira';
 import type { Settings } from '../settings';
@@ -39,12 +40,12 @@ export function judgementSchema(settings: Settings) {
               description: '只有有商戶的專案才填；判斷不出來就給空陣列',
               items: { type: 'integer', enum: allMerchants },
             },
-            reason: { type: 'string', description: '用繁體中文說明為什麼是這個專案：單上哪段內容指向這裡（例如提到的頁面、後台選單、前台功能），以及商戶的判斷依據' },
+            reason: { type: 'string', description: zhOnly('用繁體中文說明為什麼是這個專案：單上哪段內容指向這裡（例如提到的頁面、後台選單、前台功能），以及商戶的判斷依據') },
           },
         },
       },
       prTitle: { type: 'string', description: '格式：feat(單號) 簡短英文描述' },
-      reason: { type: 'string', description: '用繁體中文說明整體判斷與不確定的地方' },
+      reason: { type: 'string', description: zhOnly('用繁體中文說明整體判斷與不確定的地方') },
     },
   };
 }

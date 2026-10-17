@@ -550,6 +550,8 @@ export interface FlowPilotApi {
   openExternal(url: string): Promise<void>;
   /** 在 Finder 顯示這張單產生的多語系檔 */
   revealI18n(id: number): Promise<void>;
+  /** 介面語言（後端的狀態、錯誤、通知也跟著換） */
+  setLang(lang: 'zh' | 'en'): Promise<void>;
   openSettingsFile(): Promise<void>;
   /** 計畫表需要的設定（專案、商戶） */
   planOptions(): Promise<PlanOptions>;

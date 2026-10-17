@@ -1,5 +1,6 @@
 // 資料夾終端機：每個資料夾一個互動式 shell（跟 VS Code 下方的終端機一樣，可以輸入任何指令）。
 // 「在本機啟動」會在這裡輸入啟動指令；從輸出抓到本機網址時通知畫面，顯示「打開網頁」。
+import { t } from '../shared/i18n';
 import * as pty from 'node-pty';
 
 const MAX_BUFFER = 300_000;
@@ -80,7 +81,7 @@ export class FolderTerminals {
   /** 在終端機裡輸入並執行一行指令（例如啟動本機網站） */
   run(folder: string, command: string) {
     const session = this.sessions.get(folder);
-    if (!session) throw new Error('終端機還沒打開');
+    if (!session) throw new Error(t('終端機還沒打開'));
     session.url = null;
     this.send('folderTerm:url', folder, null);
     session.pty.write(`${command}\r`);
@@ -98,10 +99,10 @@ export class FolderTerminals {
     const end = Date.now() + timeoutMs;
     while (Date.now() < end) {
       await new Promise((r) => setTimeout(r, 3000));
-      if (!this.sessions.has(folder)) throw new Error('終端機結束了，網站沒有啟動成功');
+      if (!this.sessions.has(folder)) throw new Error(t('終端機結束了，網站沒有啟動成功'));
       if (await reachable(url)) return url;
     }
-    throw new Error(`等了 ${Math.round(timeoutMs / 60_000)} 分鐘，${url} 還是連不上，請看右邊的終端機`);
+    throw new Error(t('等了 {minutes} 分鐘，{url} 還是連不上，請看右邊的終端機', { minutes: Math.round(timeoutMs / 60_000), url }));
   }
 
   /** 等於按 Ctrl+C，停止正在跑的指令 */

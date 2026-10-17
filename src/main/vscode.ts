@@ -1,5 +1,6 @@
 // VS Code：一個工作區包含四個固定資料夾；每個資料夾一個終端機分頁，接上那張單的 Codex 對話。
 // 開分頁靠 FlowPilot 輔助外掛（resources/vscode-companion），第一次使用時自動打包安裝。
+import { t } from '../shared/i18n';
 import { execFile } from 'node:child_process';
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync, cpSync } from 'node:fs';
 import { tmpdir } from 'node:os';
@@ -32,7 +33,7 @@ export class VSCode {
 
   private codeCli(): string {
     const found = CODE_CANDIDATES.find((p) => existsSync(p));
-    if (!found) throw new Error('找不到 VS Code 的 code 指令');
+    if (!found) throw new Error(t('找不到 VS Code 的 code 指令'));
     return found;
   }
 
@@ -106,7 +107,7 @@ export class VSCode {
   /** 在 VS Code 開（或換掉）這個資料夾的終端機分頁，接上那張單的 AI 對話 */
   async attach(folders: FolderSetting[], item: { threadId: string; folder: string; ticketKey: string }): Promise<void> {
     const folder = folders.find((f) => f.name === item.folder);
-    if (!folder) throw new Error(`設定檔裡沒有資料夾「${item.folder}」`);
+    if (!folder) throw new Error(t('設定檔裡沒有資料夾「{folder}」', { folder: item.folder }));
     await this.ensureCompanion();
     await this.openWorkspace(folders);
     const query = new URLSearchParams({ thread: item.threadId, cwd: folder.path, folder: folder.name, ticket: item.ticketKey });

@@ -2,6 +2,7 @@
 import { useEffect, useState } from 'react';
 import type { PrOptions, WorkItem } from '../../shared/types';
 import { errorText } from './ChatPanel';
+import { t } from '../../shared/i18n';
 
 const api = window.flowpilot;
 const REVIEWERS_KEY = 'flowpilot.prReviewers';
@@ -23,6 +24,7 @@ function targetFor(target: string, from: number | null, to: number): string {
   return m ? `${m[1]}${to}` : target;
 }
 
+// i18n-keys：顯示時才翻
 const PR_STATUS = { active: '審核中', completed: '已合併', abandoned: '已放棄' } as const;
 
 export function PrPanel({ item }: { item: WorkItem }) {
@@ -67,7 +69,14 @@ export function PrPanel({ item }: { item: WorkItem }) {
     const names = options.reviewers.filter((r) => reviewers.includes(r.id)).map((r) => r.email || r.name);
     const others = options.siblings.filter((x) => also.includes(x.id));
     const lines = [`${options.source} → ${target}`, ...others.map((x) => `${x.branch} → ${targetFor(target, item.merchant, x.merchant)}`)];
-    const ok = window.confirm(`在 Azure 發 ${lines.length} 個 PR？\n\n${title}\n${lines.join('\n')}\n\n審核人：${names.length ? names.join('、') : '（沒有）'}`);
+    const ok = window.confirm(
+      t('在 Azure 發 {count} 個 PR？\n\n{title}\n{lines}\n\n審核人：{reviewers}', {
+        count: lines.length,
+        title,
+        lines: lines.join('\n'),
+        reviewers: names.length ? names.join(t('、')) : t('（沒有）'),
+      }),
+    );
     if (!ok) return;
     setSending(true);
     setError(null);
@@ -89,17 +98,17 @@ export function PrPanel({ item }: { item: WorkItem }) {
   // 發過的 PR：一張單可以發好幾個（例如同一條分支發到 sit、uat、master）
   const sent = item.prs.length > 0 && (
     <div className="panel pr-panel">
-      <strong>已發的 PR（{item.prs.length}）</strong>
+      <strong>{t('已發的 PR（{count}）', { count: item.prs.length })}</strong>
       <ul className="pr-list">
         {item.prs.map((p) => (
           <li key={p.url}>
             <div className="pr-line">
-              <span>發到 <code>{p.target || '（讀取中）'}</code></span>
-              {p.status && <span className={`mark pr-${p.status}`}>{PR_STATUS[p.status]}</span>}
-              <button className="link small" onClick={() => api.openExternal(p.url)}>打開</button>
+              <span>{t('發到 ')}<code>{p.target || t('（讀取中）')}</code></span>
+              {p.status && <span className={`mark pr-${p.status}`}>{t(PR_STATUS[p.status])}</span>}
+              <button className="link small" onClick={() => api.openExternal(p.url)}>{t('打開')}</button>
             </div>
             {p.title && <div className="pr-title" title={p.title}>{p.title}</div>}
-            <div className="muted small">審核人：{p.reviewers ? (p.reviewers.length ? p.reviewers.join('、') : '沒有') : '（讀取中）'}</div>
+            <div className="muted small">{t('審核人：{reviewers}', { reviewers: p.reviewers ? (p.reviewers.length ? p.reviewers.join(t('、')) : t('沒有')) : t('（讀取中）') })}</div>
           </li>
         ))}
       </ul>
@@ -115,13 +124,13 @@ export function PrPanel({ item }: { item: WorkItem }) {
             <ul className="pr-results">
               {results.map((r, i) => (
                 <li key={i} className={r.error && !r.url ? 'bad' : ''}>
-                  {r.merchant !== null ? `m${r.merchant}` : ''} → <code>{r.target}</code>：{r.error ?? '已發'}
-                  {r.url && <button className="link small" onClick={() => api.openExternal(r.url!)}>打開</button>}
+                  {r.merchant !== null ? `m${r.merchant}` : ''} → <code>{r.target}</code>{t('：')}{r.error ?? t('已發')}
+                  {r.url && <button className="link small" onClick={() => api.openExternal(r.url!)}>{t('打開')}</button>}
                 </li>
               ))}
             </ul>
           )}
-          <button className="primary" disabled={loading} onClick={open}>{loading ? '讀取 Azure 中…' : item.prs.length ? '用 Azure 再發一個 PR' : '用 Azure 發 PR'}</button>
+          <button className="primary" disabled={loading} onClick={open}>{loading ? t('讀取 Azure 中…') : item.prs.length ? t('用 Azure 再發一個 PR') : t('用 Azure 發 PR')}</button>
           {error && <div className="error small">{error}</div>}
         </div>
       </>
@@ -136,27 +145,27 @@ export function PrPanel({ item }: { item: WorkItem }) {
     {sent}
     <div className="panel pr-panel">
       <div className="panel-head">
-        <strong>用 Azure 發 PR</strong>
-        <button className="link small" onClick={() => setOptions(null)}>取消</button>
+        <strong>{t('用 Azure 發 PR')}</strong>
+        <button className="link small" onClick={() => setOptions(null)}>{t('取消')}</button>
       </div>
-      {options.notPushed && <div className="error small">遠端還沒有 {options.source}，要先推送才能發 PR。</div>}
+      {options.notPushed && <div className="error small">{t('遠端還沒有 {source}，要先推送才能發 PR。', { source: options.source })}</div>}
       <label className="pr-field">
-        <span className="muted small">PR 名稱</span>
+        <span className="muted small">{t('PR 名稱')}</span>
         <input value={title} onChange={(e) => setTitle(e.target.value)} />
       </label>
       <label className="pr-field">
-        <span className="muted small">目標分支（{options.source} 要合併進去的）</span>
+        <span className="muted small">{t('目標分支（{source} 要合併進去的）', { source: options.source })}</span>
         <select value={target} onChange={(e) => setTarget(e.target.value)}>
-          {!target && <option value="">請選擇</option>}
+          {!target && <option value="">{t('請選擇')}</option>}
           {target && !options.branches.includes(target) && <option value={target}>{target}</option>}
           {options.branches.map((b) => (
-            <option key={b} value={b}>{b}{b === options.target ? '（基底）' : ''}{options.existing.some((p) => p.target === b) ? '（已發過）' : ''}</option>
+            <option key={b} value={b}>{b}{b === options.target ? t('（基底）') : ''}{options.existing.some((p) => p.target === b) ? t('（已發過）') : ''}</option>
           ))}
         </select>
       </label>
       <div className="pr-field">
-        <span className="muted small">審核人（從這個專案最近的 PR 找出來的）</span>
-        {options.reviewers.length === 0 && <p className="muted small">最近的 PR 沒有審核人。</p>}
+        <span className="muted small">{t('審核人（從這個專案最近的 PR 找出來的）')}</span>
+        {options.reviewers.length === 0 && <p className="muted small">{t('最近的 PR 沒有審核人。')}</p>}
         {options.reviewers.map((r) => (
           <label key={r.id} className="pr-reviewer">
             <input
@@ -171,11 +180,11 @@ export function PrPanel({ item }: { item: WorkItem }) {
       </div>
       {options.siblings.length > 0 && (
         <div className="pr-field">
-          <span className="muted small">也幫其他商戶發（名稱、審核人一樣；目標分支換成各自的）</span>
+          <span className="muted small">{t('也幫其他商戶發（名稱、審核人一樣；目標分支換成各自的）')}</span>
           {options.siblings.map((x) => {
             const to = targetFor(target, item.merchant, x.merchant);
             const sent = x.prs.some((p) => p.target === to && p.status !== 'completed' && p.status !== 'abandoned');
-            const why = !x.pushed ? '還沒推送' : sent ? '已經發過' : null;
+            const why = !x.pushed ? t('還沒推送') : sent ? t('已經發過') : null;
             return (
               <label key={x.id} className={`pr-reviewer ${why ? 'disabled' : ''}`} title={why ?? undefined}>
                 <input
@@ -184,25 +193,25 @@ export function PrPanel({ item }: { item: WorkItem }) {
                   checked={also.includes(x.id)}
                   onChange={() => setAlso((prev) => (prev.includes(x.id) ? prev.filter((v) => v !== x.id) : [...prev, x.id]))}
                 />
-                <span>m{x.merchant}：{x.branch} → <code>{to || '—'}</code></span>
-                {why && <span className="muted small">（{why}）</span>}
+                <span>{t('m{merchant}：{branch} → ', { merchant: x.merchant, branch: x.branch })}<code>{to || '—'}</code></span>
+                {why && <span className="muted small">{t('（{why}）', { why })}</span>}
               </label>
             );
           })}
         </div>
       )}
       <label className="pr-field">
-        <span className="muted small">說明（自動帶 Jira 連結和驗收表，可以改）</span>
+        <span className="muted small">{t('說明（自動帶 Jira 連結和驗收表，可以改）')}</span>
         <textarea rows={8} value={description} onChange={(e) => setDescription(e.target.value)} />
       </label>
       {sameTarget && (
         <p className="warn small">
-          {options.source} → {target} 已經有開著的 PR，不能再發一個。
-          <button className="link small" onClick={() => api.openExternal(sameTarget.url)}>打開那個 PR</button>
+          {t('{source} → {target} 已經有開著的 PR，不能再發一個。', { source: options.source, target })}
+          <button className="link small" onClick={() => api.openExternal(sameTarget.url)}>{t('打開那個 PR')}</button>
         </p>
       )}
       <button className="primary" disabled={sending || options.notPushed || !title.trim() || !target || !!sameTarget} onClick={send}>
-        {sending ? '發 PR 中…' : '發 PR'}
+        {sending ? t('發 PR 中…') : t('發 PR')}
       </button>
       {error && <div className="error small">{error}</div>}
     </div>

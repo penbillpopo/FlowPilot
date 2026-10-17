@@ -1,5 +1,6 @@
 // 讀 Confluence 頁面當補充資料（只讀，跟 Jira 用同一組帳號）。
 // 一大張問題表（例如 M10 的 QA 問題清單）不整頁給 AI：照單號標題的 [A#17] 找出第 17 列，只給那一列和它的截圖。
+import { t, zhOnly } from '../shared/i18n';
 import { mkdirSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import type { JiraCredentials } from './jira';
@@ -87,11 +88,11 @@ export async function loadConfluence(
   fetchImpl: typeof fetch = fetch,
 ): Promise<Supplement> {
   const pageId = confluencePageId(url);
-  if (!pageId) throw new Error(`看不出這是哪個 Confluence 頁面：${url}`);
+  if (!pageId) throw new Error(t('看不出這是哪個 Confluence 頁面：{url}', { url }));
   const response = await fetchImpl(`${credentials.baseUrl}/wiki/api/v2/pages/${pageId}?body-format=storage`, {
     headers: { Authorization: auth(credentials), Accept: 'application/json' },
   });
-  if (!response.ok) throw new Error(`讀不到 Confluence 頁面（HTTP ${response.status}）：${url}`);
+  if (!response.ok) throw new Error(t('讀不到 Confluence 頁面（HTTP {status}）：{url}', { status: response.status, url }));
   const page = (await response.json()) as { title?: string; body?: { storage?: { value?: string } } };
   const html = page.body?.storage?.value ?? '';
   const title = page.title ?? pageId;
@@ -118,11 +119,11 @@ export async function loadConfluence(
   }
   if (rows.length) {
     return {
-      label: `Confluence「${title}」第 ${rows.map((r) => r.n).join('、')} 列`,
+      label: zhOnly(`Confluence「${title}」第 ${rows.map((r) => r.n).join('、')} 列`),
       text: rows.map((r) => `【第 ${r.n} 列】\n${r.row.text}`).join('\n\n'),
       images,
     };
   }
   const text = storageToText(html);
-  return { label: `Confluence「${title}」`, text: text.length > 15000 ? `${text.slice(0, 15000)}\n…（後面省略）` : text, images };
+  return { label: zhOnly(`Confluence「${title}」`), text: text.length > 15000 ? `${text.slice(0, 15000)}\n…（後面省略）` : text, images };
 }

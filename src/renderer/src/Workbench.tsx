@@ -4,6 +4,7 @@ import type { BoardState, WorkItem, WorkStatus } from '../../shared/types';
 import { ChatPanel, errorText, STATUS_LABEL } from './ChatPanel';
 import { PortPanel } from './PortPanel';
 import { PrPanel } from './PrPanel';
+import { sideName, t, zhOnly } from '../../shared/i18n';
 import { term } from './skin';
 import { AcceptancePanel, FolderTerminalPanel, GitPanel, pendingChecks, TestPanel } from './SidePanels';
 
@@ -18,10 +19,10 @@ const SideContext = createContext<Record<string, string>>({});
 
 function ProjectTag({ item }: { item: WorkItem }) {
   const side = useContext(SideContext)[item.project] ?? '';
-  const short = side.split('（')[0];
+  const short = side.split(zhOnly('（'))[0];
   return (
-    <span className={`side ${short.startsWith('前台') ? 'front' : 'back'}`}>
-      {short && `${short} · `}{item.project}{item.merchant ? ` m${item.merchant}` : ''}
+    <span className={`side ${short.startsWith(zhOnly('前台')) ? 'front' : 'back'}`}>
+      {short && `${sideName(short)} · `}{item.project}{item.merchant ? ` m${item.merchant}` : ''}
     </span>
   );
 }
@@ -32,9 +33,9 @@ function Row({ item, selected, onSelect, extra }: { item: WorkItem; selected: bo
       <div className="ticket-line">
         <strong>{item.ticketKey}</strong>
         {item.status !== 'queued' && <span className={`status ${item.status}`}>{STATUS_LABEL[item.status]}</span>}
-        {item.portOf && <span className="mark" title={`從 ${item.portOf.branch} 移植過來的`}>移植自 m{item.portOf.merchant}</span>}
-        {item.members.length > 0 && <span className="mark group" title={item.members.map((m) => `${m.key} ${m.summary}`).join('\n')}>合成 {item.members.length} 張</span>}
-        {item.prs.length > 0 && <span className="mark done" title={item.prs.map((p) => `→ ${p.target || '？'}`).join('\n')}>已發 PR{item.prs.length > 1 ? ` ×${item.prs.length}` : ''}</span>}
+        {item.portOf && <span className="mark" title={t('從 {branch} 移植過來的', { branch: item.portOf.branch })}>{t('移植自 m{merchant}', { merchant: item.portOf.merchant })}</span>}
+        {item.members.length > 0 && <span className="mark group" title={item.members.map((m) => `${m.key} ${m.summary}`).join('\n')}>{t('合成 {n} 張', { n: item.members.length })}</span>}
+        {item.prs.length > 0 && <span className="mark done" title={item.prs.map((p) => `→ ${p.target || t('？')}`).join('\n')}>{t('已發 PR')}{item.prs.length > 1 ? ` ×${item.prs.length}` : ''}</span>}
         {extra}
       </div>
       <div className="ticket-tag"><ProjectTag item={item} /></div>
@@ -61,13 +62,13 @@ function RightPanels({ item }: { item: WorkItem }) {
       <TestPanel item={item} />
       <div className="right-tabs" role="tablist">
         <button role="tab" className={tab === 'git' ? 'on' : ''} onClick={() => setTab('git')}>
-          改動{changes > 0 && <span className="tab-count">{changes}</span>}
+          {t('改動')}{changes > 0 && <span className="tab-count">{changes}</span>}
         </button>
-        <button role="tab" className={tab === 'report' ? 'on' : ''} onClick={() => setTab('report')} title={pending ? `還有 ${pending} 項要你測、還沒勾` : '每一條需求改了什麼、怎麼測'}>
-          驗收{pending > 0 && <span className="tab-count">{pending}</span>}
+        <button role="tab" className={tab === 'report' ? 'on' : ''} onClick={() => setTab('report')} title={pending ? t('還有 {n} 項要你測、還沒勾', { n: pending }) : t('每一條需求改了什麼、怎麼測')}>
+          {t('驗收')}{pending > 0 && <span className="tab-count">{pending}</span>}
         </button>
-        <button role="tab" className={tab === 'term' ? 'on' : ''} onClick={() => setTab('term')} title={siteUrl ? `本機網站在跑：${siteUrl}` : undefined}>
-          本機網站{siteUrl && <span className="tab-dot" />}
+        <button role="tab" className={tab === 'term' ? 'on' : ''} onClick={() => setTab('term')} title={siteUrl ? t('本機網站在跑：{url}', { url: siteUrl }) : undefined}>
+          {t('本機網站')}{siteUrl && <span className="tab-dot" />}
         </button>
       </div>
       <div className="tab-body" hidden={tab !== 'git'}>
@@ -121,15 +122,15 @@ export function Workbench({ onGoTickets }: { onGoTickets(): void }) {
       <aside className="sidebar">
         {board?.pendingRun && (
           <div className="pending-run small">
-            有確認好、還沒開始的計畫（{board.pendingRun.ticketKeys.join('、')}）
-            <button className="primary" onClick={() => api.startRun(board.pendingRun!.id).catch((e) => setError(errorText(e)))}>開始</button>
+            {t('有確認好、還沒開始的計畫（{keys}）', { keys: board.pendingRun.ticketKeys.join(t('、')) })}
+            <button className="primary" onClick={() => api.startRun(board.pendingRun!.id).catch((e) => setError(errorText(e)))}>{t('開始')}</button>
           </div>
         )}
         {error && <div className="error small">{error}</div>}
 
-        <div className="side-section">{term('進行中')}（{active.length}）</div>
+        <div className="side-section">{t('{label}（{n}）', { label: term(zhOnly('進行中')), n: active.length })}</div>
         <ul className="tickets">
-          {active.length === 0 && <li className="muted small empty-row">沒有</li>}
+          {active.length === 0 && <li className="muted small empty-row">{t('沒有')}</li>}
           {active.map((i) => (
             <Row key={i.id} item={i} selected={selected === i.id} onSelect={() => setSelected(i.id)} />
           ))}
@@ -137,7 +138,7 @@ export function Workbench({ onGoTickets }: { onGoTickets(): void }) {
 
         {waitingTurn.length > 0 && (
           <>
-            <div className="side-section">{term('排隊')}（{waitingTurn.length}）</div>
+            <div className="side-section">{t('{label}（{n}）', { label: term(zhOnly('排隊')), n: waitingTurn.length })}</div>
             <ul className="tickets">
               {waitingTurn.map((i) => (
                 <Row
@@ -150,10 +151,10 @@ export function Workbench({ onGoTickets }: { onGoTickets(): void }) {
                       className="link danger small"
                       onClick={(e) => {
                         e.stopPropagation();
-                        if (window.confirm(`從排隊中移除 ${i.ticketKey}？還沒開始，不會動到任何檔案或分支。`)) api.remove(i.id).catch((err) => setError(errorText(err)));
+                        if (window.confirm(t('從排隊中移除 {key}？還沒開始，不會動到任何檔案或分支。', { key: i.ticketKey }))) api.remove(i.id).catch((err) => setError(errorText(err)));
                       }}
                     >
-                      移除
+                      {t('移除')}
                     </button>
                   }
                 />
@@ -164,7 +165,7 @@ export function Workbench({ onGoTickets }: { onGoTickets(): void }) {
 
         {finished.length > 0 && (
           <>
-            <div className="side-section">{term('已完成')}（{finished.length}）</div>
+            <div className="side-section">{t('{label}（{n}）', { label: term(zhOnly('已完成')), n: finished.length })}</div>
             <ul className="tickets">
               {finished.map((i) => (
                 <Row key={i.id} item={i} selected={selected === i.id} onSelect={() => setSelected(i.id)} />
@@ -180,8 +181,8 @@ export function Workbench({ onGoTickets }: { onGoTickets(): void }) {
           <ChatPanel key={current.id} item={current} />
         ) : (
           <div className="empty-state">
-            <p>還沒有正在處理的單。到「單列表」勾選單、確認計畫後就會出現在這裡。</p>
-            <button className="primary" onClick={onGoTickets}>到單列表</button>
+            <p>{t('還沒有正在處理的單。到「單列表」勾選單、確認計畫後就會出現在這裡。')}</p>
+            <button className="primary" onClick={onGoTickets}>{t('到單列表')}</button>
           </div>
         )}
       </main>
@@ -191,29 +192,29 @@ export function Workbench({ onGoTickets }: { onGoTickets(): void }) {
           // 待補測：不佔資料夾，驗收表照樣能勾、能匯出，也能發 PR；要修就按標題列的「繼續修」
           <>
             <div className="panel finished-note">
-              <strong>先交付了，待補測 {pendingChecks(current)} 項</strong>
-              <p className="muted small">資料夾已經讓出，分支、提交、對話都留著。補測完勾「我測過了」，全部勾完才能完成；要修時按上方的「繼續修」（資料夾都在用時會告訴你哪張單在用）。</p>
-              <p className="small">分支：<code>{current.branch}</code></p>
+              <strong>{t('先交付了，待補測 {n} 項', { n: pendingChecks(current) })}</strong>
+              <p className="muted small">{t('資料夾已經讓出，分支、提交、對話都留著。補測完勾「我測過了」，全部勾完才能完成；要修時按上方的「繼續修」（資料夾都在用時會告訴你哪張單在用）。')}</p>
+              <p className="small">{t('分支：')}<code>{current.branch}</code></p>
             </div>
             <AcceptancePanel item={current} />
             <PrPanel key={current.id} item={current} />
           </>
         ) : current && ['failed', 'stopped'].includes(current.status) ? (
           <div className="panel finished-note">
-            <strong>這張單停下來了</strong>
-            <p className="muted small">資料夾 {current.folder ?? '—'} 已經讓出，可能正在做別張單。按「重試」會重新分配資料夾接著做；不做了可以從「更多 → 移除」拿掉。</p>
-            <p className="small">分支：<code>{current.branch}</code></p>
+            <strong>{t('這張單停下來了')}</strong>
+            <p className="muted small">{t('資料夾 {folder} 已經讓出，可能正在做別張單。按「重試」會重新分配資料夾接著做；不做了可以從「更多 → 移除」拿掉。', { folder: current.folder ?? '—' })}</p>
+            <p className="small">{t('分支：')}<code>{current.branch}</code></p>
           </div>
         ) : current && RELEASED.includes(current.status) ? (
           // 已結束的單：資料夾可能已經是別張單在用，這裡不再提供會動到資料夾的操作
           <>
           <div className="panel finished-note">
-            <strong>這張單已完成</strong>
+            <strong>{t('這張單已完成')}</strong>
             <p className="muted small">
-              資料夾 {current.folder ?? '—'} 已經讓出，可能正在做別張單，所以這裡不再顯示環境切換、終端機和改動。
+              {t('資料夾 {folder} 已經讓出，可能正在做別張單，所以這裡不再顯示環境切換、終端機和改動。', { folder: current.folder ?? '—' })}
             </p>
-            <p className="muted small">確定不用再改了，可以從「更多 → 移除」把它從工作台拿掉：會刪掉本機分支（遠端分支不動），單列表上的「已完成」標籤也會消失。</p>
-            <p className="small">分支：<code>{current.branch}</code></p>
+            <p className="muted small">{t('確定不用再改了，可以從「更多 → 移除」把它從工作台拿掉：會刪掉本機分支（遠端分支不動），單列表上的「已完成」標籤也會消失。')}</p>
+            <p className="small">{t('分支：')}<code>{current.branch}</code></p>
             {current.activity && <p className="muted small">{current.activity}</p>}
           </div>
           {current.status === 'committed' && <PortPanel item={current} all={items} />}
@@ -222,7 +223,7 @@ export function Workbench({ onGoTickets }: { onGoTickets(): void }) {
         ) : current?.folder ? (
           <RightPanels key={current.id} item={current} />
         ) : current ? (
-          <p className="muted small">這張單分配到資料夾之後，這裡會顯示終端機與 Git 改動。</p>
+          <p className="muted small">{t('這張單分配到資料夾之後，這裡會顯示終端機與 Git 改動。')}</p>
         ) : null}
       </aside>
     </div>

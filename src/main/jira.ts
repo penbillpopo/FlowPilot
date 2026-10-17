@@ -1,4 +1,5 @@
 // Jira 查詢：連線資訊沿用 JiraMcpServer 的 .env 與權杖檔，權杖只在執行時讀取。
+import { t } from '../shared/i18n';
 import { readFileSync } from 'node:fs';
 import { dirname, isAbsolute, resolve } from 'node:path';
 import type { JiraTicket, Resource, TicketSnapshot } from '../shared/types';
@@ -26,19 +27,19 @@ export function loadCredentials(envFile: string): JiraCredentials {
   try {
     env = parseEnv(readFileSync(envFile, 'utf8'));
   } catch {
-    throw new Error(`讀不到 Jira 設定檔：${envFile}`);
+    throw new Error(t('讀不到 Jira 設定檔：{file}', { file: envFile }));
   }
   const { JIRA_BASE_URL: baseUrl, JIRA_EMAIL: email, JIRA_TOKEN_FILE: tokenFile } = env;
-  if (!baseUrl || !email || !tokenFile) throw new Error(`${envFile} 缺少 JIRA_BASE_URL、JIRA_EMAIL 或 JIRA_TOKEN_FILE`);
+  if (!baseUrl || !email || !tokenFile) throw new Error(t('{file} 缺少 JIRA_BASE_URL、JIRA_EMAIL 或 JIRA_TOKEN_FILE', { file: envFile }));
   const expanded = expandHome(tokenFile);
   const tokenPath = isAbsolute(expanded) ? expanded : resolve(dirname(envFile), expanded);
   let token: string;
   try {
     token = readFileSync(tokenPath, 'utf8').trim();
   } catch {
-    throw new Error(`讀不到 Jira 權杖檔：${tokenPath}`);
+    throw new Error(t('讀不到 Jira 權杖檔：{file}', { file: tokenPath }));
   }
-  if (!token) throw new Error(`Jira 權杖檔是空的：${tokenPath}`);
+  if (!token) throw new Error(t('Jira 權杖檔是空的：{file}', { file: tokenPath }));
   return { baseUrl: baseUrl.replace(/\/+$/, ''), email, token };
 }
 
@@ -81,8 +82,8 @@ export async function searchTickets(credentials: JiraCredentials, jql: string, f
       headers: { Authorization: `Basic ${auth}`, Accept: 'application/json' },
     });
     if (!response.ok) {
-      const reason = response.status === 401 ? '帳號或權杖無效' : `HTTP ${response.status}`;
-      throw new Error(`Jira 查詢失敗：${reason}`);
+      const reason = response.status === 401 ? t('帳號或權杖無效') : `HTTP ${response.status}`;
+      throw new Error(t('Jira 查詢失敗：{reason}', { reason }));
     }
     const body = (await response.json()) as { issues: RawIssue[]; nextPageToken?: string; isLast?: boolean };
     tickets.push(...body.issues.map((issue) => toTicket(issue, credentials.baseUrl)));
@@ -126,7 +127,7 @@ function titleOf(url: string, text: string | undefined, kind: Resource['kind']):
     if (kind === 'figma') {
       const name = decodeURIComponent(u.pathname.split('/')[3] ?? 'Figma').replace(/-+/g, ' ');
       const node = u.searchParams.get('node-id');
-      return node ? `${name}（節點 ${node.replace('-', ':')}）` : name;
+      return node ? t('{name}（節點 {node}）', { name, node: node.replace('-', ':') }) : name;
     }
     if (kind === 'jira') return u.pathname.split('/').pop() ?? url;
     const path = u.searchParams.get('path');
@@ -209,7 +210,7 @@ export async function getIssueContext(credentials: JiraCredentials, key: string,
   const response = await fetchImpl(`${credentials.baseUrl}/rest/api/3/issue/${encodeURIComponent(key)}?${params}`, {
     headers: { Authorization: `Basic ${auth}`, Accept: 'application/json' },
   });
-  if (!response.ok) throw new Error(`讀取 ${key} 失敗：HTTP ${response.status}`);
+  if (!response.ok) throw new Error(t('讀取 {key} 失敗：HTTP {status}', { key, status: response.status }));
   const { fields } = (await response.json()) as {
     fields: {
       summary: string;
@@ -266,7 +267,7 @@ const MAX_ATTACHMENTS_TEXT = 20000;
 export async function downloadAttachment(credentials: JiraCredentials, url: string, dest: string, fetchImpl: typeof fetch = fetch): Promise<void> {
   const auth = Buffer.from(`${credentials.email}:${credentials.token}`).toString('base64');
   const response = await fetchImpl(url, { headers: { Authorization: `Basic ${auth}` } });
-  if (!response.ok) throw new Error(`下載附件失敗：HTTP ${response.status}`);
+  if (!response.ok) throw new Error(t('下載附件失敗：HTTP {status}', { status: response.status }));
   const { writeFileSync } = await import('node:fs');
   writeFileSync(dest, Buffer.from(await response.arrayBuffer()));
 }
@@ -297,7 +298,7 @@ export async function readTextAttachments(attachments: JiraAttachment[], auth: s
 export async function statusIdsByName(credentials: JiraCredentials, fetchImpl: typeof fetch = fetch): Promise<Map<string, string[]>> {
   const auth = Buffer.from(`${credentials.email}:${credentials.token}`).toString('base64');
   const response = await fetchImpl(`${credentials.baseUrl}/rest/api/3/status`, { headers: { Authorization: `Basic ${auth}`, Accept: 'application/json' } });
-  if (!response.ok) throw new Error(`讀取 Jira 狀態清單失敗：HTTP ${response.status}`);
+  if (!response.ok) throw new Error(t('讀取 Jira 狀態清單失敗：HTTP {status}', { status: response.status }));
   const map = new Map<string, string[]>();
   for (const status of (await response.json()) as { id: string; name: string; untranslatedName?: string }[]) {
     for (const name of new Set([status.name, status.untranslatedName].filter(Boolean) as string[])) {
@@ -311,9 +312,9 @@ export async function statusIdsByName(credentials: JiraCredentials, fetchImpl: t
 /** 組查詢條件：基本條件 + 選的狀態（用編號，不受翻譯與大小寫影響） */
 export function buildJql(filter: string, statusNames: string[], ids: Map<string, string[]>): string {
   const unknown = statusNames.filter((n) => !ids.has(n.toLowerCase()));
-  if (unknown.length) throw new Error(`Jira 上找不到這些狀態：${unknown.join('、')}`);
+  if (unknown.length) throw new Error(t('Jira 上找不到這些狀態：{names}', { names: unknown.join(t('、')) }));
   const statusIds = [...new Set(statusNames.flatMap((n) => ids.get(n.toLowerCase())!))];
-  if (statusIds.length === 0) throw new Error('至少要選一個狀態');
+  if (statusIds.length === 0) throw new Error(t('至少要選一個狀態'));
   return `${filter} AND status in (${statusIds.join(', ')}) ORDER BY updated DESC`;
 }
 
@@ -333,7 +334,7 @@ export async function getTransitions(credentials: JiraCredentials, key: string, 
   const response = await fetchImpl(`${credentials.baseUrl}/rest/api/3/issue/${encodeURIComponent(key)}/transitions`, {
     headers: { Authorization: `Basic ${auth}`, Accept: 'application/json' },
   });
-  if (!response.ok) throw new Error(`讀不到 ${key} 可以切換的狀態：HTTP ${response.status}`);
+  if (!response.ok) throw new Error(t('讀不到 {key} 可以切換的狀態：HTTP {status}', { key, status: response.status }));
   const body = (await response.json()) as { transitions?: { id: string; name: string; to?: { name?: string } }[] };
   return (body.transitions ?? []).map((t) => ({ id: t.id, name: t.name, to: t.to?.name ?? t.name }));
 }
@@ -342,7 +343,7 @@ export async function getTransitions(credentials: JiraCredentials, key: string, 
 export async function transitionIssue(credentials: JiraCredentials, key: string, transitionId: string, fetchImpl: typeof fetch = fetch): Promise<string> {
   const available = await getTransitions(credentials, key, fetchImpl);
   const target = available.find((t) => t.id === transitionId);
-  if (!target) throw new Error(`${key} 現在不能切到這個狀態（可能已經被別人改過了），請重新整理`);
+  if (!target) throw new Error(t('{key} 現在不能切到這個狀態（可能已經被別人改過了），請重新整理', { key }));
   const auth = Buffer.from(`${credentials.email}:${credentials.token}`).toString('base64');
   const response = await fetchImpl(`${credentials.baseUrl}/rest/api/3/issue/${encodeURIComponent(key)}/transitions`, {
     method: 'POST',
@@ -351,7 +352,7 @@ export async function transitionIssue(credentials: JiraCredentials, key: string,
   });
   if (!response.ok) {
     const text = await response.text().catch(() => '');
-    throw new Error(`切換 ${key} 的狀態失敗：HTTP ${response.status}${text ? `（${text.slice(0, 200)}）` : ''}`);
+    throw new Error(t('切換 {key} 的狀態失敗：HTTP {status}{detail}', { key, status: response.status, detail: text ? t('（{text}）', { text: text.slice(0, 200) }) : '' }));
   }
   return target.to;
 }

@@ -1,7 +1,9 @@
 import type { AcceptanceItem, TestReport, TestResult } from '../../shared/types';
+import { t } from '../../shared/i18n';
 // AI 要執行的指令：哪些自動同意、哪些要你確認。
 // 開發中的 AI 用「每個指令都先問」的模式，由這裡決定；只有危險的才真的轉給你。
 
+// i18n-keys：顯示時才翻
 const DANGEROUS: { pattern: RegExp; reason: string }[] = [
   { pattern: /\bgit\s+push\b/, reason: '推送到遠端' },
   { pattern: /\bgit\s+commit\b/, reason: '提交（提交由你在 FlowPilot 審查後按「提交」）' },
@@ -24,7 +26,7 @@ export function commandPolicy(command: string): PolicyResult {
   // rebase 有衝突時讓 AI 自己解（使用者平常也是這樣做）：解完繼續 rebase 不用問
   if (/\bgit\s+rebase\s+--continue\b/.test(command) && !/\bgit\s+(push|reset|clean)\b/.test(command)) return { ask: false, reason: '' };
   for (const { pattern, reason } of DANGEROUS) {
-    if (pattern.test(command)) return { ask: true, reason };
+    if (pattern.test(command)) return { ask: true, reason: t(reason) };
   }
   return { ask: false, reason: '' };
 }

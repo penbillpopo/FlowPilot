@@ -1,5 +1,6 @@
 // 資料庫：~/Library/Application Support/FlowPilot/flowpilot.db（SQLite，用 Node 內建的 node:sqlite）
 // 每次狀態改變先寫進來，重新啟動才接得回去。
+import { t } from '../shared/i18n';
 import { DatabaseSync } from 'node:sqlite';
 import type { AcceptanceItem, JiraTicket, PlanDraft, PortSource, PrRecord, SupplementItem, TicketRef, Judgement, PendingRequest, Review, RunSummary, TestReport, TestResult, TicketPlan, WorkItem, WorkLane, WorkStage, WorkStatus } from '../shared/types';
 import type { PastDecision } from './planner/judge';
@@ -230,7 +231,7 @@ export class Store {
 
   /** 你勾選完的單，存成一次新的執行 */
   createRun(tickets: JiraTicket[], now = new Date()): RunSummary {
-    if (tickets.length === 0) throw new Error('沒有勾選任何單');
+    if (tickets.length === 0) throw new Error(t('沒有勾選任何單'));
     this.db.exec('BEGIN');
     try {
       const { lastInsertRowid } = this.db
@@ -248,7 +249,7 @@ export class Store {
 
   /** 確認計畫：存下計畫，並記錄每張單的最終判斷（跟 AI 不同的標記為修改過） */
   confirmPlan(runId: number, plans: TicketPlan[], judgements: Record<string, Judgement>, now = new Date()): RunSummary {
-    if (!this.getRun(runId)) throw new Error(`找不到第 ${runId} 次執行`);
+    if (!this.getRun(runId)) throw new Error(t('找不到第 {id} 次執行', { id: runId }));
     const brief = (entries: { project: string; merchants: number[] }[]) =>
       entries.map((e) => ({ project: e.project, merchants: [...e.merchants].sort((a, b) => a - b) }));
     this.db.exec('BEGIN');

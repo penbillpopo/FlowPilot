@@ -1,6 +1,7 @@
 // 截圖編輯：截完在這裡畫筆、框框、箭頭、打字、選顏色、復原，完成後附到輸入框。
 // 畫的東西用圖片原本的像素座標記下來，完成時畫在原尺寸的圖上（不會因為縮小顯示而變糊）。
 import { useEffect, useRef, useState } from 'react';
+import { t } from '../../shared/i18n';
 
 type Tool = 'pen' | 'rect' | 'arrow' | 'text';
 type Point = { x: number; y: number };
@@ -10,6 +11,7 @@ type Shape =
   | { kind: 'text'; color: string; size: number; at: Point; text: string };
 
 const COLORS = ['#ff3b30', '#ffcc00', '#007aff', '#34c759', '#ffffff', '#000000'];
+// i18n-keys：顯示時才翻
 const TOOLS: [Tool, string][] = [['pen', '畫筆'], ['rect', '框框'], ['arrow', '箭頭'], ['text', '文字']];
 
 function draw(ctx: CanvasRenderingContext2D, shape: Shape, scale: number) {
@@ -175,24 +177,24 @@ export function ScreenshotEditor({ src, onDone, onCancel }: { src: string; onDon
     <div className="shot-overlay">
       <div className="shot-editor">
         <div className="shot-toolbar">
-          {TOOLS.map(([t, label]) => (
-            <button key={t} className={tool === t ? 'on' : ''} onClick={() => { if (typing) commitText(); setTool(t); }}>{label}</button>
+          {TOOLS.map(([name, label]) => (
+            <button key={name} className={tool === name ? 'on' : ''} onClick={() => { if (typing) commitText(); setTool(name); }}>{t(label)}</button>
           ))}
           <span className="shot-sep" />
           {COLORS.map((c) => (
             <button key={c} className={`shot-color ${color === c ? 'on' : ''}`} style={{ background: c }} title={c} onClick={() => setColor(c)} />
           ))}
           <span className="shot-sep" />
-          <label className="shot-width" title="線條粗細">
-            粗細
+          <label className="shot-width" title={t('線條粗細')}>
+            {t('粗細')}
             <input type="range" min={2} max={12} value={width} onChange={(e) => setWidth(Number(e.target.value))} />
           </label>
           <span className="shot-sep" />
-          <button disabled={!shapes.length} onClick={undo} title="⌘Z">復原</button>
-          <button disabled={!undone.length} onClick={redo} title="⌘⇧Z">重做</button>
+          <button disabled={!shapes.length} onClick={undo} title="⌘Z">{t('復原')}</button>
+          <button disabled={!undone.length} onClick={redo} title="⌘⇧Z">{t('重做')}</button>
           <span className="push-right" />
-          <button onClick={onCancel}>取消</button>
-          <button className="primary" disabled={!image} onClick={finish}>完成，附上</button>
+          <button onClick={onCancel}>{t('取消')}</button>
+          <button className="primary" disabled={!image} onClick={finish}>{t('完成，附上')}</button>
         </div>
         <div className="shot-area" ref={area}>
           <div className="shot-stage" style={{ width: view.w, height: view.h }}>
@@ -209,7 +211,7 @@ export function ScreenshotEditor({ src, onDone, onCancel }: { src: string; onDon
                 autoFocus
                 rows={1}
                 value={typing.text}
-                placeholder="打字，Enter 完成（Shift＋Enter 換行）"
+                placeholder={t('打字，Enter 完成（Shift＋Enter 換行）')}
                 style={{ left: typing.at.x * view.scale, top: typing.at.y * view.scale, color, fontSize: 18 }}
                 onChange={(e) => setTyping({ ...typing, text: e.target.value })}
                 onKeyDown={(e) => {

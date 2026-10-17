@@ -2,6 +2,7 @@
 // 單列表：列出 Jira 上進行中的單，由你勾選這次要做哪幾張；確認後進入計畫表，計畫確認後跳到執行看板。
 import { useEffect, useRef, useState } from 'react';
 import type { JiraTicket, PlanDraft, TicketMark, WorkItem } from '../../shared/types';
+import { getLang, jiraName, t, zhOnly } from '../../shared/i18n';
 import { play, term, useBoardCues, useSkin, type SkinSettings } from './skin';
 import { Workbench } from './Workbench';
 import { PlanView } from './PlanView';
@@ -29,7 +30,7 @@ function rememberStatuses(statuses: string[]) {
 }
 
 function formatTime(iso: string) {
-  return new Date(iso).toLocaleString('zh-TW', { month: 'numeric', day: 'numeric', hour: '2-digit', minute: '2-digit', hour12: false });
+  return new Date(iso).toLocaleString(getLang() === 'en' ? 'en-US' : 'zh-TW', { month: 'numeric', day: 'numeric', hour: '2-digit', minute: '2-digit', hour12: false });
 }
 
 export function App() {
@@ -86,18 +87,18 @@ export function App() {
           <Emblem faction={settings.theme} size={28} />
           <span className="emblem-name">FLOWPILOT</span>
         </div>
-        <button className={tab === 'board' ? 'on' : ''} onClick={() => setTab('board')}>{term('工作台')}</button>
-        <button className={tab === 'tickets' ? 'on' : ''} onClick={() => setTab('tickets')}>{term('單列表')}</button>
+        <button className={tab === 'board' ? 'on' : ''} onClick={() => setTab('board')}>{term(zhOnly('工作台'))}</button>
+        <button className={tab === 'tickets' ? 'on' : ''} onClick={() => setTab('tickets')}>{term(zhOnly('單列表'))}</button>
         <div className="nav-right">
           {(
             <>
-              <div className={`radar ${working ? 'live' : ''}`} title={working ? `AI 正在做 ${working} 張單` : '目前沒有 AI 在做'}>
+              <div className={`radar ${working ? 'live' : ''}`} title={working ? t('AI 正在做 {n} 張單', { n: working }) : t('目前沒有 AI 在做')}>
                 <span className="sweep" />
                 {list.filter((i) => i.status !== 'removed').slice(0, 8).map((i, n) => (
                   <span key={i.id} className={`blip s-${i.status}`} style={{ '--a': `${n * 47 + 20}deg`, '--r': `${30 + ((n * 23) % 55)}%` } as React.CSSProperties} />
                 ))}
               </div>
-              <div className="counter" title="等你處理的單（等你回答、等你測試、卡住）">
+              <div className="counter" title={t('等你處理的單（等你回答、等你測試、卡住）')}>
                 <span className="counter-label">{needYou ? 'ORDERS' : 'STANDBY'}</span>
                 <span className="counter-digits">{String(needYou).padStart(5, '0')}</span>
               </div>
@@ -159,9 +160,9 @@ function Emblem({ faction, size, plain }: { faction: SkinSettings['theme']; size
 /** 外觀設定：標準／盟軍；盟軍外觀可以再開關音效、語音、指揮官用語 */
 function SkinMenu({ settings, onChange }: { settings: SkinSettings; onChange(patch: Partial<SkinSettings>): void }) {
   const toggles: [keyof SkinSettings, string, string][] = [
-    ['sound', '音效', '做完、要你處理、失敗時的提示音'],
-    ['voice', '指揮官語音', '用英文念狀態（Construction complete…）'],
-    ['lingo', '指揮官用語', '狀態、階段換成作戰用語'],
+    ['sound', t('音效'), t('做完、要你處理、失敗時的提示音')],
+    ['voice', t('指揮官語音'), t('用英文念狀態（Construction complete…）')],
+    ['lingo', t('指揮官用語'), t('狀態、階段換成作戰用語')],
   ];
   // 點選單外面就收起來
   const box = useRef<HTMLDetailsElement>(null);
@@ -174,7 +175,7 @@ function SkinMenu({ settings, onChange }: { settings: SkinSettings; onChange(pat
   }, []);
   return (
     <details className="skin-menu" ref={box}>
-      <summary title="外觀設定" aria-label="外觀設定">
+      <summary title={t('外觀設定')} aria-label={t('外觀設定')}>
         <svg className="gear" viewBox="0 0 24 24" width="20" height="20" aria-hidden>
           <path
             fill="currentColor"
@@ -184,15 +185,15 @@ function SkinMenu({ settings, onChange }: { settings: SkinSettings; onChange(pat
         </svg>
       </summary>
       <div className="skin-panel">
-        <div className="skin-title">外觀</div>
+        <div className="skin-title">{t('外觀')}</div>
         <div className="skin-themes">
           <button className={settings.theme === 'allied' ? 'on' : ''} onClick={() => onChange({ theme: 'allied' })}>
             <span className="skin-swatch allied" />
-            盟軍
+            {t('盟軍')}
           </button>
           <button className={settings.theme === 'soviet' ? 'on' : ''} onClick={() => onChange({ theme: 'soviet' })}>
             <span className="skin-swatch soviet" />
-            蘇聯
+            {t('蘇聯')}
           </button>
         </div>
         {(
@@ -202,12 +203,21 @@ function SkinMenu({ settings, onChange }: { settings: SkinSettings; onChange(pat
                 <button className={`skin-toggle ${settings[key] ? 'on' : ''}`} onClick={() => onChange({ [key]: !settings[key] })} title={hint}>
                   <span className="led" />
                   {label}
-                  <span className="muted small">{settings[key] ? '開' : '關'}</span>
+                  <span className="muted small">{settings[key] ? t('開') : t('關')}</span>
                 </button>
               </li>
             ))}
           </ul>
         )}
+        <button
+          className="skin-toggle on skin-lang"
+          title={t('介面語言（語音不會變）')}
+          onClick={() => onChange({ lang: settings.lang === 'en' ? 'zh' : 'en' })}
+        >
+          <span className="led" />
+          {t('語言')}
+          <span className="muted small">{settings.lang === 'en' ? 'English' : zhOnly('中文')}</span>
+        </button>
       </div>
     </details>
   );
@@ -246,7 +256,7 @@ function StatusSwitch({ ticket, onChanged, onError }: { ticket: JiraTicket; onCh
 
   async function pick(e: React.MouseEvent, option: { id: string; to: string }) {
     e.stopPropagation();
-    if (!window.confirm(`把 ${ticket.key} 的 Jira 狀態從「${ticket.status}」改成「${option.to}」？\n\nJira 上的同事都會看到這個變更。`)) return;
+    if (!window.confirm(t('把 {key} 的 Jira 狀態從「{from}」改成「{to}」？\n\nJira 上的同事都會看到這個變更。', { key: ticket.key, from: jiraName(ticket.status), to: jiraName(option.to) }))) return;
     setBusy(true);
     try {
       onChanged(await api.transitionTicket(ticket.key, option.id));
@@ -261,16 +271,16 @@ function StatusSwitch({ ticket, onChanged, onError }: { ticket: JiraTicket; onCh
   const choices = options?.filter((o) => o.to !== ticket.status) ?? [];
   return (
     <div className="status-switch" ref={box}>
-      <button className="status" onClick={toggle} disabled={busy} title="切換 Jira 狀態">
-        {busy ? '切換中…' : ticket.status}
+      <button className="status" onClick={toggle} disabled={busy} title={t('切換 Jira 狀態')}>
+        {busy ? t('切換中…') : jiraName(ticket.status)}
         <span className="caret">▼</span>
       </button>
       {open && (
         <div className="status-menu" onClick={(e) => e.stopPropagation()}>
-          {!options && <span className="muted small">讀取中…</span>}
-          {options && choices.length === 0 && <span className="muted small">沒有可以切換的狀態</span>}
+          {!options && <span className="muted small">{t('讀取中…')}</span>}
+          {options && choices.length === 0 && <span className="muted small">{t('沒有可以切換的狀態')}</span>}
           {choices.map((o) => (
-            <button key={o.id} onClick={(e) => pick(e, o)}>{o.to}</button>
+            <button key={o.id} onClick={(e) => pick(e, o)}>{jiraName(o.to)}</button>
           ))}
         </div>
       )}
@@ -403,21 +413,21 @@ function TicketList({ onConfirmed }: { onConfirmed(): void }) {
     <main>
       <header>
         <div>
-          <h1>今日開發任務</h1>
-          <p className="muted">Jira 上指派給你的單。選擇要列出的狀態，再勾選這次要做的單。</p>
+          <h1>{t('今日開發任務')}</h1>
+          <p className="muted">{t('Jira 上指派給你的單。選擇要列出的狀態，再勾選這次要做的單。')}</p>
         </div>
         <div className="actions">
-          <button onClick={() => api.openSettingsFile()}>設定檔</button>
-          <button onClick={() => refresh()} disabled={loading}>{loading ? '讀取中…' : '重新整理'}</button>
+          <button onClick={() => api.openSettingsFile()}>{t('設定檔')}</button>
+          <button onClick={() => refresh()} disabled={loading}>{loading ? t('讀取中…') : t('重新整理')}</button>
         </div>
       </header>
 
       <div className="status-filter">
-        <span className="muted">狀態</span>
+        <span className="muted">{t('狀態')}</span>
         {statusOptions.map((status) => (
           <label key={status} className={`chip ${statuses?.includes(status) ? 'on' : ''}`}>
             <input type="checkbox" checked={!!statuses?.includes(status)} onChange={() => toggleStatus(status)} />
-            {status}
+            {jiraName(status)}
           </label>
         ))}
       </div>
@@ -429,13 +439,13 @@ function TicketList({ onConfirmed }: { onConfirmed(): void }) {
         const hidden = drafts.filter((d) => !tickets?.some((t) => t.key === d.ticket.key));
         return hidden.length > 0 && (
           <p className="muted small plan-hidden">
-            計畫表裡還有 {hidden.map((d) => d.ticket.key).join('、')}（不在目前選的狀態裡）
-            <button className="link small" onClick={() => setShowPlan(true)}>打開</button>
+            {t('計畫表裡還有 {keys}（不在目前選的狀態裡）', { keys: hidden.map((d) => d.ticket.key).join(t('、')) })}
+            <button className="link small" onClick={() => setShowPlan(true)}>{t('打開')}</button>
           </p>
         );
       })()}
 
-      {tickets && tickets.length === 0 && !error && <p className="empty">{statuses?.length ? '選的狀態裡目前沒有單。' : '請至少選一個狀態。'}</p>}
+      {tickets && tickets.length === 0 && !error && <p className="empty">{statuses?.length ? t('選的狀態裡目前沒有單。') : t('請至少選一個狀態。')}</p>}
 
       {tickets && tickets.length > 0 && (
         <table>
@@ -444,59 +454,59 @@ function TicketList({ onConfirmed }: { onConfirmed(): void }) {
               <th className="check">
                 <input
                   type="checkbox"
-                  aria-label="全選"
+                  aria-label={t('全選')}
                   checked={allChecked}
                   onChange={() => setSelected(allChecked ? new Set() : new Set(selectable.map((t) => t.key)))}
                 />
               </th>
-              <th>單號</th>
-              <th>標題</th>
-              <th>主單</th>
-              <th className="state">狀態</th>
-              <th>更新</th>
+              <th>{t('單號')}</th>
+              <th>{t('標題')}</th>
+              <th>{t('主單')}</th>
+              <th className="state">{t('狀態')}</th>
+              <th>{t('更新')}</th>
             </tr>
           </thead>
           <tbody>
-            {tickets.map((t) => (
+            {tickets.map((ticket) => (
               <tr
-                key={t.key}
-                className={`${selected.has(t.key) ? 'selected' : ''} ${marks[t.key]?.active ? 'locked' : ''} ${marks[t.key]?.planning ? 'planning' : ''}`}
-                onClick={() => (marks[t.key]?.planning ? setShowPlan(true) : toggle(t.key))}
-                title={marks[t.key]?.active ? '這張單在工作台上，要在工作台移除後才能再選' : marks[t.key]?.planning ? '這張單在計畫表裡，點一下打開計畫表' : undefined}
+                key={ticket.key}
+                className={`${selected.has(ticket.key) ? 'selected' : ''} ${marks[ticket.key]?.active ? 'locked' : ''} ${marks[ticket.key]?.planning ? 'planning' : ''}`}
+                onClick={() => (marks[ticket.key]?.planning ? setShowPlan(true) : toggle(ticket.key))}
+                title={marks[ticket.key]?.active ? t('這張單在工作台上，要在工作台移除後才能再選') : marks[ticket.key]?.planning ? t('這張單在計畫表裡，點一下打開計畫表') : undefined}
               >
                 <td className="check">
-                  <input type="checkbox" checked={selected.has(t.key)} disabled={!!marks[t.key]?.active || !!marks[t.key]?.planning} onChange={() => toggle(t.key)} onClick={(e) => e.stopPropagation()} />
+                  <input type="checkbox" checked={selected.has(ticket.key)} disabled={!!marks[ticket.key]?.active || !!marks[ticket.key]?.planning} onChange={() => toggle(ticket.key)} onClick={(e) => e.stopPropagation()} />
                 </td>
                 <td className="key">
-                  <a href={t.url} onClick={(e) => { e.preventDefault(); e.stopPropagation(); api.openExternal(t.url); }}>{t.key}</a>
-                  <span className="tag">{t.issueType}</span>
+                  <a href={ticket.url} onClick={(e) => { e.preventDefault(); e.stopPropagation(); api.openExternal(ticket.url); }}>{ticket.key}</a>
+                  <span className="tag">{jiraName(ticket.issueType)}</span>
                   <span className="marks">
-                    {marks[t.key]?.active && (marks[t.key].done
-                      ? <span className="mark done" title="這張單在工作台上已完成；在工作台移除後才能再選">已完成</span>
-                      : <span className="mark active" title="這張單正在工作台上進行">進行中</span>)}
-                    {marks[t.key]?.planning && <span className="mark planning" title="這張單在計畫表裡，還沒確認">計畫中</span>}
-                    {marks[t.key]?.branch && !marks[t.key]?.active && <span className="mark" title="本機已經有這張單的分支，確認後會切換過去繼續開發">有分支</span>}
+                    {marks[ticket.key]?.active && (marks[ticket.key].done
+                      ? <span className="mark done" title={t('這張單在工作台上已完成；在工作台移除後才能再選')}>{t('已完成')}</span>
+                      : <span className="mark active" title={t('這張單正在工作台上進行')}>{t('進行中')}</span>)}
+                    {marks[ticket.key]?.planning && <span className="mark planning" title={t('這張單在計畫表裡，還沒確認')}>{t('計畫中')}</span>}
+                    {marks[ticket.key]?.branch && !marks[ticket.key]?.active && <span className="mark" title={t('本機已經有這張單的分支，確認後會切換過去繼續開發')}>{t('有分支')}</span>}
                   </span>
                 </td>
-                <td>{t.summary}</td>
+                <td>{ticket.summary}</td>
                 <td className="parent">
-                  {t.parent ? (
+                  {ticket.parent ? (
                     <>
-                      <a href={t.parent.url} onClick={(e) => { e.preventDefault(); e.stopPropagation(); api.openExternal(t.parent!.url); }}>{t.parent.key}</a>
-                      <span className="muted">{t.parent.summary}</span>
+                      <a href={ticket.parent.url} onClick={(e) => { e.preventDefault(); e.stopPropagation(); api.openExternal(ticket.parent!.url); }}>{ticket.parent.key}</a>
+                      <span className="muted">{ticket.parent.summary}</span>
                     </>
                   ) : (
-                    <span className="muted">（本身是主單）</span>
+                    <span className="muted">{t('（本身是主單）')}</span>
                   )}
                 </td>
                 <td className="state">
                   <StatusSwitch
-                    ticket={t}
-                    onChanged={(status) => setTickets((prev) => prev?.map((x) => (x.key === t.key ? { ...x, status } : x)) ?? prev)}
+                    ticket={ticket}
+                    onChanged={(status) => setTickets((prev) => prev?.map((x) => (x.key === ticket.key ? { ...x, status } : x)) ?? prev)}
                     onError={setError}
                   />
                 </td>
-                <td className="time">{formatTime(t.updated)}</td>
+                <td className="time">{formatTime(ticket.updated)}</td>
               </tr>
             ))}
           </tbody>
@@ -504,14 +514,14 @@ function TicketList({ onConfirmed }: { onConfirmed(): void }) {
       )}
 
       <footer>
-        <span className="muted">一次加一個任務：勾一張就是那張；勾好幾張會合成一個任務（同一條分支、一個 PR）。加進計畫表後 AI 在背景審閱，你可以先去做別的。</span>
+        <span className="muted">{t('一次加一個任務：勾一張就是那張；勾好幾張會合成一個任務（同一條分支、一個 PR）。加進計畫表後 AI 在背景審閱，你可以先去做別的。')}</span>
         <button
           className="primary"
           disabled={selected.size === 0 || adding}
           onClick={addToPlan}
-          title={selected.size >= 2 ? '勾好幾張會合成一個任務：同一條分支、同一段 AI 對話、一個 PR' : undefined}
+          title={selected.size >= 2 ? t('勾好幾張會合成一個任務：同一條分支、同一段 AI 對話、一個 PR') : undefined}
         >
-          {adding ? '加入中…' : selected.size >= 2 ? `把這 ${selected.size} 張合成一個任務，加進計畫表` : '加進計畫表'}
+          {adding ? t('加入中…') : selected.size >= 2 ? t('把這 {n} 張合成一個任務，加進計畫表', { n: selected.size }) : t('加進計畫表')}
         </button>
       </footer>
     </main>

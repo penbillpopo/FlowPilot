@@ -1,6 +1,7 @@
 // 工作台中間：跟 AI 對話。完整的對話紀錄（思考、指令、改動、工具）、即時更新、輸入框（可貼截圖）。
 import { Fragment, useEffect, useRef, useState } from 'react';
 import type { BranchInfo, ChatEntry, ChatEvent, I18nProgress, WorkItem, WorkStage, WorkStatus } from '../../shared/types';
+import { t, zhOnly } from '../../shared/i18n';
 import { DiffView } from './DiffView';
 import { commitPrefs, deliveryOf, gitChanged, useGitState } from './delivery';
 import { useImageAttach } from './ImageAttach';
@@ -14,20 +15,24 @@ const api = window.flowpilot;
 export const STATUS_LABEL = new Proxy({} as Record<WorkStatus, string>, { get: (_t, key) => statusLabel(key as WorkStatus) });
 
 /** 跟狀態標籤意思一樣的說明，不重複顯示 */
-const REDUNDANT_ACTIVITY = /^(AI 在問你問題|執行中|執行技能|開發中|AI 做完了，等你審查|已完成)$/;
+// i18n-keys：顯示時才翻（狀態文字可能是中文或英文，兩種都比對）
+const REDUNDANT_ACTIVITIES = ['AI 在問你問題', '執行中', '執行技能', '開發中', 'AI 做完了，等你審查', '已完成'];
+const isRedundantActivity = (activity: string) => REDUNDANT_ACTIVITIES.some((a) => a === activity || t(a) === activity);
 
 /** 流程：審閱 ✓ → 開發 → 自動測試 → 等你測試（修改、重測都算在等你測試這一步）→ 交付（提交過之後：推送、完成） */
+// i18n-keys：顯示時才翻
 const STEPS = ['審閱', '開發', '自動測試', '等你測試', '交付'];
 const STEP_OF: Record<WorkStage, number> = { develop: 1, selfcheck: 1, autotest: 2, manual: 3, fix: 3, retest: 3 };
+// i18n-keys：顯示時才翻
 const RUNNING_NOTE: Record<WorkStage, string> = { develop: 'AI 開發中', selfcheck: 'AI 自我審查中', autotest: 'AI 測試中', manual: 'AI 處理中', fix: 'AI 修改中', retest: 'AI 重測中' };
 
 /** 目前這一步在等什麼（合併原本的狀態標籤）；空字串代表不用多說明 */
 function stepNote(item: WorkItem): string {
   switch (item.status) {
     case 'running':
-      return RUNNING_NOTE[item.stage];
+      return t(RUNNING_NOTE[item.stage]);
     case 'waiting':
-      return item.pending?.kind === 'approval' ? '等你同意' : item.pending?.kind === 'decision' ? '等你決定' : '要你回答';
+      return item.pending?.kind === 'approval' ? t('等你同意') : item.pending?.kind === 'decision' ? t('等你決定') : t('要你回答');
     case 'review':
       return '';
     default:
@@ -49,9 +54,9 @@ function Stages({ item, delivering }: { item: WorkItem; delivering: boolean }) {
         const result = done && i === 2 ? autotestMark(item) : null;
         return (
           <li key={label} className={result ? result.className : done ? 'done' : now ? `now ${tone}` : ''} title={result?.title}>
-            {term(label)}
+            {t(term(label))}
             {result ? result.text : done ? ' ✓' : ''}
-            {now && (i === 4 && item.status === 'review' ? <span className="step-note">・推送、完成</span> : note && <span className="step-note">・{note}</span>)}
+            {now && (i === 4 && item.status === 'review' ? <span className="step-note">・{t('推送、完成')}</span> : note && <span className="step-note">・{note}</span>)}
           </li>
         );
       })}
@@ -62,32 +67,32 @@ function Stages({ item, delivering }: { item: WorkItem; delivering: boolean }) {
 /** 自動測試那一格怎麼顯示 */
 function autotestMark(item: WorkItem): { text: string; className: string; title?: string } | null {
   const r = item.autotestResult;
-  if (!r) return item.autotested ? null : { text: '（略過）', className: 'skipped' };
+  if (!r) return item.autotested ? null : { text: t('（略過）'), className: 'skipped' };
   if (r.kind === 'passed') return null; // 照一般的打勾
-  if (r.kind === 'partial') return { text: '（部分通過）', className: 'partial', title: r.reason };
-  if (r.kind === 'failed') return { text: '（沒測成）', className: 'failed', title: r.reason };
-  return { text: '（看結果）', className: 'partial', title: '測試的 AI 沒有寫出結果，請看對話裡最後的報告' };
+  if (r.kind === 'partial') return { text: t('（部分通過）'), className: 'partial', title: r.reason };
+  if (r.kind === 'failed') return { text: t('（沒測成）'), className: 'failed', title: r.reason };
+  return { text: t('（看結果）'), className: 'partial', title: t('測試的 AI 沒有寫出結果，請看對話裡最後的報告') };
 }
 
 /** FlowPilot 自動交給 AI 的訊息（開發、測試指示、更新需求），不是你打的字 */
 function flowPilotLabel(text: string): string | null {
   const skill = text.match(/^［技能：(.+?)］/)?.[1];
   if (skill) {
-    const kind = text.includes('開瀏覽器重新測試') ? '重測指示' : text.includes('自動安排的測試') ? '自動測試指示' : text.includes('移植到商戶') ? '移植指示' : '開發指示';
-    return `${kind}（${skill}）`;
+    const kind = text.includes(zhOnly('開瀏覽器重新測試')) ? t('重測指示') : text.includes(zhOnly('自動安排的測試')) ? t('自動測試指示') : text.includes(zhOnly('移植到商戶')) ? t('移植指示') : t('開發指示');
+    return t('{kind}（{skill}）', { kind, skill });
   }
-  if (text.startsWith('## 更新需求')) return '更新需求';
-  if (text.startsWith('## 自我審查')) return '自我審查指示';
-  if (text.startsWith('## 整理驗收表')) return '整理驗收表指示';
-  if (text.startsWith('## 換新對話')) return '對話太長，整理重點後換新對話（點開看交接內容）';
-  if (text.startsWith('## 多語系 key 重複')) return '多語系 key 重複，請 AI 換名字';
-  if (text.startsWith('## 繼續改多語系')) return '多語系還沒做完，請 AI 繼續';
-  if (text.startsWith('## 接上你的 Chrome')) return '接上你的 Chrome（Chrome 會跳出頁面讓你選分頁）';
-  if (text.startsWith('## 看我的畫面')) {
+  if (text.startsWith(zhOnly('## 更新需求'))) return t('更新需求');
+  if (text.startsWith(zhOnly('## 自我審查'))) return t('自我審查指示');
+  if (text.startsWith(zhOnly('## 整理驗收表'))) return t('整理驗收表指示');
+  if (text.startsWith(zhOnly('## 換新對話'))) return t('對話太長，整理重點後換新對話（點開看交接內容）');
+  if (text.startsWith(zhOnly('## 多語系 key 重複'))) return t('多語系 key 重複，請 AI 換名字');
+  if (text.startsWith(zhOnly('## 繼續改多語系'))) return t('多語系還沒做完，請 AI 繼續');
+  if (text.startsWith(zhOnly('## 接上你的 Chrome'))) return t('接上你的 Chrome（Chrome 會跳出頁面讓你選分頁）');
+  if (text.startsWith(zhOnly('## 看我的畫面'))) {
     const ask = text.match(/^我想問：(.+)$/m)?.[1];
-    return `看你開的畫面${ask ? `：${ask}` : ''}`;
+    return ask ? t('看你開的畫面：{ask}', { ask }) : t('看你開的畫面');
   }
-  if (text.trim() === '請從剛才中斷的地方繼續。') return '請 AI 從中斷的地方繼續';
+  if (text.trim() === zhOnly('請從剛才中斷的地方繼續。')) return t('請 AI 從中斷的地方繼續');
   return null;
 }
 
@@ -102,7 +107,7 @@ function RemoveDialog({ item, onClose }: { item: WorkItem; onClose(): void }) {
   const running = ['running', 'preparing'].includes(item.status);
 
   useEffect(() => {
-    if (item.folder) api.branchInfo(item.id).then(setInfo).catch((e) => (setInfo(null), setError(`讀不到分支狀況：${errorText(e)}`)));
+    if (item.folder) api.branchInfo(item.id).then(setInfo).catch((e) => (setInfo(null), setError(t('讀不到分支狀況：{error}', { error: errorText(e) }))));
   }, [item.id]);
 
   async function confirm() {
@@ -110,7 +115,7 @@ function RemoveDialog({ item, onClose }: { item: WorkItem; onClose(): void }) {
     setError(null);
     try {
       const result = await api.remove(item.id);
-      if (info?.exists && !result.branchDeleted) window.alert(`已從工作台移除 ${item.ticketKey}，但本機分支沒有刪成：${result.reason ?? '原因不明'}`);
+      if (info?.exists && !result.branchDeleted) window.alert(t('已從工作台移除 {key}，但本機分支沒有刪成：{reason}', { key: item.ticketKey, reason: result.reason ?? t('原因不明') }));
       onClose();
     } catch (e) {
       setError(errorText(e));
@@ -121,28 +126,28 @@ function RemoveDialog({ item, onClose }: { item: WorkItem; onClose(): void }) {
   return (
     <div className="modal-backdrop" onClick={() => !busy && onClose()}>
       <div className="modal" role="dialog" onClick={(e) => e.stopPropagation()}>
-        <h3>從工作台移除 {item.ticketKey}？</h3>
+        <h3>{t('從工作台移除 {key}？', { key: item.ticketKey })}</h3>
         <p className="muted small">
           {item.project}{item.merchant ? ` m${item.merchant}` : ''} · <code>{item.branch}</code>
         </p>
         {running ? (
-          <p className="warn small">AI 還在執行，請先按「中斷這一輪」，停下來之後再移除。</p>
+          <p className="warn small">{t('AI 還在執行，請先按「中斷這一輪」，停下來之後再移除。')}</p>
         ) : (
           <>
-            <p className="small">移除就是回到從沒做過的樣子：</p>
+            <p className="small">{t('移除就是回到從沒做過的樣子：')}</p>
             <ul className="modal-notes small">
-              {info?.exists && <li>刪掉本機分支 <code>{info.branch}</code>；{item.folder} 停在這條分支上的話，會切回 {info.baseBranch}。</li>}
-              <li><strong>遠端分支不會動</strong>{info?.hasRemote ? '（遠端有這條分支，要刪請你自己刪）' : ''}。</li>
-              <li>審閱紀錄刪掉，單列表上的標籤也會消失；要重新做，從單列表再選一次。</li>
+              {info?.exists && <li>{t('刪掉本機分支')} <code>{info.branch}</code>{t('；{folder} 停在這條分支上的話，會切回 {base}。', { folder: String(item.folder), base: info.baseBranch })}</li>}
+              <li><strong>{t('遠端分支不會動')}</strong>{info?.hasRemote ? t('（遠端有這條分支，要刪請你自己刪）') : ''}{t('。')}</li>
+              <li>{t('審閱紀錄刪掉，單列表上的標籤也會消失；要重新做，從單列表再選一次。')}</li>
             </ul>
-            {info === undefined && <p className="muted small">讀取分支狀況中…</p>}
+            {info === undefined && <p className="muted small">{t('讀取分支狀況中…')}</p>}
             {info && (info.unpushed === null || info.unpushed > 0 || info.dirty.length > 0) && (
               <ul className="modal-notes small">
-                {info.unpushed === null && <li className="danger-text">算不出有幾個提交還沒推送；移除後，這些提交可能就沒了。</li>}
-                {!!info.unpushed && <li className="danger-text">有 {info.unpushed} 個提交還沒推送，移除後就沒了。</li>}
+                {info.unpushed === null && <li className="danger-text">{t('算不出有幾個提交還沒推送；移除後，這些提交可能就沒了。')}</li>}
+                {!!info.unpushed && <li className="danger-text">{t('有 {count} 個提交還沒推送，移除後就沒了。', { count: info.unpushed })}</li>}
                 {info.dirty.length > 0 && (
                   <li className="danger-text">
-                    有 {info.dirty.length} 個沒提交的改動會被丟掉：{info.dirty.slice(0, 5).join('、')}{info.dirty.length > 5 ? ' 等' : ''}
+                    {t('有 {count} 個沒提交的改動會被丟掉：{files}', { count: info.dirty.length, files: info.dirty.slice(0, 5).join(t('、')) })}{info.dirty.length > 5 ? t(' 等') : ''}
                   </li>
                 )}
               </ul>
@@ -151,9 +156,9 @@ function RemoveDialog({ item, onClose }: { item: WorkItem; onClose(): void }) {
         )}
         {error && <div className="error small">{error}</div>}
         <div className="row modal-actions">
-          <button disabled={busy} onClick={onClose}>取消</button>
+          <button disabled={busy} onClick={onClose}>{t('取消')}</button>
           <button className="danger-solid" disabled={busy || running || info === undefined} onClick={confirm}>
-            {busy ? '處理中…' : '移除'}
+            {busy ? t('處理中…') : t('移除')}
           </button>
         </div>
       </div>
@@ -209,14 +214,14 @@ function Entry({ entry }: { entry: ChatEntry }) {
       const label = flowPilotLabel(entry.text);
       if (label)
         return (
-          <Collapsible title={<span><span className="fp-tag">FlowPilot</span> {label.startsWith('對話太長') ? label : label.startsWith('看你開的畫面') || label.startsWith('接上你的 Chrome') ? `請 AI ${label}` : `交給 AI 的${label}`}</span>} tone="soft flowpilot">
+          <Collapsible title={<span><span className="fp-tag">FlowPilot</span> {entry.text.startsWith(zhOnly('## 換新對話')) ? label : entry.text.startsWith(zhOnly('## 看我的畫面')) || entry.text.startsWith(zhOnly('## 接上你的 Chrome')) ? t('請 AI {label}', { label }) : t('交給 AI 的{label}', { label })}</span>} tone="soft flowpilot">
             <Markdown text={entry.text} />
           </Collapsible>
         );
       return (
         <div className="msg user">
           <Markdown text={entry.text} />
-          {!!entry.images?.length && <div className="muted small">附上 {entry.images.length} 張截圖</div>}
+          {!!entry.images?.length && <div className="muted small">{t('附上 {count} 張截圖', { count: entry.images.length })}</div>}
         </div>
       );
     }
@@ -224,18 +229,18 @@ function Entry({ entry }: { entry: ChatEntry }) {
       return (
         <div className="msg assistant">
           {/* 驗收表的 JSON 畫在右邊「驗收」，對話裡只留一句 */}
-          <Markdown text={entry.text.replace(/```flowpilot-test[\s\S]*?(```|$)/g, '_（驗收表已更新，看右邊「驗收」）_')} />
+          <Markdown text={entry.text.replace(/```flowpilot-test[\s\S]*?(```|$)/g, t('_（驗收表已更新，看右邊「驗收」）_'))} />
         </div>
       );
     case 'reasoning':
       return entry.text ? (
-        <Collapsible title={<span className="muted">思考</span>} tone="soft">
+        <Collapsible title={<span className="muted">{t('思考')}</span>} tone="soft">
           <Markdown text={entry.text} className="muted" />
         </Collapsible>
       ) : null;
     case 'plan':
       return (
-        <Collapsible title="計畫" open tone="soft">
+        <Collapsible title={t('計畫')} open tone="soft">
           <Markdown text={entry.text} />
         </Collapsible>
       );
@@ -247,17 +252,17 @@ function Entry({ entry }: { entry: ChatEntry }) {
           tone={failed && !running ? 'bad' : ''}
           title={
             <span>
-              <span className="muted">{running ? '執行中' : failed ? `失敗（${entry.exitCode ?? '—'}）` : '執行'}</span> <code>{(entry.command ?? '').replace(/^\/bin\/zsh -lc /, '')}</code>
+              <span className="muted">{running ? t('執行中') : failed ? t('失敗（{code}）', { code: entry.exitCode ?? '—' }) : t('執行')}</span> <code>{(entry.command ?? '').replace(/^\/bin\/zsh -lc /, '')}</code>
             </span>
           }
         >
-          <pre className="output">{entry.output || '（沒有輸出）'}</pre>
+          <pre className="output">{entry.output || t('（沒有輸出）')}</pre>
         </Collapsible>
       );
     }
     case 'fileChange':
       return (
-        <Collapsible title={<span>改了 {entry.files?.length ?? 0} 個檔案{entry.status === 'declined' ? '（被拒絕）' : ''}</span>} open>
+        <Collapsible title={<span>{t('改了 {count} 個檔案', { count: entry.files?.length ?? 0 })}{entry.status === 'declined' ? t('（被拒絕）') : ''}</span>} open>
           {(entry.files ?? []).map((f) => (
             <Collapsible key={f.path} title={<code>{f.path}</code>} tone="soft">
               <DiffView diff={f.diff} />
@@ -267,12 +272,12 @@ function Entry({ entry }: { entry: ChatEntry }) {
       );
     case 'tool':
       return (
-        <Collapsible title={<span><span className="muted">工具</span> {entry.text}</span>} tone={entry.status === 'failed' ? 'bad' : ''}>
-          <pre className="output">{entry.output || '（沒有輸出）'}</pre>
+        <Collapsible title={<span><span className="muted">{t('工具')}</span> {entry.text}</span>} tone={entry.status === 'failed' ? 'bad' : ''}>
+          <pre className="output">{entry.output || t('（沒有輸出）')}</pre>
         </Collapsible>
       );
     case 'search':
-      return <div className="muted small">搜尋：{entry.text}</div>;
+      return <div className="muted small">{t('搜尋：{text}', { text: entry.text })}</div>;
     default:
       return <div className="muted small">— {entry.text} —</div>;
   }
@@ -282,19 +287,19 @@ function Entry({ entry }: { entry: ChatEntry }) {
 function I18nBar({ id, progress }: { id: number; progress: I18nProgress }) {
   const { phase, count, batches, file, note } = progress;
   const text =
-    phase === 'working' ? `AI 正在改寫死的文字（已記下 ${count} 條）`
-    : phase === 'paused' ? `還沒做完，AI 停下來了（已記下 ${count} 條）：要它接著做，就跟它說「繼續改多語系」`
-    : phase === 'translating' ? `AI 改完了，FlowPilot 翻譯其他語言中（${batches?.done ?? 0}/${batches?.total ?? 0} 批，共 ${count} 條）`
-    : phase === 'saved' ? `${count} 條已存到桌面 ${file}${note ? `（${note}）` : ''}`
-    : `翻譯失敗：${note}（已記下的 ${count} 條還在，AI 說做完時會重新翻）`;
+    phase === 'working' ? t('AI 正在改寫死的文字（已記下 {count} 條）', { count })
+    : phase === 'paused' ? t('還沒做完，AI 停下來了（已記下 {count} 條）：要它接著做，就跟它說「繼續改多語系」', { count })
+    : phase === 'translating' ? t('AI 改完了，FlowPilot 翻譯其他語言中（{done}/{total} 批，共 {count} 條）', { done: batches?.done ?? 0, total: batches?.total ?? 0, count })
+    : phase === 'saved' ? (note ? t('{count} 條已存到桌面 {file}（{note}）', { count, file: String(file), note }) : t('{count} 條已存到桌面 {file}', { count, file: String(file) }))
+    : t('翻譯失敗：{note}（已記下的 {count} 條還在，AI 說做完時會重新翻）', { note: String(note), count });
   return (
     <div className={`i18n-bar ${phase}`}>
       {(phase === 'working' || phase === 'translating') && <span className="spinner" />}
-      <span className="fp-tag">多語系</span>
+      <span className="fp-tag">{t('多語系')}</span>
       <span>{text}</span>
       {phase === 'saved' && (
         <button className="link small push-right" onClick={() => api.revealI18n(id)}>
-          在 Finder 顯示
+          {t('在 Finder 顯示')}
         </button>
       )}
     </div>
@@ -351,7 +356,7 @@ export function ChatPanel({ item }: { item: WorkItem }) {
           setEntries(pending.reduce(applyEvent, history));
           pending = [];
         })
-        .catch((e) => !cancelled && setError(`讀取對話紀錄失敗：${errorText(e)}`))
+        .catch((e) => !cancelled && setError(t('讀取對話紀錄失敗：{error}', { error: errorText(e) })))
         .finally(() => !cancelled && setLoading(false));
     } else {
       loaded = true;
@@ -404,10 +409,10 @@ export function ChatPanel({ item }: { item: WorkItem }) {
         .send(
           item.id,
           [
-            '## 接上你的 Chrome',
-            "在 exec 裡呼叫一次 tools.mcp__flowpilot_shared_browser__browser_tabs({ action: 'list' })（共用瀏覽器的列出分頁），讓 Chrome 跳出頁面讓我選分頁。",
-            '接上後只回一句「接上了」，不要截圖、不要看頁面、不要做任何別的事，等我接著說要看什麼。',
-            '只能用 flowpilot_shared_browser，不要用其他瀏覽器或控制電腦的工具代替。工具清單上看不到它是正常的，它在 exec 的 tools 裡；呼叫失敗就照實回「接不上」和錯誤訊息。',
+            zhOnly('## 接上你的 Chrome'),
+            zhOnly("在 exec 裡呼叫一次 tools.mcp__flowpilot_shared_browser__browser_tabs({ action: 'list' })（共用瀏覽器的列出分頁），讓 Chrome 跳出頁面讓我選分頁。"),
+            zhOnly('接上後只回一句「接上了」，不要截圖、不要看頁面、不要做任何別的事，等我接著說要看什麼。'),
+            zhOnly('只能用 flowpilot_shared_browser，不要用其他瀏覽器或控制電腦的工具代替。工具清單上看不到它是正常的，它在 exec 的 tools 裡；呼叫失敗就照實回「接不上」和錯誤訊息。'),
           ].join('\n'),
           [],
         )
@@ -422,11 +427,11 @@ export function ChatPanel({ item }: { item: WorkItem }) {
     // 用「## 看我的畫面」開頭：對話裡顯示成 FlowPilot 的動作標籤，不是一大段你打的話
     const message = lookMode
       ? [
-          '## 看我的畫面',
-          '我開著「看我的」模式：我說的話都是在講我在 Chrome 開的畫面。先用共用瀏覽器（flowpilot_shared_browser）看我選給你的分頁（看現在的畫面，不要用之前看過的），只拿回答需要的東西（通常一次畫面快照或截圖就夠），不要多看。',
-          `我想問：${text.trim()}`,
-          '只看不動：不要點擊、填寫或送出；我這句話沒叫你改，就不要改程式碼。',
-          '只能用 flowpilot_shared_browser 看（在 exec 裡用 tools.mcp__flowpilot_shared_browser__browser_snapshot、browser_take_screenshot 這類名稱呼叫），不要用其他瀏覽器或控制電腦的工具代替；呼叫失敗就照實說接不上和錯誤訊息。',
+          zhOnly('## 看我的畫面'),
+          zhOnly('我開著「看我的」模式：我說的話都是在講我在 Chrome 開的畫面。先用共用瀏覽器（flowpilot_shared_browser）看我選給你的分頁（看現在的畫面，不要用之前看過的），只拿回答需要的東西（通常一次畫面快照或截圖就夠），不要多看。'),
+          zhOnly(`我想問：${text.trim()}`),
+          zhOnly('只看不動：不要點擊、填寫或送出；我這句話沒叫你改，就不要改程式碼。'),
+          zhOnly('只能用 flowpilot_shared_browser 看（在 exec 裡用 tools.mcp__flowpilot_shared_browser__browser_snapshot、browser_take_screenshot 這類名稱呼叫），不要用其他瀏覽器或控制電腦的工具代替；呼叫失敗就照實說接不上和錯誤訊息。'),
         ].join('\n')
       : text;
     const attached = attach.images;
@@ -456,11 +461,14 @@ export function ChatPanel({ item }: { item: WorkItem }) {
     } catch {}
     const pending = pendingChecks(item);
     const warning =
-      (empty ? `\n\n🛑 這張單沒有任何改動：${item.branch} 比 ${item.baseBranch} 沒有多任何提交。AI 可能沒有真的開發（看一下對話裡它說的原因）。` : '') +
-      (unpushed > 0 ? `\n\n⚠️ 還有 ${unpushed} 個提交沒推送。完成之後還是可以推送，但要記得。` : '') +
-      (pending ? `\n\n⚠️ 驗收表還有 ${pending} 項要你測、還沒勾「我測過了」。` : '');
+      (empty ? '\n\n' + t('🛑 這張單沒有任何改動：{branch} 比 {base} 沒有多任何提交。AI 可能沒有真的開發（看一下對話裡它說的原因）。', { branch: item.branch, base: String(item.baseBranch) }) : '') +
+      (unpushed > 0 ? '\n\n' + t('⚠️ 還有 {count} 個提交沒推送。完成之後還是可以推送，但要記得。', { count: unpushed }) : '') +
+      (pending ? '\n\n' + t('⚠️ 驗收表還有 {count} 項要你測、還沒勾「我測過了」。', { count: pending }) : '');
     const ok = window.confirm(
-      `完成 ${item.ticketKey}，讓出 ${item.folder} 給下一張？${warning}\n\n資料夾要乾淨（改動都提交或捨棄了）；environment.ts（瀏覽器測試切 SIT／UAT 用的）會順便還原，本機網站也會停掉。`,
+      t('完成 {key}，讓出 {folder} 給下一張？', { key: item.ticketKey, folder: String(item.folder) }) +
+        warning +
+        '\n\n' +
+        t('資料夾要乾淨（改動都提交或捨棄了）；environment.ts（瀏覽器測試切 SIT／UAT 用的）會順便還原，本機網站也會停掉。'),
     );
     if (ok) act(() => api.finish(item.id, true));
   }
@@ -472,49 +480,57 @@ export function ChatPanel({ item }: { item: WorkItem }) {
   // 欠的測試：還有沒勾「我測過了」的，不能完成，只能「先交付，待補測」
   const owed = pendingChecks(item);
   const parkStep = {
-    label: `先交付，待補測（${owed} 項）`,
-    title: '改動都提交了、測試還沒測完：讓出資料夾給下一張，欠的測試留著；要修時按「繼續修」',
+    label: t('先交付，待補測（{count} 項）', { count: owed }),
+    title: t('改動都提交了、測試還沒測完：讓出資料夾給下一張，欠的測試留著；要修時按「繼續修」'),
     run: () => {
-      if (window.confirm(`先交付 ${item.ticketKey}，讓出 ${item.folder}？\n\n還有 ${owed} 項測試沒勾，會一直留在驗收表上，補測完才能完成。\n可以先發 PR；要修的時候按「繼續修」，會重新拿一個資料夾、接著原本的對話。`)) act(() => api.park(item.id));
+      const message =
+        t('先交付 {key}，讓出 {folder}？', { key: item.ticketKey, folder: String(item.folder) }) +
+        '\n\n' +
+        t('還有 {count} 項測試沒勾，會一直留在驗收表上，補測完才能完成。', { count: owed }) +
+        '\n' +
+        t('可以先發 PR；要修的時候按「繼續修」，會重新拿一個資料夾、接著原本的對話。');
+      if (window.confirm(message)) act(() => api.park(item.id));
     },
   };
   let next: { label: string; title?: string; run(): void } | null = null;
   if (canDeliver && delivery?.onBranch && git) {
     if (delivery.changes.length) {
       next = {
-        label: busy ? '提交中…' : `提交 ${delivery.changes.length} 個檔案`,
-        title: '把 AI 的改動提交到這張單的分支（專案的提交前檢查可能要等幾十秒）；提交訊息可以在右邊「改動」修改',
+        label: busy ? t('提交中…') : t('提交 {count} 個檔案', { count: delivery.changes.length }),
+        title: t('把 AI 的改動提交到這張單的分支（專案的提交前檢查可能要等幾十秒）；提交訊息可以在右邊「改動」修改'),
         run: () => act(async () => {
           const prefs = commitPrefs(item.id);
           const result = await api.git.commitAll(item.id, prefs.message ?? item.prTitle, prefs.who ?? undefined);
           gitChanged();
-          setNotice(`已提交（${result.sha}）${result.restored.length ? `；提交前檢查順手改到的 ${result.restored.length} 個無關檔案已還原` : ''}`);
+          setNotice(t('已提交（{sha}）', { sha: result.sha }) + (result.restored.length ? t('；提交前檢查順手改到的 {count} 個無關檔案已還原', { count: result.restored.length }) : ''));
         }),
       };
     } else if (delivery.pushCount > 0) {
       const count = delivery.pushCount;
       next = {
-        label: busy ? '推送中…' : git.needsForce ? `強制推送 ${count} 個提交` : `推送 ${count} 個提交`,
-        title: git.needsForce ? '分支 rebase 過，跟遠端的歷史不一樣，會用 --force-with-lease 推送' : git.hasRemote ? undefined : '遠端還沒有這條分支，推送時會建立',
+        label: busy ? t('推送中…') : git.needsForce ? t('強制推送 {count} 個提交', { count }) : t('推送 {count} 個提交', { count }),
+        title: git.needsForce ? t('分支 rebase 過，跟遠端的歷史不一樣，會用 --force-with-lease 推送') : git.hasRemote ? undefined : t('遠端還沒有這條分支，推送時會建立'),
         run: () => {
           const what = git.needsForce
-            ? `遠端的 ${item.branch} 跟本機的歷史不一樣（rebase 過），要強制推送嗎？\n\n會用 --force-with-lease：遠端被別人推了新的提交時會拒絕覆蓋。`
-            : `推送 ${count} 個提交到遠端的 ${item.branch}${git.hasRemote ? '' : '（建立遠端分支）'}？`;
+            ? t('遠端的 {branch} 跟本機的歷史不一樣（rebase 過），要強制推送嗎？', { branch: item.branch }) + '\n\n' + t('會用 --force-with-lease：遠端被別人推了新的提交時會拒絕覆蓋。')
+            : git.hasRemote
+              ? t('推送 {count} 個提交到遠端的 {branch}？', { count, branch: item.branch })
+              : t('推送 {count} 個提交到遠端的 {branch}（建立遠端分支）？', { count, branch: item.branch });
           if (window.confirm(what)) act(async () => {
             await api.git.push(item.id);
             gitChanged();
-            setNotice('已推送');
+            setNotice(t('已推送'));
           });
         },
       };
     } else if (item.status === 'review') {
-      next = owed ? parkStep : { label: '完成這張單', run: finish };
+      next = owed ? parkStep : { label: t('完成這張單'), run: finish };
     }
   } else if (item.status === 'review' && item.folder) {
-    next = owed ? parkStep : { label: '完成這張單', run: finish };
+    next = owed ? parkStep : { label: t('完成這張單'), run: finish };
   } else if (item.status === 'parked') {
     // 待補測：補測完就可以完成；要修就「繼續修」（拿資料夾）
-    next = owed ? { label: '繼續修', title: '拿一個空的資料夾、切回這條分支，接著原本的對話', run: () => act(() => api.resume(item.id)) } : { label: '完成這張單', run: finish };
+    next = owed ? { label: t('繼續修'), title: t('拿一個空的資料夾、切回這條分支，接著原本的對話'), run: () => act(() => api.resume(item.id)) } : { label: t('完成這張單'), run: finish };
   }
   // 自動測試沒測成或看不出結果時，處理好之後可以再跑一次
   const canRerun = active && !!item.threadId && item.stage === 'manual' && ['review', 'waiting'].includes(item.status) && !item.pending && !!item.autotestResult && item.autotestResult.kind !== 'passed';
@@ -534,23 +550,23 @@ export function ChatPanel({ item }: { item: WorkItem }) {
           <strong>{item.ticketKey}</strong>
           {item.members.length > 0 && (
             <span className="mark group" title={item.members.map((m) => `${m.key} ${m.summary}`).join('\n')}>
-              ＋{item.members.filter((m) => m.key !== item.ticketKey).map((m) => m.key).join('、')}
+              {t('＋')}{item.members.filter((m) => m.key !== item.ticketKey).map((m) => m.key).join(t('、'))}
             </span>
           )}
           <span className="item-title" title={item.ticketSummary}>{item.ticketSummary}</span>
         </div>
         <div className="row head-actions">
-          {running && <button disabled={busy} onClick={() => act(() => api.interrupt(item.id))}>中斷這一輪</button>}
+          {running && <button disabled={busy} onClick={() => act(() => api.interrupt(item.id))}>{t('中斷這一輪')}</button>}
           {canRetest && !delivery?.delivering && (
             <button
               disabled={busy}
-              title="AI 先列測試計畫給你確認，再開瀏覽器測給你看（用測試帳號自動登入）"
+              title={t('AI 先列測試計畫給你確認，再開瀏覽器測給你看（用測試帳號自動登入）')}
               onClick={() => act(async () => {
                 stick.current = true;
                 await api.retest(item.id);
               })}
             >
-              開瀏覽器測給我看
+              {t('開瀏覽器測給我看')}
             </button>
           )}
           {next && (
@@ -558,15 +574,15 @@ export function ChatPanel({ item }: { item: WorkItem }) {
               {next.label}
             </button>
           )}
-          {['blocked', 'failed', 'stopped'].includes(item.status) && <button disabled={busy} onClick={() => act(() => api.retry(item.id))}>重試</button>}
+          {['blocked', 'failed', 'stopped'].includes(item.status) && <button disabled={busy} onClick={() => act(() => api.retry(item.id))}>{t('重試')}</button>}
           {item.status !== 'removed' && (
             <details className="more">
-              <summary>更多</summary>
+              <summary>{t('更多')}</summary>
               <div className="more-menu">
                 {canRerun && (
                   <button
                     disabled={busy}
-                    title="用無頭瀏覽器再跑一次自動測試（例如處理好帳號、開了 VPN 之後）"
+                    title={t('用無頭瀏覽器再跑一次自動測試（例如處理好帳號、開了 VPN 之後）')}
                     onClick={(e) => {
                       e.currentTarget.closest('details')?.removeAttribute('open');
                       act(async () => {
@@ -575,13 +591,13 @@ export function ChatPanel({ item }: { item: WorkItem }) {
                       });
                     }}
                   >
-                    重跑自動測試
+                    {t('重跑自動測試')}
                   </button>
                 )}
                 {canRetest && delivery?.delivering && (
                   <button
                     disabled={busy}
-                    title="AI 先列測試計畫給你確認，再開瀏覽器測給你看（用測試帳號自動登入）"
+                    title={t('AI 先列測試計畫給你確認，再開瀏覽器測給你看（用測試帳號自動登入）')}
                     onClick={(e) => {
                       e.currentTarget.closest('details')?.removeAttribute('open');
                       act(async () => {
@@ -590,13 +606,13 @@ export function ChatPanel({ item }: { item: WorkItem }) {
                       });
                     }}
                   >
-                    開瀏覽器測給我看
+                    {t('開瀏覽器測給我看')}
                   </button>
                 )}
                 {active && item.threadId && (
                   <button
                     disabled={busy || running}
-                    title={running ? 'AI 執行中，等它停下來再更新需求' : '重新讀 Jira，跟上次的內容比對，請 AI 在對話裡說明有沒有變更、打算怎麼改'}
+                    title={running ? t('AI 執行中，等它停下來再更新需求') : t('重新讀 Jira，跟上次的內容比對，請 AI 在對話裡說明有沒有變更、打算怎麼改')}
                     onClick={(e) => {
                       e.currentTarget.closest('details')?.removeAttribute('open');
                       act(async () => {
@@ -605,12 +621,12 @@ export function ChatPanel({ item }: { item: WorkItem }) {
                       });
                     }}
                   >
-                    更新需求
+                    {t('更新需求')}
                   </button>
                 )}
-                {active && item.threadId && item.folder && <button onClick={() => act(() => api.openInVSCode(item.id))}>在 VS Code 查看</button>}
+                {active && item.threadId && item.folder && <button onClick={() => act(() => api.openInVSCode(item.id))}>{t('在 VS Code 查看')}</button>}
                 {active && item.status !== 'review' && !running && item.status !== 'preparing' && item.folder && (
-                  <button onClick={finish} disabled={!!owed} title={owed ? `還有 ${owed} 項測試沒勾，補測完才能完成` : undefined}>完成這張單</button>
+                  <button onClick={finish} disabled={!!owed} title={owed ? t('還有 {count} 項測試沒勾，補測完才能完成', { count: owed }) : undefined}>{t('完成這張單')}</button>
                 )}
                 <button
                   className="danger"
@@ -620,7 +636,7 @@ export function ChatPanel({ item }: { item: WorkItem }) {
                     setRemoving(true);
                   }}
                 >
-                  移除
+                  {t('移除')}
                 </button>
               </div>
             </details>
@@ -631,8 +647,8 @@ export function ChatPanel({ item }: { item: WorkItem }) {
           <div className="muted small head-meta">
             {item.project}{item.merchant ? ` m${item.merchant}` : ''}
             {/* 資料夾跟專案同名就不重複寫 */}
-            {item.folder !== item.project && <> · {item.folder ?? '等資料夾'}</>} · <code>{item.branch}</code>
-            {item.activity && !REDUNDANT_ACTIVITY.test(item.activity) && <> · {item.activity}</>}
+            {item.folder !== item.project && <> · {item.folder ?? t('等資料夾')}</>} · <code>{item.branch}</code>
+            {item.activity && !isRedundantActivity(item.activity) && <> · {item.activity}</>}
           </div>
           {item.threadId && <Stages item={item} delivering={!!delivery?.delivering} />}
         </div>
@@ -646,8 +662,8 @@ export function ChatPanel({ item }: { item: WorkItem }) {
           stick.current = box.scrollHeight - box.scrollTop - box.clientHeight < 40;
         }}
       >
-        {loading && <p className="muted small">讀取對話紀錄中…</p>}
-        {!item.threadId && <p className="muted">{item.activity || '還沒開始跟 AI 對話。'}</p>}
+        {loading && <p className="muted small">{t('讀取對話紀錄中…')}</p>}
+        {!item.threadId && <p className="muted">{item.activity || t('還沒開始跟 AI 對話。')}</p>}
         {/* 多語系進度像一則訊息：排在開始的時間點，之後的訊息排在它下面，跟著一起捲走 */}
         {item.i18n && i18nAt < 0 && <I18nBar id={item.id} progress={item.i18n} />}
         {entries.map((entry, index) => (
@@ -656,17 +672,17 @@ export function ChatPanel({ item }: { item: WorkItem }) {
             {item.i18n && index === i18nAt && <I18nBar id={item.id} progress={item.i18n} />}
           </Fragment>
         ))}
-        {running && <div className="muted small typing">AI 工作中…</div>}
+        {running && <div className="muted small typing">{t('AI 工作中…')}</div>}
 
         {item.pending?.kind === 'approval' && (
           <div className="pending">
             <div>
-              AI 要執行<strong>{item.pending.reason}</strong>的指令：
+              {t('AI 要執行')}<strong>{item.pending.reason}</strong>{t('的指令：')}
             </div>
             <code className="command">{item.pending.command}</code>
             <div className="row">
-              <button className="primary" disabled={busy} onClick={() => act(() => api.approve(item.id, true))}>同意</button>
-              <button disabled={busy} onClick={() => act(() => api.approve(item.id, false))}>拒絕</button>
+              <button className="primary" disabled={busy} onClick={() => act(() => api.approve(item.id, true))}>{t('同意')}</button>
+              <button disabled={busy} onClick={() => act(() => api.approve(item.id, false))}>{t('拒絕')}</button>
             </div>
           </div>
         )}
@@ -687,10 +703,10 @@ export function ChatPanel({ item }: { item: WorkItem }) {
             {item.pending.questions.map((q) => (
               <div key={q.id}>
                 <strong>{q.header}</strong> {q.question}
-                {q.options.length > 0 && <div className="muted">選項：{q.options.join('／')}</div>}
+                {q.options.length > 0 && <div className="muted">{t('選項：{options}', { options: q.options.join(t('／')) })}</div>}
               </div>
             ))}
-            <div className="muted small">在下面的輸入框回答。</div>
+            <div className="muted small">{t('在下面的輸入框回答。')}</div>
           </div>
         )}
       </div>
@@ -703,8 +719,8 @@ export function ChatPanel({ item }: { item: WorkItem }) {
           {attach.view}
           {lookMode && (
             <div className="look-chip">
-              <span className="fp-tag">FlowPilot</span> 看我的模式開著：你說的話 AI 都會先看你在 Chrome 選的畫面再回答
-              <button className="link" title="關掉看我的模式" onClick={() => setLookMode(false)}>×</button>
+              <span className="fp-tag">FlowPilot</span> {t('看我的模式開著：你說的話 AI 都會先看你在 Chrome 選的畫面再回答')}
+              <button className="link" title={t('關掉看我的模式')} onClick={() => setLookMode(false)}>×</button>
             </div>
           )}
           <textarea
@@ -712,9 +728,9 @@ export function ChatPanel({ item }: { item: WorkItem }) {
             rows={3}
             value={text}
             placeholder={
-              running ? '補充指示（會插進正在進行的這一輪，Enter 送出，Shift＋Enter 換行）。可以附圖。'
-              : awaitingYou ? 'AI 在等你回答…（Enter 送出，Shift＋Enter 換行；可以附圖：按「附圖」、拖曳進來或直接貼上）'
-              : '跟 AI 說…（Enter 送出，Shift＋Enter 換行；可以附圖：按「附圖」、拖曳進來或直接貼上）'
+              running ? t('補充指示（會插進正在進行的這一輪，Enter 送出，Shift＋Enter 換行）。可以附圖。')
+              : awaitingYou ? t('AI 在等你回答…（Enter 送出，Shift＋Enter 換行；可以附圖：按「附圖」、拖曳進來或直接貼上）')
+              : t('跟 AI 說…（Enter 送出，Shift＋Enter 換行；可以附圖：按「附圖」、拖曳進來或直接貼上）')
             }
             onChange={(e) => setText(e.target.value)}
             onKeyDown={(e) => {
@@ -728,7 +744,7 @@ export function ChatPanel({ item }: { item: WorkItem }) {
           <div className="row composer-actions">
             {attach.pickButton}
             <button className="primary" disabled={busy || (!text.trim() && attach.images.length === 0)} onClick={send}>
-              送出
+              {t('送出')}
             </button>
           </div>
         </div>

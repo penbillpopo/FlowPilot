@@ -551,3 +551,27 @@ li.ticket.status-parked { border-left-color: var(--warn); }
 .i18n-bar.paused, .i18n-bar.failed { border-color: #e0a030; }
 .i18n-bar.saved { border-color: #34c759; }
 .i18n-bar .spinner { width: 12px; height: 12px; border: 2px solid currentColor; border-right-color: transparent; border-radius: 50%; animation: fp-spin 0.8s linear infinite; flex: none; }
+.skin-panel .skin-lang { margin-top: 4px; }
+
+/* ---- 英文介面（英文比中文長）：不跑版、不重疊。用 scripts/layout-check 檢查過三種視窗寬度、兩種外觀、中英文 ---- */
+/* 英文比中文長：左邊的標籤寬度跟著文字走 */
+.test-label { width: auto; min-width: 32px; white-space: nowrap; }
+/* 標題列：單號不拆行；合成的單號太長就用 … 收起來（滑過去看全部） */
+.chat-head-top .chat-title { min-width: min(240px, 100%); overflow: hidden; }
+.chat-title strong { white-space: nowrap; flex-shrink: 0; }
+.chat-title .mark.group { min-width: 0; flex-shrink: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+/* 按鈕、選單項目的字不換行（內容型的大按鈕除外） */
+button:not(.ac-head) { white-space: nowrap; }
+footer > button { flex-shrink: 0; }
+/* 時間不換行 */
+td.time { white-space: nowrap; }
+/* 階段列可以縮小、換行，不跑出標題區 */
+.chat-head-sub .stages { min-width: 0; flex-shrink: 1; flex-wrap: wrap; }
+/* 標題右邊的按鈕：空間不夠就整組換到下一行，不要擠到蓋住單號 */
+.chat-head-top .head-actions { flex-shrink: 0; max-width: 100%; }
+/* AI 回覆裡很長、沒有空白的字（key 名稱、網址）：折行，不要把對話區撐出橫向捲軸 */
+.markdown { overflow-wrap: anywhere; }
+/* 區塊標題和後面的說明之間留點空（英文不能黏在一起） */
+.plan-block-title > .muted { margin-left: 8px; }
+/* 說明文字後面接的連結按鈕，留點空（例如「審閱於 … 重新審閱」） */
+.muted > button.link { margin-left: 6px; }

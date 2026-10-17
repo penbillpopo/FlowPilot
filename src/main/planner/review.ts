@@ -1,5 +1,6 @@
 // 審閱：讀懂單 → 判斷專案 → （一般、複雜的單）大略看一下程式碼 → 找出單子的問題。
 // 問題不會擋住開發；你可以回答、照 AI 建議、或標成不是問題，也可以跟 AI 討論。
+import { t, zhOnly } from '../../shared/i18n';
 import type { CheckDecision, IssueType, JiraTicket, PlanEntry, Review, ReviewChecks, ReviewIssue } from '../../shared/types';
 import type { IssueContext } from '../jira';
 import type { Settings } from '../settings';
@@ -16,8 +17,8 @@ const issueSchema = {
   properties: {
     type: { type: 'string', enum: ISSUE_TYPES },
     importance: { type: 'string', enum: ['重要', '一般'], description: '重要：照字面做下去很可能做錯；一般：可以先照建議做' },
-    title: { type: 'string', description: '一句話說出問題（繁體中文）' },
-    detail: { type: 'string', description: '為什麼是問題、會造成什麼影響（繁體中文，簡短）' },
+    title: { type: 'string', description: zhOnly('一句話說出問題（繁體中文）') },
+    detail: { type: 'string', description: zhOnly('為什麼是問題、會造成什麼影響（繁體中文，簡短）') },
     quote: { type: 'string', description: '單上相關的原文（照抄），沒有原文就寫「單上沒有提到」' },
     from: { type: 'string', description: '出自哪張單的單號' },
     suggestion: { type: 'string', description: 'PM 還沒回之前，建議先怎麼做（繁體中文）' },
@@ -30,7 +31,7 @@ function checkSchema(description: string) {
     additionalProperties: false,
     required: ['need', 'reason'],
     description,
-    properties: { need: { type: 'boolean' }, reason: { type: 'string', description: '為什麼要或不要（繁體中文，一句話）' } },
+    properties: { need: { type: 'boolean' }, reason: { type: 'string', description: zhOnly('為什麼要或不要（繁體中文，一句話）') } },
   };
 }
 
@@ -190,7 +191,7 @@ export function sanitizeReview(raw: any, ticket: JiraTicket, settings: Settings,
     checks: sanitizeChecks(raw?.checks, level),
     // 舊的結果沒有這個欄位，當成完成
     complete: raw?.complete !== false,
-    problem: raw?.complete === false ? String(raw?.problem ?? '').trim() || '原因不明' : '',
+    problem: raw?.complete === false ? String(raw?.problem ?? '').trim() || t('原因不明') : '',
     acceptance: list(raw?.acceptance),
     pages: list(raw?.pages),
     apis: list(raw?.apis),

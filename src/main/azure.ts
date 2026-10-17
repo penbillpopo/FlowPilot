@@ -1,5 +1,6 @@
 // 用 Azure DevOps 發 PR：沿用你推送時的 git 憑證（git credential fill），不另外登入；憑證不寫進紀錄、不顯示。
 // 審核人從這個專案最近的 PR 抓出曾經審核過的人；目標分支從遠端的分支列出。
+import { inChinese, t } from '../shared/i18n';
 import { spawn } from 'node:child_process';
 import type { AcceptanceItem, PrOptions, PrRecord, PrReviewer, WorkItem } from '../shared/types';
 import { runGit } from './git';
@@ -48,7 +49,7 @@ function credential(cwd: string, host: string): Promise<string> {
     child.on('close', () => {
       const user = out.match(/^username=(.*)$/m)?.[1] ?? '';
       const pass = out.match(/^password=(.*)$/m)?.[1] ?? '';
-      if (!pass) return reject(new Error(`這台電腦的 git 沒有存 ${host} 的憑證，請先在這個專案推送一次`));
+      if (!pass) return reject(new Error(t('這台電腦的 git 沒有存 {host} 的憑證，請先在這個專案推送一次', { host })));
       resolve('Basic ' + Buffer.from(`${user}:${pass}`).toString('base64'));
     });
     child.stdin.end(`protocol=https\nhost=${host}\n\n`);
@@ -78,7 +79,7 @@ export class AzureRepo {
   static async open(cwd: string): Promise<AzureRepo> {
     const remote = (await runGit(cwd, ['remote', 'get-url', 'origin'])).stdout.trim();
     const info = parseAzureRemote(remote);
-    if (!info) throw new Error('這個專案的遠端不在 Azure DevOps 上');
+    if (!info) throw new Error(t('這個專案的遠端不在 Azure DevOps 上'));
     return new AzureRepo(info, await credential(cwd, info.host));
   }
 
@@ -91,14 +92,14 @@ export class AzureRepo {
       signal: AbortSignal.timeout(20_000),
     });
     const text = await response.text();
-    if (response.status === 401 || response.status === 203) throw new Error('Azure 不接受這組憑證（可能過期了），請重新推送一次讓 git 更新憑證');
-    if (response.status === 403) throw new Error('這組憑證的權限不夠（需要 Code 的讀寫權限）');
+    if (response.status === 401 || response.status === 203) throw new Error(t('Azure 不接受這組憑證（可能過期了），請重新推送一次讓 git 更新憑證'));
+    if (response.status === 403) throw new Error(t('這組憑證的權限不夠（需要 Code 的讀寫權限）'));
     if (!response.ok) {
       let message = text;
       try {
         message = JSON.parse(text).message ?? text;
       } catch {}
-      throw new Error(`Azure 回傳 ${response.status}：${message.slice(0, 300)}`);
+      throw new Error(t('Azure 回傳 {status}：{message}', { status: response.status, message: message.slice(0, 300) }));
     }
     return (text ? JSON.parse(text) : {}) as T;
   }
@@ -185,28 +186,33 @@ export function defaultPrTitle(item: Pick<WorkItem, 'ticketKey' | 'ticketSummary
 }
 
 /** PR 說明：Jira 連結＋驗收表的「改了什麼、怎麼測」 */
-export function prDescription(item: Pick<WorkItem, 'ticketKey' | 'ticketSummary' | 'mainKey' | 'mainUrl' | 'testReport' | 'branch' | 'baseBranch'> & { portOf?: WorkItem['portOf']; members?: WorkItem['members'] }): string {
+/** PR 說明：給團隊看的，固定用中文（不管介面語言） */
+export function prDescription(item: Parameters<typeof buildPrDescription>[0]): string {
+  return inChinese(() => buildPrDescription(item));
+}
+
+function buildPrDescription(item: Pick<WorkItem, 'ticketKey' | 'ticketSummary' | 'mainKey' | 'mainUrl' | 'testReport' | 'branch' | 'baseBranch'> & { portOf?: WorkItem['portOf']; members?: WorkItem['members'] }): string {
   const ticketUrl = item.mainUrl ? item.mainUrl.replace(/browse\/[^/?#]+/, `browse/${item.ticketKey}`) : '';
   const lines = item.members?.length
-    ? ['Jira（合成一個任務）：', ...item.members.map((m) => `- [${m.key}](${m.url}) ${m.summary}`)]
-    : [`Jira：[${item.ticketKey}](${ticketUrl || item.ticketKey}) ${item.ticketSummary}`];
+    ? [t('Jira（合成一個任務）：'), ...item.members.map((m) => `- [${m.key}](${m.url}) ${m.summary}`)]
+    : [`${t('Jira：')}[${item.ticketKey}](${ticketUrl || item.ticketKey}) ${item.ticketSummary}`];
   // 移植過來的：寫清楚從哪裡移植（跟 platform-web-copy 的 PR 說明一樣）
   if (item.portOf) lines.push('', `Port feature from ${item.portOf.branch} to ${item.baseBranch}`, '', 'Source:', `${item.portOf.baseBranch} -> ${item.portOf.branch}`, '', 'Target:', `${item.baseBranch} -> ${item.branch}`);
-  if (item.mainKey && item.mainKey !== item.ticketKey && item.mainUrl) lines.push(`主單：[${item.mainKey}](${item.mainUrl})`);
+  if (item.mainKey && item.mainKey !== item.ticketKey && item.mainUrl) lines.push(`${t('主單：')}[${item.mainKey}](${item.mainUrl})`);
   const report = item.testReport;
   const items = (report?.acceptance ?? []).filter((a: AcceptanceItem) => a.change || a.howToTest);
   if (items.length) {
-    lines.push('', '## 改了什麼、怎麼測');
+    lines.push('', t('## 改了什麼、怎麼測'));
     for (const a of items) {
       lines.push(`${a.no}. **${a.text}**`);
-      if (a.change) lines.push(`   - 改了：${a.change}`);
-      if (a.impact) lines.push(`   - 也影響：${a.impact}`);
-      if (a.howToTest) lines.push(`   - 怎麼測：${a.howToTest}`);
+      if (a.change) lines.push(t('   - 改了：{text}', { text: a.change }));
+      if (a.impact) lines.push(t('   - 也影響：{text}', { text: a.impact }));
+      if (a.howToTest) lines.push(t('   - 怎麼測：{text}', { text: a.howToTest }));
     }
   }
   if (report?.otherChanges.length) {
-    lines.push('', '## 其他也改到的');
-    for (const c of report.otherChanges) lines.push(`- ${c.change}${c.impact ? `（也影響：${c.impact}）` : ''}`);
+    lines.push('', t('## 其他也改到的'));
+    for (const c of report.otherChanges) lines.push(`- ${c.change}${c.impact ? t('（也影響：{impact}）', { impact: c.impact }) : ''}`);
   }
   return lines.join('\n');
 }

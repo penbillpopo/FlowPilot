@@ -17,6 +17,7 @@ import { buildJql, downloadAttachment, getIssueContext, getTransitions, loadCred
 import { applyDiscussion, buildCodeCheckPrompt, buildDiscussionPrompt, buildFigmaPrompt, buildGroupReviewPrompt, buildReviewPrompt, discussionSchema, REVIEW_INSTRUCTIONS, reviewSchema, sanitizeReview } from './planner/review';
 import { deriveBranches, planProblem } from './planner/rules';
 import { loadHistory } from './chat';
+import { getLang, type Lang, setLang, t, zhOnly } from '../shared/i18n';
 import { FolderTerminals } from './folderterminals';
 import { commitAll, commitStaged, discard, fileDiff, gitState, pushBranch, stage, unstage } from './gitpanel';
 import { diffSnapshots, updateMessage } from './requirements';
@@ -101,10 +102,10 @@ function startCommand(command: string | undefined, port: number | undefined) {
 /** 這張單所在的資料夾 */
 function folderOf(itemId: number) {
   const item = store.getWorkItem(itemId);
-  if (!item?.folder) throw new Error('這張單還沒有分配資料夾');
+  if (!item?.folder) throw new Error(t('這張單還沒有分配資料夾'));
   const settings = loadSettings(settingsFile);
   const folder = settings.folders.find((f) => f.name === item.folder);
-  if (!folder) throw new Error(`設定檔裡沒有資料夾「${item.folder}」`);
+  if (!folder) throw new Error(t('設定檔裡沒有資料夾「{folder}」', { folder: item.folder }));
   return { item, folder, rule: settings.projects[folder.project] };
 }
 
@@ -177,7 +178,7 @@ async function runReview(ticket: JiraTicket): Promise<Review> {
   const supplements: { label: string; text: string }[] = [];
   const supplementImages: string[] = [];
   for (const extra of store.draftExtras(ticket.key)) {
-    if (extra.kind === 'text') supplements.push({ label: '你補充的說明', text: extra.value });
+    if (extra.kind === 'text') supplements.push({ label: zhOnly('你補充的說明'), text: extra.value });
     else if (extra.kind === 'image') {
       if (existsSync(extra.value)) supplementImages.push(extra.value);
     } else if (confluencePageId(extra.value)) {
@@ -256,15 +257,15 @@ async function runReview(ticket: JiraTicket): Promise<Review> {
  */
 async function requestRequirementUpdate(itemId: number): Promise<void> {
   const item = store.getWorkItem(itemId);
-  if (!item) throw new Error('找不到這張單');
-  if (!item.threadId) throw new Error('這張單還沒開始開發，開始之後才能更新需求');
+  if (!item) throw new Error(t('找不到這張單'));
+  if (!item.threadId) throw new Error(t('這張單還沒開始開發，開始之後才能更新需求'));
   const saved = store.getReview(item.ticketKey);
   const keys = saved?.review.snapshot?.map((s) => s.key) ?? [...new Set([item.ticketKey, ...item.members.map((m) => m.key), item.mainKey])];
   const credentials = loadCredentials(loadSettings(settingsFile).jira.envFile);
   const fresh: TicketSnapshot[] = [];
   for (const key of keys) fresh.push((await getIssueContext(credentials, key)).snapshot);
   const changes = saved?.review.snapshot?.length ? diffSnapshots(saved.review.snapshot, fresh, item.ticketKey) : null;
-  await runner.reply(itemId, updateMessage(changes, fresh), [], { asFix: false, activity: '請 AI 比對需求變更' });
+  await runner.reply(itemId, updateMessage(changes, fresh), [], { asFix: false, activity: t('請 AI 比對需求變更') });
   if (saved) {
     store.saveReview({ ...saved.review, snapshot: fresh }, saved.threadId);
     // 有變更時在背景更新審閱的問題清單（變更可能回答了之前沒確認的問題）
@@ -277,7 +278,7 @@ async function requestRequirementUpdate(itemId: number): Promise<void> {
 
 function updateIssue(ticketKey: string, issueId: string, patch: { status: ReviewIssue['status']; answer?: string }): Review {
   const saved = store.getReview(ticketKey);
-  if (!saved) throw new Error(`${ticketKey} 還沒有審閱`);
+  if (!saved) throw new Error(t('{key} 還沒有審閱', { key: ticketKey }));
   const review: Review = {
     ...saved.review,
     issues: saved.review.issues.map((i) => (i.id === issueId ? { ...i, status: patch.status, answer: patch.status === 'answered' ? (patch.answer ?? '').trim() : undefined, byDiscussion: undefined } : i)),
@@ -288,11 +289,11 @@ function updateIssue(ticketKey: string, issueId: string, patch: { status: Review
 
 async function discussReview(ticketKey: string, text: string, images: string[] = []): Promise<Review> {
   const saved = store.getReview(ticketKey);
-  if (!saved) throw new Error(`${ticketKey} 還沒有審閱`);
+  if (!saved) throw new Error(t('{key} 還沒有審閱', { key: ticketKey }));
   const pictures = images.filter((p) => existsSync(p)).slice(0, 8);
-  if (!text.trim() && !pictures.length) throw new Error('訊息是空的');
+  if (!text.trim() && !pictures.length) throw new Error(t('訊息是空的'));
   // 附圖：文字補一句，討論紀錄也記下附了幾張
-  const said = `${text.trim()}${pictures.length ? `${text.trim() ? '\n' : ''}（附上 ${pictures.length} 張圖）` : ''}`;
+  const said = `${text.trim()}${pictures.length ? `${text.trim() ? '\n' : ''}${t('（附上 {count} 張圖）', { count: pictures.length })}` : ''}`;
   const request = { cwd: dataDir, keep: true, developerInstructions: REVIEW_INSTRUCTIONS, schema: discussionSchema, prompt: buildDiscussionPrompt(saved.review, said), images: pictures, timeoutMs: 300_000 };
   // 接著審閱時的對話討論（AI 記得單和程式碼）；對話不在了就開一段新的
   const { result, threadId } = await runStructured<any>(codex, { ...request, threadId: saved.threadId ?? undefined }).catch(() => runStructured<any>(codex, request));
@@ -332,7 +333,7 @@ async function trialLogin(itemId: number): Promise<{ ok: boolean; reason: string
     cwd: dataDir,
     timeoutMs: 240_000,
     config: { mcp_servers: { [HEADLESS_BROWSER_NAME]: browser } },
-    schema: { type: 'object', additionalProperties: false, required: ['ok', 'reason'], properties: { ok: { type: 'boolean' }, reason: { type: 'string', description: '繁體中文一句話：成功就寫登入後看到什麼；失敗寫原因' } } },
+    schema: { type: 'object', additionalProperties: false, required: ['ok', 'reason'], properties: { ok: { type: 'boolean' }, reason: { type: 'string', description: zhOnly('繁體中文一句話：成功就寫登入後看到什麼；失敗寫原因') } } },
     prompt: [
       `只做一件事：用 ${HEADLESS_BROWSER_NAME} 這個瀏覽器工具打開 ${url}，登入看看。`,
       `帳號密碼用終端機讀 ${accountFile}（例如 cat），登入畫面要 OTP 就填檔案裡的 otp。不要把密碼寫進回覆。`,
@@ -347,7 +348,7 @@ async function trialLogin(itemId: number): Promise<{ ok: boolean; reason: string
 function projectFolder(item: WorkItem): string {
   const folders = loadSettings(settingsFile).folders;
   const folder = folders.find((f) => f.name === item.folder) ?? folders.find((f) => f.project === item.project);
-  if (!folder) throw new Error(`設定檔裡沒有 ${item.project} 的資料夾`);
+  if (!folder) throw new Error(t('設定檔裡沒有 {project} 的資料夾', { project: item.project }));
   return folder.path;
 }
 
@@ -378,7 +379,7 @@ async function refreshPrs(itemId: number): Promise<void> {
 
 async function prOptions(itemId: number): Promise<PrOptions> {
   const item = store.getWorkItem(itemId);
-  if (!item) throw new Error('找不到這張單');
+  if (!item) throw new Error(t('找不到這張單'));
   const repo = await AzureRepo.open(projectFolder(item));
   const [branches, reviewers, existing, pushed] = await Promise.all([repo.targetBranches(), repo.recentReviewers(), repo.activePrs(item.branch), repo.branchExists(item.branch)]);
   rememberPrs(itemId, existing);
@@ -412,8 +413,8 @@ async function createPr(
   input: { title: string; description: string; target: string; reviewerIds: string[]; alsoItemIds?: number[] },
 ): Promise<{ results: { merchant: number | null; target: string; url?: string; error?: string }[] }> {
   const item = store.getWorkItem(itemId);
-  if (!item) throw new Error('找不到這張單');
-  if (!input.title.trim()) throw new Error('PR 名稱不能空白');
+  if (!item) throw new Error(t('找不到這張單'));
+  if (!input.title.trim()) throw new Error(t('PR 名稱不能空白'));
   const repo = await AzureRepo.open(projectFolder(item));
   // 這張自己用你在表單填的內容；一起發的商戶用各自的說明，名稱共用
   const jobs = [
@@ -425,13 +426,13 @@ async function createPr(
   for (const job of jobs) {
     const { work, target } = job;
     try {
-      if (!(await repo.branchExists(work.branch))) throw new Error(`遠端還沒有 ${work.branch}，請先推送`);
+      if (!(await repo.branchExists(work.branch))) throw new Error(t('遠端還沒有 {branch}，請先推送', { branch: work.branch }));
       // 同一個目標分支已經有開著的 PR 就不重複建立（Azure 也不允許），直接給那個 PR
       const active = await repo.activePrs(work.branch);
       rememberPrs(work.id, active);
       const same = active.find((p) => p.target === target);
       if (same) {
-        results.push({ merchant: work.merchant, target, url: same.url, error: '已經有開著的 PR' });
+        results.push({ merchant: work.merchant, target, url: same.url, error: t('已經有開著的 PR') });
         continue;
       }
       const pr = await repo.createPr({ source: work.branch, target, title: input.title.trim(), description: job.description, reviewerIds: input.reviewerIds });
@@ -473,7 +474,7 @@ function validatePlans(plans: TicketPlan[]) {
   const settings = loadSettings(settingsFile);
   for (const plan of plans) {
     const problem = planProblem(plan, settings);
-    if (problem) throw new Error(`${plan.ticket.key}：${problem}`);
+    if (problem) throw new Error(t('{key}：{problem}', { key: plan.ticket.key, problem }));
   }
   return settings;
 }
@@ -504,17 +505,35 @@ function createTray() {
   tray = new Tray(nativeImage.createEmpty());
   tray.setTitle('FP');
   tray.setToolTip('FlowPilot');
-  tray.setContextMenu(
+  trayMenu();
+}
+
+/** 系統列選單（換語言時重建） */
+function trayMenu() {
+  tray?.setContextMenu(
     Menu.buildFromTemplate([
-      { label: '打開 FlowPilot', click: showWindow },
-      { label: '打開設定檔', click: () => shell.openPath(settingsFile) },
+      { label: t('打開 FlowPilot'), click: showWindow },
+      { label: t('打開設定檔'), click: () => shell.openPath(settingsFile) },
       { type: 'separator' },
-      { label: '結束 FlowPilot', click: () => app.quit() },
+      { label: t('結束 FlowPilot'), click: () => app.quit() },
     ]),
   );
 }
 
+/** 介面語言存在這裡：後端在畫面打開之前就要知道（例如通知） */
+const languageFile = join(dataDir, 'language.json');
+try {
+  setLang(JSON.parse(readFileSync(languageFile, 'utf8')).lang);
+} catch {}
+
 function registerIpc() {
+  ipcMain.handle('lang:set', (_event, lang: Lang) => {
+    setLang(lang);
+    mkdirSync(dataDir, { recursive: true });
+    writeFileSync(languageFile, JSON.stringify({ lang: getLang() }));
+    trayMenu();
+    runner.notifyChanged();
+  });
   ipcMain.handle('tickets:list', async (_event, statuses: string[]) => {
     // 每次都重讀設定，改完設定檔不用重開
     const settings = loadSettings(settingsFile);
@@ -539,8 +558,8 @@ function registerIpc() {
   ipcMain.handle('plan:add', (_event, tickets: JiraTicket[]) => {
     // 已經在工作台上的單不能再進一次（要等它在工作台移除）
     const active = tickets.filter((t) => store.hasActiveTicket(t.key)).map((t) => t.key);
-    if (active.length) throw new Error(`${active.join('、')} 已經在工作台上，要在工作台移除後才能再選`);
-    if (!tickets.length) throw new Error('沒有勾選任何單');
+    if (active.length) throw new Error(t('{keys} 已經在工作台上，要在工作台移除後才能再選', { keys: active.join(t('、')) }));
+    if (!tickets.length) throw new Error(t('沒有勾選任何單'));
     store.addDrafts(tickets);
     // 審閱在背景跑：你可以先回單列表或去作戰室，回來時結果已經存好
     for (const ticket of tickets) void reviewTicket(ticket).catch((error) => log(`${ticket.key} 背景審閱失敗：${(error as Error).message}`));
@@ -549,7 +568,7 @@ function registerIpc() {
   // 好幾張單合成一個任務：計畫表裡變成一張，審閱、分支、對話、PR 都只有一份
   ipcMain.handle('plan:addGroup', (_event, tickets: JiraTicket[]) => {
     const busy = tickets.filter((t) => store.hasActiveTicket(t.key) || store.isDraft(t.key)).map((t) => t.key);
-    if (busy.length) throw new Error(`${busy.join('、')} 已經在工作台或計畫表裡了`);
+    if (busy.length) throw new Error(t('{keys} 已經在工作台或計畫表裡了', { keys: busy.join(t('、')) }));
     const group = groupTicket(tickets);
     store.addDrafts([group]);
     void reviewTicket(group).catch((error) => log(`${group.key} 合成任務背景審閱失敗：${(error as Error).message}`));
@@ -571,13 +590,13 @@ function registerIpc() {
   });
   ipcMain.handle('run:latest', () => store.latestRun());
   ipcMain.handle('shell:openExternal', (_event, url: string) => {
-    if (!/^https:\/\//.test(url)) throw new Error('只能打開 https 網址');
+    if (!/^https:\/\//.test(url)) throw new Error(t('只能打開 https 網址'));
     return shell.openExternal(url);
   });
   ipcMain.handle('settings:open', () => shell.openPath(settingsFile).then(() => undefined));
   ipcMain.handle('i18n:reveal', (_event, id: number) => {
     const file = runner.i18nFile(id);
-    if (!file) throw new Error('這張單還沒有產生多語系檔');
+    if (!file) throw new Error(t('這張單還沒有產生多語系檔'));
     shell.showItemInFolder(file);
   });
   ipcMain.handle('plan:options', (): PlanOptions => {
@@ -595,7 +614,7 @@ function registerIpc() {
   ipcMain.handle('review:run', (_event, ticket: JiraTicket, force: boolean) => reviewTicket(ticket, force));
   ipcMain.handle('review:setChecks', (_event, ticketKey: string, checks: ReviewChecks) => {
     const saved = store.getReview(ticketKey);
-    if (!saved) throw new Error(`${ticketKey} 還沒有審閱`);
+    if (!saved) throw new Error(t('{key} 還沒有審閱', { key: ticketKey }));
     const review = { ...saved.review, checks };
     store.saveReview(review, saved.threadId);
     return review;
@@ -616,12 +635,12 @@ function registerIpc() {
       for (const entry of plan.entries) {
         const local = branches.find((b) => b.ticketKey === plan.ticket.key && b.project === entry.project && b.role !== 'target')?.existsIn.filter((w) => w !== '遠端') ?? [];
         if (local.length > 1 && (!entry.folder || !local.includes(entry.folder))) {
-          throw new Error(`${plan.ticket.key}：分支在 ${local.join('、')} 都有，請選擇要用哪一個資料夾`);
+          throw new Error(t('{key}：分支在 {folders} 都有，請選擇要用哪一個資料夾', { key: plan.ticket.key, folders: local.join(t('、')) }));
         }
       }
     }
     const already = plans.filter((p) => store.hasActiveTicket(p.ticket.key)).map((p) => p.ticket.key);
-    if (already.length) throw new Error(`${already.join('、')} 已經在工作台上，要等它結束（完成或移除）才能再選`);
+    if (already.length) throw new Error(t('{keys} 已經在工作台上，要等它結束（完成或移除）才能再選', { keys: already.join(t('、')) }));
     // 確認的這幾張自成一批；計畫表裡其他還沒確認的不受影響
     const created = store.createRun(plans.map((p) => p.ticket));
     const run = store.confirmPlan(created.id, plans, judgements);
@@ -682,13 +701,13 @@ function registerIpc() {
   ipcMain.handle('git:discard', (_event, id: number, paths: string[]) => discard(folderOf(id).folder.path, paths));
   ipcMain.handle('git:commitAll', (_event, id: number, message: string, email?: string) => {
     const identity = email ? loadSettings(settingsFile).gitIdentities.find((i) => i.email === email) : undefined;
-    if (email && !identity) throw new Error(`設定檔的 gitIdentities 裡沒有 ${email}`);
+    if (email && !identity) throw new Error(t('設定檔的 gitIdentities 裡沒有 {email}', { email }));
     return commitAll(folderOf(id).folder.path, message, identity);
   });
   ipcMain.handle('git:commit', (_event, id: number, message: string, email?: string) => {
     // 只能用設定檔裡列出的身分
     const identity = email ? loadSettings(settingsFile).gitIdentities.find((i) => i.email === email) : undefined;
-    if (email && !identity) throw new Error(`設定檔的 gitIdentities 裡沒有 ${email}`);
+    if (email && !identity) throw new Error(t('設定檔的 gitIdentities 裡沒有 {email}', { email }));
     return commitStaged(folderOf(id).folder.path, message, identity);
   });
   ipcMain.handle('git:push', (_event, id: number) => pushBranch(folderOf(id).folder.path));
@@ -705,7 +724,7 @@ function registerIpc() {
   });
   // 本機網站用你平常的 Chrome 打開：AI 透過 Playwright 擴充功能接得上（你說「看我開的畫面」它就看得到）
   ipcMain.handle('shell:openUrl', (_event, url: string) => {
-    if (!/^https?:\/\/(localhost|127\.0\.0\.1)(:\d+)?(\/|$)/.test(url)) throw new Error('只能打開本機網址');
+    if (!/^https?:\/\/(localhost|127\.0\.0\.1)(:\d+)?(\/|$)/.test(url)) throw new Error(t('只能打開本機網址'));
     return openInChrome(url);
   });
   ipcMain.handle('item:retry', (_event, id: number) => runner.retry(id));
@@ -720,9 +739,9 @@ function registerIpc() {
   // 驗收表匯出成 CSV：選存放位置（預設「下載」），存好在 Finder 標出來；取消就回傳 null
   ipcMain.handle('test:exportCsv', async (_event, id: number) => {
     const item = store.getWorkItem(id);
-    if (!item?.testReport) throw new Error('這張單還沒有驗收表');
+    if (!item?.testReport) throw new Error(t('這張單還沒有驗收表'));
     const day = new Date().toISOString().slice(0, 10).replace(/-/g, '');
-    const options = { title: '匯出驗收表', defaultPath: join(app.getPath('downloads'), `${item.ticketKey}-驗收-${day}.csv`), filters: [{ name: 'CSV', extensions: ['csv'] }] };
+    const options = { title: t('匯出驗收表'), defaultPath: join(app.getPath('downloads'), t('{key}-驗收-{day}.csv', { key: item.ticketKey, day })), filters: [{ name: 'CSV', extensions: ['csv'] }] };
     const target = window ? await dialog.showSaveDialog(window, options) : await dialog.showSaveDialog(options);
     if (target.canceled || !target.filePath) return null;
     writeFileSync(target.filePath, acceptanceCsv(item.testReport));
@@ -735,7 +754,7 @@ function registerIpc() {
   ipcMain.handle('tickets:marks', (_event, keys: string[]) => ticketMarks(keys));
   ipcMain.handle('test:state', (_event, id: number) => runner.testState(id));
   ipcMain.handle('test:setEnvironment', (_event, id: number, env: Env) => {
-    if (env !== 'sit' && env !== 'uat') throw new Error('環境只能是 SIT 或 UAT');
+    if (env !== 'sit' && env !== 'uat') throw new Error(t('環境只能是 SIT 或 UAT'));
     return runner.switchEnvironment(id, env);
   });
   ipcMain.handle('item:openInVSCode', (_event, id: number) => runner.openInVSCode(id));
@@ -768,7 +787,7 @@ app.whenReady().then(() => {
     ensureSite: (name) => {
       const settings = loadSettings(settingsFile);
       const folder = settings.folders.find((f) => f.name === name);
-      if (!folder) throw new Error(`設定檔裡沒有資料夾「${name}」`);
+      if (!folder) throw new Error(t('設定檔裡沒有資料夾「{folder}」', { folder: name }));
       return folderTerminals.ensureSite(folder.name, folder.path, startCommand(settings.projects[folder.project]?.startCommand, folder.port), folder.port ?? 4200);
     },
     onChange: boardChanged,

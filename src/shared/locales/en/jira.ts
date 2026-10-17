@@ -1,0 +1,25 @@
+// Jira 回傳的狀態、類型名稱（資料，不是介面文字）：英文介面時只翻顯示，傳給 Jira 的還是原本的名稱
+const en: Record<string, string> = {
+  待辦事項: 'To Do',
+  進行中: 'In Progress',
+  完成: 'Done',
+  已完成: 'Done',
+  已取消: 'Cancelled',
+  已解決: 'Resolved',
+  已關閉: 'Closed',
+  重新開啟: 'Reopened',
+  審核中: 'In Review',
+  測試中: 'In Testing',
+  待測試: 'Ready to Test',
+  待處理: 'Pending',
+  阻擋: 'Blocked',
+  任務: 'Task',
+  子任務: 'Sub-task',
+  錯誤: 'Bug',
+  故事: 'Story',
+  大型工作: 'Epic',
+  史詩: 'Epic',
+  改善: 'Improvement',
+  新功能: 'New Feature',
+};
+export default en;

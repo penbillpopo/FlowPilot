@@ -2,6 +2,7 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import type { JiraTicket, PlanBranch, PlanDraft, PlanEntry, PlanOptions, Review, ReviewChecks, SupplementItem, TicketPlan } from '../../shared/types';
 import { ReviewIssues } from './ReviewIssues';
+import { getLang, sideName, t, zhOnly } from '../../shared/i18n';
 
 const api = window.flowpilot;
 
@@ -16,20 +17,28 @@ function pickSource(merchants: number[]): number | null {
 }
 
 function problemOf(plan: TicketPlan, options: PlanOptions): string | null {
-  if (!plan.entries.length) return '還沒選專案';
+  if (!plan.entries.length) return t('還沒選專案');
   for (const entry of plan.entries) {
     const project = options.projects.find((p) => p.name === entry.project);
-    if (project?.merchants && !entry.merchants.length) return `${entry.project} 還沒選商戶`;
+    if (project?.merchants && !entry.merchants.length) return t('{project} 還沒選商戶', { project: entry.project });
   }
-  if (new Set(plan.entries.map((e) => e.project)).size !== plan.entries.length) return '同一個專案出現兩次';
-  if (!/^feat\([A-Z]+-\d+(, ?[A-Z]+-\d+)*\) \S/.test(plan.prTitle)) return '標題格式要是 feat(單號) 英文描述';
+  if (new Set(plan.entries.map((e) => e.project)).size !== plan.entries.length) return t('同一個專案出現兩次');
+  if (!/^feat\([A-Z]+-\d+(, ?[A-Z]+-\d+)*\) \S/.test(plan.prTitle)) return t('標題格式要是 feat(單號) 英文描述');
   return null;
 }
 
+/** 分支所在位置：資料夾名稱照原樣，「遠端」要翻 */
+function placesText(places: string[]) {
+  return places.map((w) => (w === zhOnly('遠端') ? t('遠端') : w)).join(t('、'));
+}
+
+// i18n-keys：顯示時才翻
 const RESOURCE_LABEL = { figma: 'Figma', document: '文件', jira: 'Jira', attachment: '附件', link: '網頁' } as const;
 
+// i18n-keys：顯示時才翻
 const ROLE_LABEL: Record<PlanBranch['role'], string> = { single: '開發', source: '開發（來源）', target: '移植目標' };
 
+// i18n-keys：顯示時才翻
 const CHECK_LABEL: Record<keyof ReviewChecks, string> = {
   figma: '審閱時對照 Figma 設計稿',
   codeReview: '開發完 AI 先自我審查程式碼',
@@ -51,14 +60,14 @@ function CheckPlan({ review, onChange }: { review: Review; onChange(review: Revi
   }
   return (
     <div className="plan-block">
-      <div className="plan-block-title">檢查計畫 <span className="muted small">AI 依這張單判斷要做哪些額外檢查，你可以改</span></div>
+      <div className="plan-block-title">{t('檢查計畫')} <span className="muted small">{t('AI 依這張單判斷要做哪些額外檢查，你可以改')}</span></div>
       <ul className="check-plan">
         {(Object.keys(CHECK_LABEL) as (keyof ReviewChecks)[]).map((key) => (
           <li key={key}>
             <label>
               <input type="checkbox" checked={checks[key].need} onChange={() => toggle(key)} />
-              {CHECK_LABEL[key]}
-              {key === 'figma' && review.figmaChecked && <span className="mark">已對照</span>}
+              {t(CHECK_LABEL[key])}
+              {key === 'figma' && review.figmaChecked && <span className="mark">{t('已對照')}</span>}
             </label>
             {checks[key].reason && <span className="muted small">{checks[key].reason}</span>}
           </li>
@@ -111,16 +120,16 @@ function Supplements({ draft, reviewing, applied, onChange, onReview }: { draft:
   return (
     <div className="plan-block supplements">
       <div className="plan-block-title">
-        補充資料（{extras.length}）
-        <span className="muted small">需求不在單上時用：Confluence 網址會讀內容（問題表只取這張單的那一列和截圖）、文字說明、直接貼上截圖</span>
+        {t('補充資料（{count}）', { count: extras.length })}
+        <span className="muted small">{t('需求不在單上時用：Confluence 網址會讀內容（問題表只取這張單的那一列和截圖）、文字說明、直接貼上截圖')}</span>
       </div>
       {extras.length > 0 && (
         <ul className="supplement-list">
           {extras.map((x, i) => (
             <li key={i}>
-              <span className="mark">{x.kind === 'url' ? '網址' : x.kind === 'text' ? '說明' : '截圖'}</span>
-              <span className="supplement-value" title={x.value}>{x.kind === 'image' ? `截圖 ${imageNo(i)}` : x.value}</span>
-              <button className="link small danger" onClick={() => save(extras.filter((_, j) => j !== i))}>拿掉</button>
+              <span className="mark">{x.kind === 'url' ? t('網址') : x.kind === 'text' ? t('說明') : t('截圖')}</span>
+              <span className="supplement-value" title={x.value}>{x.kind === 'image' ? t('截圖 {n}', { n: imageNo(i) }) : x.value}</span>
+              <button className="link small danger" onClick={() => save(extras.filter((_, j) => j !== i))}>{t('拿掉')}</button>
             </li>
           ))}
         </ul>
@@ -129,7 +138,7 @@ function Supplements({ draft, reviewing, applied, onChange, onReview }: { draft:
         <textarea
           rows={2}
           value={input}
-          placeholder="貼 Confluence 網址（一行一個）、打一段說明，或直接貼上截圖"
+          placeholder={t('貼 Confluence 網址（一行一個）、打一段說明，或直接貼上截圖')}
           onChange={(e) => setInput(e.target.value)}
           onPaste={paste}
           onKeyDown={(e) => {
@@ -139,12 +148,12 @@ function Supplements({ draft, reviewing, applied, onChange, onReview }: { draft:
             }
           }}
         />
-        <button disabled={!input.trim()} onClick={add}>加入</button>
+        <button disabled={!input.trim()} onClick={add}>{t('加入')}</button>
       </div>
       {(dirty || !applied) && extras.length > 0 && !reviewing && (
         <p className="warn small">
-          補充資料要重新審閱才會套用（目前的問題和討論會被新的結果取代）。
-          <button className="link small" onClick={() => { setDirty(false); onReview(); }}>重新審閱</button>
+          {t('補充資料要重新審閱才會套用（目前的問題和討論會被新的結果取代）。')}
+          <button className="link small" onClick={() => { setDirty(false); onReview(); }}>{t('重新審閱')}</button>
         </p>
       )}
       {error && <div className="error small">{error}</div>}
@@ -155,10 +164,10 @@ function Supplements({ draft, reviewing, applied, onChange, onReview }: { draft:
 /** 審閱整理出來、會交給開發 AI 的需求分析（要做什麼之外的三段） */
 function BriefBlocks({ review }: { review: Review }) {
   const blocks: [string, string[] | undefined, string][] = [
-    ['預期結果（逐條，測試時一條一條對照）', review.acceptance, '單上沒有寫預期結果。'],
-    ['牽涉頁面', review.pages, '審閱時沒有確定，開發時 AI 會看程式碼找出來。'],
-    ['後端 API', review.apis, '單上沒有寫 API 規格。'],
-    ['預計執行內容', review.steps, 'AI 會在開發時自己規劃。'],
+    [t('預期結果（逐條，測試時一條一條對照）'), review.acceptance, t('單上沒有寫預期結果。')],
+    [t('牽涉頁面'), review.pages, t('審閱時沒有確定，開發時 AI 會看程式碼找出來。')],
+    [t('後端 API'), review.apis, t('單上沒有寫 API 規格。')],
+    [t('預計執行內容'), review.steps, t('AI 會在開發時自己規劃。')],
   ];
   // 舊的審閱結果沒有這些欄位，就不顯示
   if (!review.pages && !review.apis && !review.steps) return null;
@@ -303,7 +312,7 @@ export function PlanView({ drafts, onChange, onBack, onConfirmed }: Props) {
   const folderChoices = (key: string) =>
     branchesOf(key)
       .filter((b) => b.role !== 'target')
-      .map((b) => ({ branch: b, local: b.existsIn.filter((w) => w !== '遠端') }))
+      .map((b) => ({ branch: b, local: b.existsIn.filter((w) => w !== zhOnly('遠端')) }))
       .filter(({ local }) => local.length > 1);
   const continuing = (key: string) => branchesOf(key).some((b) => b.role !== 'target' && b.existsIn.length > 0);
   const unchosenFolder = (key: string) =>
@@ -313,14 +322,14 @@ export function PlanView({ drafts, onChange, onBack, onConfirmed }: Props) {
     });
   /** 這張可以確認開工了嗎；不行的話回傳原因 */
   const blockerOf = (key: string): string | null => {
-    if (!plans[key] || !judgements[key]) return 'AI 審閱中';
-    if (!options) return '讀取中';
+    if (!plans[key] || !judgements[key]) return t('AI 審閱中');
+    if (!options) return t('讀取中');
     const problem = problemOf(plans[key], options);
     if (problem) return problem;
-    if (checking || !branches) return '檢查分支中';
-    if (checkError) return '檢查分支失敗';
-    if (!branches.some((b) => b.ticketKey === key)) return '檢查分支中';
-    if (unchosenFolder(key)) return '還沒選資料夾';
+    if (checking || !branches) return t('檢查分支中');
+    if (checkError) return t('檢查分支失敗');
+    if (!branches.some((b) => b.ticketKey === key)) return t('檢查分支中');
+    if (unchosenFolder(key)) return t('還沒選資料夾');
     return null;
   };
   const ready = tickets.filter((t) => !blockerOf(t.key)).map((t) => t.key);
@@ -334,7 +343,7 @@ export function PlanView({ drafts, onChange, onBack, onConfirmed }: Props) {
       const rest = drafts.filter((d) => !keys.includes(d.ticket.key));
       onChange(rest);
       if (!rest.length) return onConfirmed();
-      setNotice(`${keys.join('、')} 已經交給 AI 開發，到作戰室看進度；其他的單還留在這裡`);
+      setNotice(t('{keys} 已經交給 AI 開發，到作戰室看進度；其他的單還留在這裡', { keys: keys.join(t('、')) }));
     } catch (e) {
       setConfirmError(errorText(e));
     } finally {
@@ -343,7 +352,7 @@ export function PlanView({ drafts, onChange, onBack, onConfirmed }: Props) {
   }
 
   async function discard(key: string) {
-    if (!window.confirm(`從計畫表移除 ${key}？\n\nAI 的審閱、討論紀錄和你改過的內容都會刪掉，單列表上的「計畫中」也會消失，回到原本的樣子。之後要做可以再從單列表加進來（會重新審閱）。`)) return;
+    if (!window.confirm(t('從計畫表移除 {key}？\n\nAI 的審閱、討論紀錄和你改過的內容都會刪掉，單列表上的「計畫中」也會消失，回到原本的樣子。之後要做可以再從單列表加進來（會重新審閱）。', { key }))) return;
     try {
       const rest = await api.planDiscard([key]);
       started.current.delete(key);
@@ -358,16 +367,16 @@ export function PlanView({ drafts, onChange, onBack, onConfirmed }: Props) {
     <main>
       <header>
         <div>
-          <h1>計畫表</h1>
-          <p className="muted">AI 在背景審閱每張單、判斷要做在哪個專案與商戶，有錯直接改（會自動存起來，按返回也不會清掉）。審好的單可以一張一張確認開工；同一個專案同時做幾張，看它有幾個資料夾，超過的會排隊。</p>
+          <h1>{t('計畫表')}</h1>
+          <p className="muted">{t('AI 在背景審閱每張單、判斷要做在哪個專案與商戶，有錯直接改（會自動存起來，按返回也不會清掉）。審好的單可以一張一張確認開工；同一個專案同時做幾張，看它有幾個資料夾，超過的會排隊。')}</p>
         </div>
         <div className="actions">
-          <button onClick={onBack}>返回</button>
-          <button onClick={recheck} disabled={checking || !readyPlans.length}>{checking ? '檢查中…' : '重新檢查分支'}</button>
+          <button onClick={onBack}>{t('返回')}</button>
+          <button onClick={recheck} disabled={checking || !readyPlans.length}>{checking ? t('檢查中…') : t('重新檢查分支')}</button>
         </div>
       </header>
 
-      {checkError && <div className="error">檢查分支失敗：{checkError}</div>}
+      {checkError && <div className="error">{t('檢查分支失敗：{error}', { error: checkError })}</div>}
       {notice && <div className="notice-ok plan-notice">{notice}</div>}
 
       <div className="plans">
@@ -382,21 +391,21 @@ export function PlanView({ drafts, onChange, onBack, onConfirmed }: Props) {
                 <span className="plan-title">{ticket.summary}</span>
                 {ticket.parent && (
                   <span className="muted">
-                    主單 <a href={ticket.parent.url} onClick={(e) => { e.preventDefault(); api.openExternal(ticket.parent!.url); }}>{ticket.parent.key}</a>
+                    {t('主單')} <a href={ticket.parent.url} onClick={(e) => { e.preventDefault(); api.openExternal(ticket.parent!.url); }}>{ticket.parent.key}</a>
                   </span>
                 )}
                 {judgements[ticket.key] && (
                   <span className="muted small">
-                    審閱於 {new Date(judgements[ticket.key].reviewedAt).toLocaleString('zh-TW', { month: 'numeric', day: 'numeric', hour: '2-digit', minute: '2-digit', hour12: false })}
-                    <button className="link" onClick={() => window.confirm('重新審閱這張單？目前的問題、你的回答和討論都會被新的結果取代。') && judge(ticket, true)}>重新審閱</button>
+                    {t('審閱於 {time}', { time: new Date(judgements[ticket.key].reviewedAt).toLocaleString(getLang() === 'en' ? 'en-US' : 'zh-TW', { month: 'numeric', day: 'numeric', hour: '2-digit', minute: '2-digit', hour12: false }) })}
+                    <button className="link" onClick={() => window.confirm(t('重新審閱這張單？目前的問題、你的回答和討論都會被新的結果取代。')) && judge(ticket, true)}>{t('重新審閱')}</button>
                   </span>
                 )}
                 {/* 隨時可以移除（審閱中也可以），不用捲到最下面找 */}
-                <button className="link danger" title="從計畫表拿掉，審閱和討論紀錄一起刪掉，回到原本的樣子" onClick={() => discard(ticket.key)}>移除</button>
+                <button className="link danger" title={t('從計畫表拿掉，審閱和討論紀錄一起刪掉，回到原本的樣子')} onClick={() => discard(ticket.key)}>{t('移除')}</button>
               </div>
               {!!ticket.members?.length && (
                 <ul className="group-members">
-                  <span className="mark group">合成 {ticket.members.length} 張</span>
+                  <span className="mark group">{t('合成 {count} 張', { count: ticket.members.length })}</span>
                   {ticket.members.map((m) => (
                     <li key={m.key}>
                       <a href={m.url} onClick={(e) => { e.preventDefault(); api.openExternal(m.url); }}>{m.key}</a> <span className="muted small">{m.summary}</span>
@@ -405,7 +414,7 @@ export function PlanView({ drafts, onChange, onBack, onConfirmed }: Props) {
                 </ul>
               )}
 
-              {!plan && !error && <p className="muted">AI 審閱中…（讀單、判斷專案；一般或複雜的單會大略看程式碼，約 1 分鐘）</p>}
+              {!plan && !error && <p className="muted">{t('AI 審閱中…（讀單、判斷專案；一般或複雜的單會大略看程式碼，約 1 分鐘）')}</p>}
               <Supplements
                 draft={drafts.find((d) => d.ticket.key === ticket.key)!}
                 reviewing={!plan && !error}
@@ -416,7 +425,7 @@ export function PlanView({ drafts, onChange, onBack, onConfirmed }: Props) {
 
               {error && (
                 <div className="error">
-                  AI 審閱失敗：{error} <button onClick={() => judge(ticket)}>重試</button> <button className="link danger" onClick={() => discard(ticket.key)}>移除</button>
+                  {t('AI 審閱失敗：{error}', { error })} <button onClick={() => judge(ticket)}>{t('重試')}</button> <button className="link danger" onClick={() => discard(ticket.key)}>{t('移除')}</button>
                 </div>
               )}
 
@@ -424,13 +433,13 @@ export function PlanView({ drafts, onChange, onBack, onConfirmed }: Props) {
                 <>
                   {judgements[ticket.key]?.complete === false && (
                     <div className="review-incomplete">
-                      <strong>這次審閱沒有完成</strong>：{judgements[ticket.key].problem}。下面的內容可能不完整或不正確，建議
-                      <button className="link" onClick={() => window.confirm('重新審閱這張單？目前的問題、你的回答和討論都會被新的結果取代。') && judge(ticket, true)}>重新審閱</button>。
+                      <strong>{t('這次審閱沒有完成')}</strong>{t('：{problem}。下面的內容可能不完整或不正確，建議', { problem: judgements[ticket.key].problem ?? '' })}
+                      <button className="link" onClick={() => window.confirm(t('重新審閱這張單？目前的問題、你的回答和討論都會被新的結果取代。')) && judge(ticket, true)}>{t('重新審閱')}</button>{t('。')}
                     </div>
                   )}
                   {/* 最重要的「做在哪裡」放最上面，先確認這個再看細節 */}
                   <div className="plan-project">
-                  <div className="plan-block-title">專案判斷</div>
+                  <div className="plan-block-title">{t('專案判斷')}</div>
                   {plan.reason && <p className="reason">{plan.reason}</p>}
 
                   {plan.entries.map((entry, index) => {
@@ -438,15 +447,15 @@ export function PlanView({ drafts, onChange, onBack, onConfirmed }: Props) {
                     return (
                       <div className="entry" key={index}>
                         <label>
-                          專案
+                          {t('專案')}
                           <select value={entry.project} onChange={(e) => updateEntry(ticket.key, index, { project: e.target.value })}>
-                            {options.projects.map((p) => <option key={p.name} value={p.name}>{p.name}{p.side ? `（${p.side}）` : ''}</option>)}
+                            {options.projects.map((p) => <option key={p.name} value={p.name}>{p.name}{p.side ? t('（{side}）', { side: sideName(p.side) }) : ''}</option>)}
                           </select>
                         </label>
-                        {project?.side && <span className={`side ${project.side.startsWith('前台') ? 'front' : 'back'}`}>{project.side}</span>}
+                        {project?.side && <span className={`side ${project.side.startsWith(zhOnly('前台')) ? 'front' : 'back'}`}>{sideName(project.side)}</span>}
                         {project?.merchants && (
                           <div className="merchants">
-                            商戶
+                            {t('商戶')}
                             {project.merchants.map((m) => (
                               <label key={m} className={`chip ${entry.merchants.includes(m) ? 'on' : ''}`}>
                                 <input
@@ -463,7 +472,7 @@ export function PlanView({ drafts, onChange, onBack, onConfirmed }: Props) {
                             ))}
                             {entry.merchants.length > 1 && (
                               <label>
-                                來源
+                                {t('來源')}
                                 <select value={entry.sourceMerchant ?? ''} onChange={(e) => updateEntry(ticket.key, index, { sourceMerchant: Number(e.target.value) })}>
                                   {entry.merchants.map((m) => <option key={m} value={m}>m{m}</option>)}
                                 </select>
@@ -472,9 +481,9 @@ export function PlanView({ drafts, onChange, onBack, onConfirmed }: Props) {
                           </div>
                         )}
                         {plan.entries.length > 1 && (
-                          <button className="link" onClick={() => update(ticket.key, (p) => ({ ...p, entries: p.entries.filter((_, i) => i !== index) }))}>移除</button>
+                          <button className="link" onClick={() => update(ticket.key, (p) => ({ ...p, entries: p.entries.filter((_, i) => i !== index) }))}>{t('移除')}</button>
                         )}
-                        {entry.reason && <p className="reason small why">為什麼是這個專案：{entry.reason}</p>}
+                        {entry.reason && <p className="reason small why">{t('為什麼是這個專案：{reason}', { reason: entry.reason })}</p>}
                       </div>
                     );
                   })}
@@ -486,13 +495,13 @@ export function PlanView({ drafts, onChange, onBack, onConfirmed }: Props) {
                         update(ticket.key, (p) => ({ ...p, entries: [...p.entries, { project: unused.name, merchants: [], sourceMerchant: null, reason: '' }] }));
                       }}
                     >
-                      ＋ 加一個專案
+                      {t('＋ 加一個專案')}
                     </button>
                   )}
 
                   <div className="fields">
                     <label className="grow">
-                      標題
+                      {t('標題')}
                       <input value={plan.prTitle} onChange={(e) => update(ticket.key, (p) => ({ ...p, prTitle: e.target.value }))} />
                     </label>
                   </div>
@@ -508,15 +517,15 @@ export function PlanView({ drafts, onChange, onBack, onConfirmed }: Props) {
                           <span className={`badge ${b.existsIn.length ? 'continue' : b.role === 'target' ? 'later' : 'new'}`}>
                             {b.role === 'target'
                               ? b.existsIn.length
-                                ? `移植目標：已存在（${b.existsIn.join('、')}），移植時 platform-web-copy 會問你`
-                                : '移植目標：之後由 platform-web-copy 建立'
+                                ? t('移植目標：已存在（{where}），移植時 platform-web-copy 會問你', { where: placesText(b.existsIn) })
+                                : t('移植目標：之後由 platform-web-copy 建立')
                               : b.existsIn.length
-                                ? `${ROLE_LABEL[b.role]}：已存在（${b.existsIn.join('、')}），會切換過去繼續開發`
-                                : `${ROLE_LABEL[b.role]}：將建立`}
+                                ? t('{role}：已存在（{where}），會切換過去繼續開發', { role: t(ROLE_LABEL[b.role]), where: placesText(b.existsIn) })
+                                : t('{role}：將建立', { role: t(ROLE_LABEL[b.role]) })}
                           </span>
                         </li>
                       ))}
-                      {!branches && <li className="muted">檢查分支中…</li>}
+                      {!branches && <li className="muted">{t('檢查分支中…')}</li>}
                     </ul>
                   )}
 
@@ -524,12 +533,12 @@ export function PlanView({ drafts, onChange, onBack, onConfirmed }: Props) {
                     const entryIndex = plan.entries.findIndex((e) => e.project === branch.project);
                     return (
                       <label key={branch.branch} className="folder-choice warn">
-                        {branch.branch} 在 {local.join('、')} 都有，要用哪一個資料夾繼續？
+                        {t('{branch} 在 {folders} 都有，要用哪一個資料夾繼續？', { branch: branch.branch, folders: local.join(t('、')) })}
                         <select
                           value={plan.entries[entryIndex]?.folder ?? ''}
                           onChange={(e) => updateEntry(ticket.key, entryIndex, { folder: e.target.value || null })}
                         >
-                          <option value="">請選擇</option>
+                          <option value="">{t('請選擇')}</option>
                           {local.map((f) => <option key={f}>{f}</option>)}
                         </select>
                       </label>
@@ -539,41 +548,41 @@ export function PlanView({ drafts, onChange, onBack, onConfirmed }: Props) {
                     .filter((b) => b.role !== 'target' && active.some((a) => a.branch === b.branch))
                     .map((b) => (
                       <p key={`active-${b.branch}`} className="warn">
-                        {b.branch} 在執行看板上已經有進行中的工作，確認後不會重複建立，請到執行看板繼續處理。
+                        {t('{branch} 在執行看板上已經有進行中的工作，確認後不會重複建立，請到執行看板繼續處理。', { branch: b.branch })}
                       </p>
                     ))}
                   {continuing(ticket.key) && (
-                    <p className="reason">分支已存在：會切換過去，請 AI 先看過現有的差異再接著開發。資料夾有未提交的修改、或本機與遠端分歧時，會先問你。</p>
+                    <p className="reason">{t('分支已存在：會切換過去，請 AI 先看過現有的差異再接著開發。資料夾有未提交的修改、或本機與遠端分歧時，會先問你。')}</p>
                   )}
                   </div>
 
                   {judgements[ticket.key] && <CheckPlan review={judgements[ticket.key]} onChange={(r) => setJudgements((prev) => ({ ...prev, [ticket.key]: r }))} />}
 
                   <div className="plan-block">
-                    <div className="plan-block-title">要做什麼</div>
+                    <div className="plan-block-title">{t('要做什麼')}</div>
                     {plan.summary?.length ? (
                       <ul className="summary">{plan.summary.map((line, i) => <li key={i}>{line}</li>)}</ul>
                     ) : (
-                      <p className="muted small">AI 沒有整理出重點，請點單號看原文。</p>
+                      <p className="muted small">{t('AI 沒有整理出重點，請點單號看原文。')}</p>
                     )}
                   </div>
 
                   {judgements[ticket.key] && <BriefBlocks review={judgements[ticket.key]} />}
 
                   <div className="plan-block">
-                    <div className="plan-block-title">參考資料（{plan.resources?.length ?? 0}）</div>
+                    <div className="plan-block-title">{t('參考資料（{count}）', { count: plan.resources?.length ?? 0 })}</div>
                     {plan.resources?.length ? (
                       <ul className="resources">
                         {plan.resources.map((r) => (
                           <li key={r.url}>
-                            <span className={`res-kind res-${r.kind}`}>{RESOURCE_LABEL[r.kind]}</span>
+                            <span className={`res-kind res-${r.kind}`}>{t(RESOURCE_LABEL[r.kind])}</span>
                             <a href={r.url} onClick={(e) => { e.preventDefault(); api.openExternal(r.url); }}>{r.title}</a>
-                            <span className="muted small">（{r.from}）</span>
+                            <span className="muted small">{t('（{from}）', { from: r.from })}</span>
                           </li>
                         ))}
                       </ul>
                     ) : (
-                      <p className="muted small">單上沒有附 Figma、文件或連結。</p>
+                      <p className="muted small">{t('單上沒有附 Figma、文件或連結。')}</p>
                     )}
                   </div>
 
@@ -582,10 +591,10 @@ export function PlanView({ drafts, onChange, onBack, onConfirmed }: Props) {
                   )}
 
                   <div className="plan-actions">
-                    <button className="link danger" onClick={() => discard(ticket.key)}>移除</button>
+                    <button className="link danger" onClick={() => discard(ticket.key)}>{t('移除')}</button>
                     {blockerOf(ticket.key) && <span className="muted small">{blockerOf(ticket.key)}</span>}
                     <button className="primary" disabled={!!blockerOf(ticket.key) || !!confirming} onClick={() => confirm([ticket.key])}>
-                      {confirming?.includes(ticket.key) ? '確認中…' : `確認 ${ticket.key}，開始開發`}
+                      {confirming?.includes(ticket.key) ? t('確認中…') : t('確認 {key}，開始開發', { key: ticket.key })}
                     </button>
                   </div>
 
@@ -600,7 +609,7 @@ export function PlanView({ drafts, onChange, onBack, onConfirmed }: Props) {
 
       <footer>
         <span className="muted">
-          計畫表裡 {tickets.length} 張：{ready.length} 張可以開始{!allJudged ? '，其他的 AI 還在審閱' : checking ? '，檢查分支中（會先抓遠端）…' : ''}
+          {t('計畫表裡 {total} 張：{ready} 張可以開始', { total: tickets.length, ready: ready.length })}{!allJudged ? t('，其他的 AI 還在審閱') : checking ? t('，檢查分支中（會先抓遠端）…') : ''}
         </span>
       </footer>
     </main>

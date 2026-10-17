@@ -1,6 +1,7 @@
 // 外觀：「盟軍」或「蘇聯」（紅色警戒 2 風格，全部自己畫，不用遊戲的圖、字型、音效）。
 // 另外可以開音效（自己合成的提示音）、指揮官語音（系統語音念自己寫的台詞）、指揮官用語（狀態、階段換成作戰用語）。
 import { useEffect, useState } from 'react';
+import { getLang, type Lang, setLang, t } from '../../shared/i18n';
 import type { WorkItem, WorkStatus } from '../../shared/types';
 
 export interface SkinSettings {
@@ -8,10 +9,12 @@ export interface SkinSettings {
   sound: boolean;
   voice: boolean;
   lingo: boolean;
+  /** 介面語言：中文（原本的）或英文；語音不受影響 */
+  lang: Lang;
 }
 
 const KEY = 'flowpilot.skin';
-const DEFAULTS: SkinSettings = { theme: 'allied', sound: true, voice: true, lingo: true };
+const DEFAULTS: SkinSettings = { theme: 'allied', sound: true, voice: true, lingo: true, lang: 'zh' };
 
 function load(): SkinSettings {
   try {
@@ -24,13 +27,21 @@ function load(): SkinSettings {
   }
 }
 
+let synced = false;
+
 /** 目前的設定（給不在 React 裡的地方讀，例如狀態文字） */
 let current = load();
 export const skin = () => current;
 
 function apply(next: SkinSettings) {
+  const langChanged = next.lang !== getLang();
   current = next;
   document.documentElement.dataset.skin = next.theme;
+  document.documentElement.lang = next.lang === 'en' ? 'en' : 'zh-Hant-TW';
+  setLang(next.lang);
+  // 後端（狀態、錯誤、通知）也跟著換；一啟動也同步一次
+  if (langChanged || !synced) void window.flowpilot?.setLang?.(next.lang).catch(() => {});
+  synced = true;
   try {
     localStorage.setItem(KEY, JSON.stringify(next));
   } catch {}
@@ -56,6 +67,7 @@ export function useSkin(): [SkinSettings, (patch: Partial<SkinSettings>) => void
 
 // ---- 用語 ----
 
+// i18n-keys：顯示時才翻
 const STATUS: Record<WorkStatus, [string, string]> = {
   queued: ['排隊中', '待建造'],
   preparing: ['準備中', '部署中'],
@@ -71,9 +83,10 @@ const STATUS: Record<WorkStatus, [string, string]> = {
 };
 
 /** 狀態文字：開了指揮官用語就換成作戰用語 */
-export const statusLabel = (status: WorkStatus) => STATUS[status][current.lingo ? 1 : 0];
+export const statusLabel = (status: WorkStatus) => t(STATUS[status][current.lingo ? 1 : 0]);
 
-/** 一般文字 → 指揮官用語（沒開就原樣） */
+/** 一般文字 → 指揮官用語（沒開就原樣），再翻成目前的語言。傳進來的是中文原文（呼叫的地方用 zhOnly() 標起來） */
+// i18n-keys：顯示時才翻
 const LINGO: Record<string, string> = {
   工作台: '作戰室',
   單列表: '任務簡報',
@@ -86,7 +99,7 @@ const LINGO: Record<string, string> = {
   等你測試: '指揮官驗收',
   交付: '部署',
 };
-export const term = (text: string) => (current.lingo ? LINGO[text] ?? text : text);
+export const term = (text: string) => t(current.lingo ? LINGO[text] ?? text : text);
 
 // ---- 音效（Web Audio 自己合成）----
 

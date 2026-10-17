@@ -8,6 +8,7 @@ import { errorText } from './ChatPanel';
 import { DiffView } from './DiffView';
 import { needsYou, unexplainedFiles } from '../../shared/acceptance';
 import { commitPrefs, deliveryOf, isTestOnly, setCommitPrefs, useGitState } from './delivery';
+import { t, zhOnly } from '../../shared/i18n';
 
 const api = window.flowpilot;
 
@@ -43,9 +44,9 @@ export function AcceptancePanel({ item }: { item: WorkItem }) {
   if (!report) {
     return (
       <div className="panel">
-        <p className="muted small">AI 做完開發、測試完之後，這裡會列出驗收表：每一條需求改了什麼、為什麼、改在哪、會影響哪裡、你要怎麼測。</p>
+        <p className="muted small">{t('AI 做完開發、測試完之後，這裡會列出驗收表：每一條需求改了什麼、為什麼、改在哪、會影響哪裡、你要怎麼測。')}</p>
         {idle && item.stage === 'manual' && (
-          <button onClick={() => run(() => api.test.requestAcceptance(item.id))} title="不重新測試，請 AI 照目前的改動整理驗收表">請 AI 整理驗收表</button>
+          <button onClick={() => run(() => api.test.requestAcceptance(item.id))} title={t('不重新測試，請 AI 照目前的改動整理驗收表')}>{t('請 AI 整理驗收表')}</button>
         )}
         {error && <div className="error small">{error}</div>}
       </div>
@@ -61,20 +62,20 @@ export function AcceptancePanel({ item }: { item: WorkItem }) {
   return (
     <div className="panel acceptance-panel">
       <div className="ac-summary">
-        <strong>{left ? `要你測 ${left} 條` : forYou.length ? '要你測的都測過了' : '都由 AI 測過了'}</strong>
-        <span className="muted small">共 {report.acceptance.length} 條</span>
-        <button className="link small ac-export" title="匯出成 CSV（Excel 打得開）" onClick={() => run(() => api.test.exportCsv(item.id))}>匯出 CSV</button>
+        <strong>{left ? t('要你測 {left} 條', { left }) : forYou.length ? t('要你測的都測過了') : t('都由 AI 測過了')}</strong>
+        <span className="muted small">{t('共 {count} 條', { count: report.acceptance.length })}</span>
+        <button className="link small ac-export" title={t('匯出成 CSV（Excel 打得開）')} onClick={() => run(() => api.test.exportCsv(item.id))}>{t('匯出 CSV')}</button>
       </div>
 
       {(report.attention.length > 0 || unexplained.length > 0) && (
         <div className="ac-attention">
-          <div className="plan-block-title">⚠ 要你注意</div>
+          <div className="plan-block-title">⚠ {t('要你注意')}</div>
           <ul>
             {report.attention.map((t, i) => <li key={i}>{t}</li>)}
             {unexplained.length > 0 && (
               <li className="bad" title={unexplained.join('\n')}>
-                有 {unexplained.length} 個檔案改了但驗收表沒說明：{unexplained.slice(0, 4).map(fileName).join('、')}{unexplained.length > 4 ? ' 等' : ''}
-                <button className="link small" onClick={() => askAI(`驗收表沒說明這些檔案為什麼改：${unexplained.join('、')}。請說明，不需要的改動請還原。`)}>問 AI</button>
+                {t('有 {count} 個檔案改了但驗收表沒說明：', { count: unexplained.length })}{unexplained.slice(0, 4).map(fileName).join(t('、'))}{unexplained.length > 4 ? t(' 等') : ''}
+                <button className="link small" onClick={() => askAI(t('驗收表沒說明這些檔案為什麼改：{files}。請說明，不需要的改動請還原。', { files: unexplained.join(t('、')) }))}>{t('問 AI')}</button>
               </li>
             )}
           </ul>
@@ -85,7 +86,7 @@ export function AcceptancePanel({ item }: { item: WorkItem }) {
         {report.acceptance.map((a) => {
           const mine = needsYou(a);
           const expanded = open.has(a.no) || (mine && !a.checked && detailed);
-          const badge = a.result === '沒過' ? { text: '沒過', cls: 'bad' } : mine ? { text: a.checked ? '你測過了' : '要你測', cls: a.checked ? 'ok' : 'you' } : { text: 'AI 測過', cls: 'ok' };
+          const badge = a.result === zhOnly('沒過') ? { text: t('沒過'), cls: 'bad' } : mine ? { text: a.checked ? t('你測過了') : t('要你測'), cls: a.checked ? 'ok' : 'you' } : { text: t('AI 測過'), cls: 'ok' };
           const toggle = () => setOpen((prev) => {
             const next = new Set(prev);
             expanded ? next.delete(a.no) : next.add(a.no);
@@ -93,35 +94,35 @@ export function AcceptancePanel({ item }: { item: WorkItem }) {
           });
           return (
             <li key={a.no} className={`ac-item ${mine && !a.checked ? 'mine' : 'quiet'}`}>
-              <button className="ac-head" onClick={toggle} title={expanded ? '收起' : '展開'}>
+              <button className="ac-head" onClick={toggle} title={expanded ? t('收起') : t('展開')}>
                 <span className={`ac-badge ${badge.cls}`}>{badge.text}</span>
                 <span className="ac-title">{a.no}. {a.text}</span>
-                {a.changed && <span className="ac-new" title="這次修改或重測後內容有變，要重新看">有變動</span>}
+                {a.changed && <span className="ac-new" title={t('這次修改或重測後內容有變，要重新看')}>{t('有變動')}</span>}
               </button>
               {expanded && (
                 <div className="ac-body">
-                  {a.change && <p><span className="ac-label">改了</span>{a.change}</p>}
-                  {a.why && <p><span className="ac-label">為什麼</span>{a.why}</p>}
+                  {a.change && <p><span className="ac-label">{t('改了')}</span>{a.change}</p>}
+                  {a.why && <p><span className="ac-label">{t('為什麼')}</span>{a.why}</p>}
                   {a.files.length > 0 && (
-                    <p title={a.files.join('\n')}><span className="ac-label">改在</span>{a.files.map(fileName).join('、')}</p>
+                    <p title={a.files.join('\n')}><span className="ac-label">{t('改在')}</span>{a.files.map(fileName).join(t('、'))}</p>
                   )}
-                  <p><span className="ac-label">也影響</span>{a.impact || (detailed ? '沒有' : '—')}</p>
-                  {a.howToTest && <p className="ac-how"><span className="ac-label">怎麼測</span>{a.howToTest}</p>}
-                  {a.note && <p className="muted small"><span className="ac-label">AI 測試</span>{a.result}：{a.note}</p>}
+                  <p><span className="ac-label">{t('也影響')}</span>{a.impact || (detailed ? t('沒有') : '—')}</p>
+                  {a.howToTest && <p className="ac-how"><span className="ac-label">{t('怎麼測')}</span>{a.howToTest}</p>}
+                  {a.note && <p className="muted small"><span className="ac-label">{t('AI 測試')}</span>{a.result}{t('：')}{a.note}</p>}
                   <div className="ac-actions">
                     {mine && (
                       <label>
                         <input type="checkbox" checked={a.checked} onChange={(e) => run(() => api.test.setChecked(item.id, a.no, e.target.checked))} />
-                        我測過了
+                        {t('我測過了')}
                       </label>
                     )}
                     {a.page && !/\/:/.test(a.page) && item.folder && (
-                      <button className="link small" title="在你的瀏覽器打開本機網站這一頁（網站沒開會先啟動）" onClick={() => run(() => api.test.openPage(item.id, a.page))}>
-                        打開這頁
+                      <button className="link small" title={t('在你的瀏覽器打開本機網站這一頁（網站沒開會先啟動）')} onClick={() => run(() => api.test.openPage(item.id, a.page))}>
+                        {t('打開這頁')}
                       </button>
                     )}
-                    <button className="link small" title="這一條有問題？在輸入框帶入，跟 AI 說要怎麼改" onClick={() => askAI(`驗收第 ${a.no} 條（${a.text}）：`)}>
-                      跟 AI 說
+                    <button className="link small" title={t('這一條有問題？在輸入框帶入，跟 AI 說要怎麼改')} onClick={() => askAI(t('驗收第 {no} 條（{text}）：', { no: a.no, text: a.text }))}>
+                      {t('跟 AI 說')}
                     </button>
                   </div>
                 </div>
@@ -133,15 +134,15 @@ export function AcceptancePanel({ item }: { item: WorkItem }) {
 
       {report.otherChanges.length > 0 && (
         <>
-          <div className="plan-block-title">其他也改到的</div>
+          <div className="plan-block-title">{t('其他也改到的')}</div>
           <ul className="ac-list">
             {report.otherChanges.map((c, i) => (
               <li key={i} className="ac-item quiet">
                 <div className="ac-body">
-                  <p><span className="ac-label">改了</span>{c.change}</p>
-                  {c.why && <p><span className="ac-label">為什麼</span>{c.why}</p>}
-                  {c.files.length > 0 && <p title={c.files.join('\n')}><span className="ac-label">改在</span>{c.files.map(fileName).join('、')}</p>}
-                  {c.impact && <p><span className="ac-label">也影響</span>{c.impact}</p>}
+                  <p><span className="ac-label">{t('改了')}</span>{c.change}</p>
+                  {c.why && <p><span className="ac-label">{t('為什麼')}</span>{c.why}</p>}
+                  {c.files.length > 0 && <p title={c.files.join('\n')}><span className="ac-label">{t('改在')}</span>{c.files.map(fileName).join(t('、'))}</p>}
+                  {c.impact && <p><span className="ac-label">{t('也影響')}</span>{c.impact}</p>}
                 </div>
               </li>
             ))}
@@ -151,7 +152,7 @@ export function AcceptancePanel({ item }: { item: WorkItem }) {
 
       {report.manual.length > 0 && (
         <>
-          <div className="plan-block-title">其他要你手動測的</div>
+          <div className="plan-block-title">{t('其他要你手動測的')}</div>
           <ul className="manual-list">
             {report.manual.map((m, i) => (
               <li key={i}>
@@ -165,8 +166,8 @@ export function AcceptancePanel({ item }: { item: WorkItem }) {
         </>
       )}
       {idle && item.stage === 'manual' && (
-        <button className="link small" onClick={() => run(() => api.test.requestAcceptance(item.id))} title="不重新測試，請 AI 照目前的改動重新整理驗收表">
-          請 AI 重新整理驗收表
+        <button className="link small" onClick={() => run(() => api.test.requestAcceptance(item.id))} title={t('不重新測試，請 AI 照目前的改動重新整理驗收表')}>
+          {t('請 AI 重新整理驗收表')}
         </button>
       )}
       {error && <div className="error small">{error}</div>}
@@ -213,40 +214,40 @@ export function TestPanel({ item }: { item: WorkItem }) {
   return (
     <div className="panel test-panel">
       <div className="panel-head">
-        <strong>測試</strong>
-        <span className="muted small">本機連的環境與登入帳號</span>
+        <strong>{t('測試')}</strong>
+        <span className="muted small">{t('本機連的環境與登入帳號')}</span>
       </div>
       <div className="test-row">
-        <span className="test-label">環境</span>
+        <span className="test-label">{t('環境')}</span>
         <div className="segmented">
           {(['sit', 'uat'] as Env[]).map((e) => (
-            <button key={e} className={env === e ? 'on' : ''} disabled={busy || env === null} title={env === e ? '再按一次會重新套用（例如 UAT 要用 SIT 多語系的那行）' : undefined} onClick={() => switchTo(e)}>
+            <button key={e} className={env === e ? 'on' : ''} disabled={busy || env === null} title={env === e ? t('再按一次會重新套用（例如 UAT 要用 SIT 多語系的那行）') : undefined} onClick={() => switchTo(e)}>
               {e.toUpperCase()}
             </button>
           ))}
         </div>
       </div>
-      {env === 'mixed' && <p className="warn small">environment.ts 的 SIT、UAT 兩組都開著或都註解掉了，選一個就會整理好。</p>}
-      {env === null && state && <p className="muted small">environment.ts 裡找不到 SIT／UAT 的標記，沒辦法切換。</p>}
+      {env === 'mixed' && <p className="warn small">{t('environment.ts 的 SIT、UAT 兩組都開著或都註解掉了，選一個就會整理好。')}</p>}
+      {env === null && state && <p className="muted small">{t('environment.ts 裡找不到 SIT／UAT 的標記，沒辦法切換。')}</p>}
       <div className="test-row">
-        <span className="test-label">帳號</span>
+        <span className="test-label">{t('帳號')}</span>
         {state?.account ? (
           <span>
             {state.account.username}
-            {!state.account.hasPassword && <span className="warn small">（還沒有密碼）</span>}
+            {!state.account.hasPassword && <span className="warn small">{t('（還沒有密碼）')}</span>}
           </span>
         ) : (
-          <span className="warn small">{env === 'sit' || env === 'uat' ? `帳號檔裡沒有 ${env.toUpperCase()} 的帳號` : '—'}</span>
+          <span className="warn small">{env === 'sit' || env === 'uat' ? t('帳號檔裡沒有 {env} 的帳號', { env: env.toUpperCase() }) : '—'}</span>
         )}
       </div>
       {state && (!state.account || !state.account.hasPassword) && (env === 'sit' || env === 'uat') && (
-        <p className="muted small">請在 {state.accountFile} 補上{state.account ? '密碼（passwordSource）' : ''}。</p>
+        <p className="muted small">{state.account ? t('請在 {file} 補上密碼（passwordSource）。', { file: state.accountFile }) : t('請在 {file} 補上。', { file: state.accountFile })}</p>
       )}
       <div className="row trial-row">
         <button
           className="link small"
           disabled={trying || !(state?.account?.hasPassword)}
-          title="用無頭瀏覽器照帳號檔登入看看（獨立的臨時對話，約一兩分鐘；本機網站沒在跑會先啟動）"
+          title={t('用無頭瀏覽器照帳號檔登入看看（獨立的臨時對話，約一兩分鐘；本機網站沒在跑會先啟動）')}
           onClick={async () => {
             setTrying(true);
             setTrial(null);
@@ -260,16 +261,16 @@ export function TestPanel({ item }: { item: WorkItem }) {
             }
           }}
         >
-          {trying ? '試登中…（約一兩分鐘）' : '試登一次'}
+          {trying ? t('試登中…（約一兩分鐘）') : t('試登一次')}
         </button>
-        {trial && <span className={`small ${trial.ok ? 'ok-text' : 'warn'}`}>{trial.ok ? '登入成功' : '登入失敗'}：{trial.reason}</span>}
+        {trial && <span className={`small ${trial.ok ? 'ok-text' : 'warn'}`}>{trial.ok ? t('登入成功：{reason}', { reason: trial.reason }) : t('登入失敗：{reason}', { reason: trial.reason })}</span>}
       </div>
       <button
         className="link small close-browsers"
-        title="關掉瀏覽器測試開出來的瀏覽器視窗（不會關到你自己的 Chrome）"
-        onClick={() => api.test.closeBrowsers().then((n) => setError(n ? null : '目前沒有測試開出來的瀏覽器')).catch((e) => setError(errorText(e)))}
+        title={t('關掉瀏覽器測試開出來的瀏覽器視窗（不會關到你自己的 Chrome）')}
+        onClick={() => api.test.closeBrowsers().then((n) => setError(n ? null : t('目前沒有測試開出來的瀏覽器'))).catch((e) => setError(errorText(e)))}
       >
-        關掉測試開的瀏覽器
+        {t('關掉測試開的瀏覽器')}
       </button>
       {error && <div className="error small">{error}</div>}
     </div>
@@ -363,20 +364,20 @@ export function FolderTerminalPanel({ item, onSiteUrl }: { item: WorkItem; onSit
     <div className="panel term">
       <div className="site-status">
         <span className={`site-dot ${url ? 'on' : ''}`} />
-        {url ? <span>本機網站在跑：<code>{url}</code></span> : <span className="muted">本機網站沒有在跑</span>}
+        {url ? <span>{t('本機網站在跑：')}<code>{url}</code></span> : <span className="muted">{t('本機網站沒有在跑')}</span>}
       </div>
       <div className="row">
         {url ? (
           <>
-            <button className="primary" onClick={() => api.openUrl(url).catch((e) => setError(errorText(e)))}>打開網頁</button>
+            <button className="primary" onClick={() => api.openUrl(url).catch((e) => setError(errorText(e)))}>{t('打開網頁')}</button>
             <button
-              title="在對話框掛上「看你開的畫面」，打你要 AI 看什麼再送出。Chrome 要先裝 Playwright 擴充功能"
+              title={t('在對話框掛上「看你開的畫面」，打你要 AI 看什麼再送出。Chrome 要先裝 Playwright 擴充功能')}
               // 不直接叫 AI 做事：先讓你在對話框說要它看什麼，送出時才一起交給 AI
               onClick={() => window.dispatchEvent(new CustomEvent('flowpilot:look', { detail: item.id }))}
             >
-              看我的
+              {t('看我的')}
             </button>
-            <button onClick={() => folder && api.folderTerminal.interrupt(folder)}>停止</button>
+            <button onClick={() => folder && api.folderTerminal.interrupt(folder)}>{t('停止')}</button>
           </>
         ) : (
           <button
@@ -392,26 +393,26 @@ export function FolderTerminalPanel({ item, onSiteUrl }: { item: WorkItem; onSit
               });
             }}
           >
-            {starting !== null ? '啟動中…' : '啟動'}
+            {starting !== null ? t('啟動中…') : t('啟動')}
           </button>
         )}
         {/* 終端機是開發者的工具，平常收起來；真的需要時再打開 */}
-        <button className="link small push-right" onClick={() => setShowTerminal(!showTerminal)}>{showTerminal ? '收起終端機' : '顯示終端機'}</button>
+        <button className="link small push-right" onClick={() => setShowTerminal(!showTerminal)}>{showTerminal ? t('收起終端機') : t('顯示終端機')}</button>
       </div>
       {starting !== null && !url && (
         <div className="site-starting">
           <span className="spinner" />
-          <span>啟動中，第一次編譯大約要 30 秒到 1 分鐘（已經 {Math.round((now - starting) / 1000)} 秒）</span>
+          <span>{t('啟動中，第一次編譯大約要 30 秒到 1 分鐘（已經 {seconds} 秒）', { seconds: Math.round((now - starting) / 1000) })}</span>
           {lastLine && <code className="site-last-line" title={lastLine}>{lastLine}</code>}
         </div>
       )}
       <p className="muted small">
-        「打開網頁」用你平常的 Chrome 開。要讓 AI 看得到你開的頁面，Chrome 要先裝 Playwright 官方的擴充功能
-        <button className="link small" onClick={() => api.openExternal('https://chromewebstore.google.com/detail/playwright-extension/mmlmfjhmonkocbjadbfplnigmagldckm')}>（安裝）</button>
-        ；之後按「看我的」、在對話框打你要它看什麼，送出後 Chrome 會跳出頁面讓你選要給 AI 的分頁。
+        {t('「打開網頁」用你平常的 Chrome 開。要讓 AI 看得到你開的頁面，Chrome 要先裝 Playwright 官方的擴充功能')}
+        <button className="link small" onClick={() => api.openExternal('https://chromewebstore.google.com/detail/playwright-extension/mmlmfjhmonkocbjadbfplnigmagldckm')}>{t('（安裝）')}</button>
+        {t('；之後按「看我的」、在對話框打你要它看什麼，送出後 Chrome 會跳出頁面讓你選要給 AI 的分頁。')}
       </p>
       <div ref={host} className="folder-term" style={showTerminal ? undefined : { display: 'none' }} />
-      {exited && <div className="muted small">終端機已結束，切換到別張單再切回來會重新打開。</div>}
+      {exited && <div className="muted small">{t('終端機已結束，切換到別張單再切回來會重新打開。')}</div>}
       {error && <div className="error">{error}</div>}
     </div>
   );
@@ -447,7 +448,7 @@ export function GitPanel({ item, onCount }: { item: WorkItem; onCount?(changes: 
   }
 
   if (!item.folder) return null;
-  if (!state || !delivery) return <div className="panel"><p className="muted small">讀取中…</p>{!!loadError && <div className="error">{errorText(loadError)}</div>}</div>;
+  if (!state || !delivery) return <div className="panel"><p className="muted small">{t('讀取中…')}</p>{!!loadError && <div className="error">{errorText(loadError)}</div>}</div>;
 
   const { changes, pushCount, onBranch } = delivery;
   const files = [...state.staged, ...state.unstaged].filter((f, i, all) => all.findIndex((x) => x.path === f.path) === i);
@@ -460,51 +461,51 @@ export function GitPanel({ item, onCount }: { item: WorkItem; onCount?(changes: 
 
   // 提交、推送用標題列的主要按鈕；這裡只說明現在的狀況
   const status = !onBranch
-    ? `資料夾目前在 ${state.branch}，不是這張單的分支 ${item.branch}`
+    ? t('資料夾目前在 {current}，不是這張單的分支 {branch}', { current: state.branch, branch: item.branch })
     : changes.length
-      ? aiWorking ? 'AI 還在改，做完之後用上方的「提交」按鈕提交' : '確認沒問題後，用上方的「提交」按鈕提交'
+      ? aiWorking ? t('AI 還在改，做完之後用上方的「提交」按鈕提交') : t('確認沒問題後，用上方的「提交」按鈕提交')
       : pushCount > 0
-        ? `有 ${pushCount} 個提交還沒推送，用上方的「推送」按鈕推送`
-        : state.hasRemote && state.ahead > 0 ? '改動都已推送到遠端' : '';
+        ? t('有 {count} 個提交還沒推送，用上方的「推送」按鈕推送', { count: pushCount })
+        : state.hasRemote && state.ahead > 0 ? t('改動都已推送到遠端') : '';
 
   return (
     <div className="panel git">
       <div className="panel-head">
-        <span className="muted small">分支</span>
-        <code className="small">{state.branch || '（不在分支上）'}</code>
+        <span className="muted small">{t('分支')}</span>
+        <code className="small">{state.branch || t('（不在分支上）')}</code>
       </div>
       {(error || !!loadError) && <div className="error">{error ?? errorText(loadError)}</div>}
       {status && <p className="muted small git-status">{status}</p>}
 
       <div className="git-section">
-        <div className="git-section-head"><span>AI 改了 {changes.length} 個檔案</span></div>
-        {changes.length === 0 && <p className="muted small">{pushCount > 0 || state.ahead > 0 ? '改動都提交了。' : '目前沒有改動。'}</p>}
+        <div className="git-section-head"><span>{t('AI 改了 {count} 個檔案', { count: changes.length })}</span></div>
+        {changes.length === 0 && <p className="muted small">{pushCount > 0 || state.ahead > 0 ? t('改動都提交了。') : t('目前沒有改動。')}</p>}
         <ul className="git-files">
           {changes.map((file) => {
             const name = file.path.split('/').pop();
             return (
               <li key={file.path} className={diff?.path === file.path ? 'open' : ''}>
-                <button className="file-name" onClick={() => showDiff(file)} title={`${file.path}（點一下看改了什麼）`}>
-                  <span className={`code c-${file.code}`}>{CHANGE_LABEL[file.code] ?? '修改'}</span> {name} <span className="muted small">{file.path.slice(0, file.path.length - (name?.length ?? 0))}</span>
+                <button className="file-name" onClick={() => showDiff(file)} title={t('{path}（點一下看改了什麼）', { path: file.path })}>
+                  <span className={`code c-${file.code}`}>{CHANGE_LABEL[file.code] ? t(CHANGE_LABEL[file.code]) : t('修改')}</span> {name} <span className="muted small">{file.path.slice(0, file.path.length - (name?.length ?? 0))}</span>
                 </button>
                 <button
                   className="link small file-actions"
-                  title="這個檔案改得不對？按一下會把檔名帶進中間的輸入框，接著打要怎麼改，送出給 AI"
-                  onClick={() => window.dispatchEvent(new CustomEvent('flowpilot:ask-ai', { detail: `${file.path}：` }))}
+                  title={t('這個檔案改得不對？按一下會把檔名帶進中間的輸入框，接著打要怎麼改，送出給 AI')}
+                  onClick={() => window.dispatchEvent(new CustomEvent('flowpilot:ask-ai', { detail: t('{path}：', { path: file.path }) }))}
                 >
-                  要 AI 改
+                  {t('要 AI 改')}
                 </button>
                 {diff?.path === file.path && <div className="diff-row"><DiffView diff={diff.text} /></div>}
               </li>
             );
           })}
         </ul>
-        {testOnly.length > 0 && <p className="muted small">environment.ts 是測試時切環境改的，不會提交；完成這張單時會還原。</p>}
+        {testOnly.length > 0 && <p className="muted small">{t('environment.ts 是測試時切環境改的，不會提交；完成這張單時會還原。')}</p>}
       </div>
 
       {changes.length > 0 && onBranch && (
         <div className="git-commit">
-          <button className="link small" onClick={() => setEditing(!editing)}>{editing ? '收起' : '修改提交訊息'}</button>
+          <button className="link small" onClick={() => setEditing(!editing)}>{editing ? t('收起') : t('修改提交訊息')}</button>
           {editing && (
             <>
               <input
@@ -513,11 +514,11 @@ export function GitPanel({ item, onCount }: { item: WorkItem; onCount?(changes: 
                   setMessage(e.target.value);
                   setCommitPrefs(item.id, { message: e.target.value });
                 }}
-                placeholder="提交訊息"
+                placeholder={t('提交訊息')}
               />
               {identityOptions.length > 1 && (
                 <label className="identity">
-                  <span className="muted small">提交身分（只套用在這一次）</span>
+                  <span className="muted small">{t('提交身分（只套用在這一次）')}</span>
                   <select
                     value={who ?? state.identity.email}
                     onChange={(e) => {
@@ -528,7 +529,7 @@ export function GitPanel({ item, onCount }: { item: WorkItem; onCount?(changes: 
                   >
                     {identityOptions.map((i) => (
                       <option key={i.email} value={i.email}>
-                        {i.name} &lt;{i.email}&gt;{i.email === state.identity.email ? '（預設）' : ''}
+                        {i.name} &lt;{i.email}&gt;{i.email === state.identity.email ? t('（預設）') : ''}
                       </option>
                     ))}
                   </select>
@@ -543,5 +544,6 @@ export function GitPanel({ item, onCount }: { item: WorkItem; onCount?(changes: 
 }
 
 /** Git 的代號換成操作者看得懂的字 */
+// i18n-keys：顯示時才翻
 const CHANGE_LABEL: Record<string, string> = { M: '修改', A: '新增', U: '新增', D: '刪除', R: '改名', C: '複製' };
 

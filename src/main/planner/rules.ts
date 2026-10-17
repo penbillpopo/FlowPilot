@@ -1,4 +1,5 @@
 // 分支規則：純計算，不碰 git，方便測試。
+import { t } from '../../shared/i18n';
 import type { PlanBranch, PlanEntry, TicketPlan } from '../../shared/types';
 import type { ProjectRule, Settings } from '../settings';
 
@@ -30,15 +31,15 @@ export function normalizeEntry(entry: PlanEntry, rule: ProjectRule): PlanEntry {
 
 /** 計畫有沒有填完整；回傳要你補的地方，沒問題回傳 null */
 export function planProblem(plan: TicketPlan, settings: Settings): string | null {
-  if (plan.entries.length === 0) return '還沒選專案';
+  if (plan.entries.length === 0) return t('還沒選專案');
   for (const entry of plan.entries) {
     const rule = settings.projects[entry.project];
-    if (!rule) return `沒有「${entry.project}」的分支規則`;
-    if (hasMerchants(rule) && entry.merchants.length === 0) return `${entry.project} 還沒選商戶`;
+    if (!rule) return t('沒有「{project}」的分支規則', { project: entry.project });
+    if (hasMerchants(rule) && entry.merchants.length === 0) return t('{project} 還沒選商戶', { project: entry.project });
   }
   const projects = plan.entries.map((e) => e.project);
-  if (new Set(projects).size !== projects.length) return '同一個專案出現兩次';
-  if (!/^feat\([A-Z]+-\d+(, ?[A-Z]+-\d+)*\) \S/.test(plan.prTitle)) return '合併請求標題格式要是 feat(單號) 英文描述';
+  if (new Set(projects).size !== projects.length) return t('同一個專案出現兩次');
+  if (!/^feat\([A-Z]+-\d+(, ?[A-Z]+-\d+)*\) \S/.test(plan.prTitle)) return t('合併請求標題格式要是 feat(單號) 英文描述');
   return null;
 }
 

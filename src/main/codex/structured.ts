@@ -2,6 +2,7 @@
 import type { SkillInfo } from '../../shared/types';
 import type { CodexRpc, RpcMessage } from './rpc';
 import { userBrowserToolsOff } from './user-tools';
+import { getLang, t } from '../../shared/i18n';
 
 export interface StructuredRequest {
   prompt: string;
@@ -16,6 +17,8 @@ export interface StructuredRequest {
   threadId?: string;
   /** 一起給 AI 看的圖片（本機路徑） */
   images?: string[];
+  /** 不管介面語言（例如翻譯：要照指定的語言寫） */
+  keepLanguage?: boolean;
   /** 額外的對話設定（例如試登一次要帶上瀏覽器工具） */
   config?: Record<string, unknown>;
 }
@@ -39,7 +42,9 @@ export async function runStructured<T>(rpc: CodexRpc, request: StructuredRequest
       // on-request 下唯讀環境裡的指令照樣直接跑；要提升權限的指令由下面一律拒絕，工具確認由下面自動同意
       approvalPolicy: 'on-request',
       sandbox: 'read-only',
-      developerInstructions: request.developerInstructions ?? null,
+      // 介面是英文：審閱、討論、試登這類給人看的結果請 AI 用英文寫
+      developerInstructions:
+        [request.developerInstructions, getLang() === 'en' && !request.keepLanguage ? '所有給人看的文字（說明、問題、建議、結論）都用英文（English）寫；格式說明裡如果寫「用繁體中文」，以這一句為準。' : null].filter(Boolean).join('\n\n') || null,
       config: { model_reasoning_effort: request.effort ?? 'low', features: { computer_use: false, browser_use: false, browser_use_external: false }, skills, ...request.config, mcp_servers: { ...userBrowserToolsOff(), ...(request.config?.mcp_servers as object | undefined) } },
     });
     threadId = thread.id;
@@ -49,7 +54,7 @@ export async function runStructured<T>(rpc: CodexRpc, request: StructuredRequest
   let lastMessage = '';
   let unsubscribe = () => {};
   const finished = new Promise<RpcMessage>((resolve, reject) => {
-    const timer = setTimeout(() => reject(new Error('AI 逾時')), request.timeoutMs ?? 180_000);
+    const timer = setTimeout(() => reject(new Error(t('AI 逾時'))), request.timeoutMs ?? 180_000);
     unsubscribe = rpc.on((message) => {
       if (message.params?.threadId !== id) return;
       // 這段對話是唯讀的；萬一來要同意，一律拒絕
@@ -77,11 +82,11 @@ export async function runStructured<T>(rpc: CodexRpc, request: StructuredRequest
     });
     const done = await finished;
     const status = done.params.turn?.status;
-    if (status !== 'completed') throw new Error(`AI 沒有完成（${done.params.turn?.error?.message ?? status}）`);
+    if (status !== 'completed') throw new Error(t('AI 沒有完成（{reason}）', { reason: String(done.params.turn?.error?.message ?? status) }));
     try {
       return { result: JSON.parse(lastMessage) as T, threadId: id };
     } catch {
-      throw new Error('AI 回覆的格式不正確');
+      throw new Error(t('AI 回覆的格式不正確'));
     }
   } finally {
     unsubscribe();

@@ -1,4 +1,5 @@
 // Git 改動面板（像 VS Code 的「原始碼控制」）：變更／暫存的變更、差異、暫存、取消暫存、捨棄、提交、推送。
+import { t } from '../shared/i18n';
 import { execFile } from 'node:child_process';
 import { mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
@@ -32,13 +33,13 @@ export function parseStatus(raw: string): { staged: GitFile[]; unstaged: GitFile
 /** 路徑一定要在資料夾裡面，避免 ../ 之類的路徑碰到資料夾外的檔案 */
 function inside(cwd: string, path: string): string {
   const full = resolve(cwd, path);
-  if (full !== resolve(cwd) && !full.startsWith(resolve(cwd) + sep)) throw new Error(`路徑不在資料夾裡：${path}`);
+  if (full !== resolve(cwd) && !full.startsWith(resolve(cwd) + sep)) throw new Error(t('路徑不在資料夾裡：{path}', { path }));
   return full;
 }
 
 async function git(cwd: string, args: string[]) {
   const result = await runGit(cwd, args, 60_000);
-  if (result.code !== 0) throw new Error(result.stderr.trim() || `git ${args[0]} 失敗`);
+  if (result.code !== 0) throw new Error(result.stderr.trim() || t('git {command} 失敗', { command: args[0] }));
   return result.stdout;
 }
 
@@ -97,11 +98,11 @@ export const isTestOnlyFile = (path: string) => /(^|\/)src\/environments\/enviro
  * - 專案的提交前檢查（例如 ng lint --fix）順手改到的無關檔案，提交後自動還原（它們提交前是乾淨的，還原就是回到原樣）
  */
 export async function commitAll(cwd: string, message: string, identity?: GitIdentity): Promise<CommitResult & { restored: string[] }> {
-  if (!message.trim()) throw new Error('請輸入提交訊息');
+  if (!message.trim()) throw new Error(t('請輸入提交訊息'));
   const before = await gitState(cwd);
   const files = [...before.staged, ...before.unstaged].map((f) => f.path);
   const toCommit = [...new Set(files.filter((p) => !isTestOnlyFile(p)))];
-  if (toCommit.length === 0) throw new Error('沒有要提交的改動');
+  if (toCommit.length === 0) throw new Error(t('沒有要提交的改動'));
   // 先把暫存區整理成「只有要提交的」：測試用的檔案如果被暫存過就拿出來
   const testOnlyStaged = before.staged.map((f) => f.path).filter(isTestOnlyFile);
   if (testOnlyStaged.length) await git(cwd, ['restore', '--staged', '--', ...testOnlyStaged]);
@@ -132,9 +133,9 @@ const shellQuote = (text: string) => `'${text.replace(/'/g, `'\\''`)}'`;
 
 /** 提交暫存的變更；指定身分時只用在這一次，不改資料夾的設定 */
 export async function commitStaged(cwd: string, message: string, identity?: GitIdentity): Promise<CommitResult> {
-  if (!message.trim()) throw new Error('請輸入提交訊息');
+  if (!message.trim()) throw new Error(t('請輸入提交訊息'));
   const before = await gitState(cwd);
-  if (before.staged.length === 0) throw new Error('沒有暫存的變更可以提交');
+  if (before.staged.length === 0) throw new Error(t('沒有暫存的變更可以提交'));
   const touched = new Set([...before.staged, ...before.unstaged].map((f) => f.path));
   const dir = mkdtempSync(join(tmpdir(), 'flowpilot-commit-'));
   const file = join(dir, 'message.txt');
@@ -156,7 +157,7 @@ export async function commitStaged(cwd: string, message: string, identity?: GitI
 /** 推送目前分支（只有你按「推送」才會執行） */
 export async function pushBranch(cwd: string): Promise<string> {
   const branch = await currentBranch(cwd);
-  if (!branch) throw new Error('目前不在任何分支上，不推送');
+  if (!branch) throw new Error(t('目前不在任何分支上，不推送'));
   const quoted = `'${branch.replace(/'/g, `'\\''`)}'`;
   // rebase 過之後遠端的歷史跟本機不一樣，要強制推送；用 --force-with-lease，遠端被別人推了新東西時會拒絕，不會吃掉別人的提交
   const force = (await gitState(cwd)).needsForce ? '--force-with-lease ' : '';

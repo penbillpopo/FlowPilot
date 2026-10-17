@@ -1,5 +1,6 @@
 // 設定檔：~/Library/Application Support/FlowPilot/設定.yaml
 // 第一次啟動時寫入預設內容，之後以使用者編輯的內容為準。
+import { t } from '../shared/i18n';
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { homedir } from 'node:os';
 import { dirname, join } from 'node:path';
@@ -142,17 +143,17 @@ export function expandHome(path: string): string {
 
 export function parseSettings(text: string): Settings {
   const raw = YAML.parse(text) as Settings;
-  if (!raw?.jira?.envFile) throw new Error('設定檔缺少 jira.envFile');
+  if (!raw?.jira?.envFile) throw new Error(t('設定檔缺少 jira.envFile'));
   raw.jira.filter ||= 'assignee = currentUser()';
   raw.jira.statuses ||= ['待辦事項', '進行中', 'UAT', 'READY TO TEST'];
   raw.jira.defaultStatuses ||= ['進行中'];
-  if (!raw.projects || !Array.isArray(raw.folders)) throw new Error('設定檔缺少 projects 或 folders');
+  if (!raw.projects || !Array.isArray(raw.folders)) throw new Error(t('設定檔缺少 projects 或 folders'));
   for (const rule of Object.values(raw.projects)) {
     rule.devSkill ||= 'frontend-development';
     rule.testSkill ||= 'frontend-playwright-test';
   }
   for (const folder of raw.folders) {
-    if (!raw.projects[folder.project]) throw new Error(`資料夾「${folder.name}」的專案「${folder.project}」沒有分支規則`);
+    if (!raw.projects[folder.project]) throw new Error(t('資料夾「{folder}」的專案「{project}」沒有分支規則', { folder: folder.name, project: folder.project }));
   }
   return {
     ...raw,

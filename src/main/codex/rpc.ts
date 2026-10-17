@@ -2,6 +2,7 @@
 // 兩種連法：
 // - stdio：自己啟動一個 app-server（AI 判斷這種臨時對話用）
 // - daemon：連到本機的共用常駐服務。開發用的對話走這條，VS Code 終端機用 `codex resume --remote` 才接得上同一段對話。
+import { t } from '../../shared/i18n';
 import { execFile, spawn, type ChildProcess } from 'node:child_process';
 import { homedir } from 'node:os';
 import WebSocket from 'ws';
@@ -30,7 +31,7 @@ export function codexEnv(): NodeJS.ProcessEnv {
 export function ensureDaemon(): Promise<void> {
   return new Promise((resolve, reject) => {
     execFile('codex', ['app-server', 'daemon', 'start'], { env: codexEnv(), timeout: 60_000 }, (error, _stdout, stderr) => {
-      if (error) reject(new Error(`無法啟動 Codex 常駐服務：${stderr || error.message}`));
+      if (error) reject(new Error(t('無法啟動 Codex 常駐服務：{error}', { error: stderr || error.message })));
       else resolve();
     });
   });
@@ -75,7 +76,7 @@ export class CodexRpc {
     child.on('exit', () => this.disconnected());
     await new Promise<void>((resolve, reject) => {
       child.once('spawn', resolve);
-      child.once('error', (e) => reject(new Error(`找不到或無法啟動 Codex：${e.message}`)));
+      child.once('error', (e) => reject(new Error(t('找不到或無法啟動 Codex：{error}', { error: e.message }))));
     });
   }
 
@@ -87,7 +88,7 @@ export class CodexRpc {
     socket.on('close', () => this.disconnected());
     await new Promise<void>((resolve, reject) => {
       socket.once('open', resolve);
-      socket.once('error', (e) => reject(new Error(`連不上 Codex 常駐服務：${e.message}`)));
+      socket.once('error', (e) => reject(new Error(t('連不上 Codex 常駐服務：{error}', { error: e.message }))));
     });
   }
 
@@ -100,7 +101,7 @@ export class CodexRpc {
   }
 
   private disconnected() {
-    for (const { reject } of this.pending.values()) reject(new Error('跟 Codex 的連線中斷了'));
+    for (const { reject } of this.pending.values()) reject(new Error(t('跟 Codex 的連線中斷了')));
     this.pending.clear();
     this.child = null;
     this.socket = null;
@@ -124,7 +125,7 @@ export class CodexRpc {
       if (message.method === undefined && typeof message.id === 'number' && this.pending.has(message.id)) {
         const { resolve, reject } = this.pending.get(message.id)!;
         this.pending.delete(message.id);
-        message.error ? reject(new Error(`Codex 回傳錯誤：${message.error.message}`)) : resolve(message.result);
+        message.error ? reject(new Error(t('Codex 回傳錯誤：{error}', { error: message.error.message }))) : resolve(message.result);
       } else if (message.method) {
         for (const listener of this.listeners) listener(message);
       }
@@ -141,7 +142,7 @@ export class CodexRpc {
     return new Promise((resolve, reject) => {
       const id = ++this.nextId;
       const timer = setTimeout(() => {
-        if (this.pending.delete(id)) reject(new Error(`Codex 沒有回應（${method}）`));
+        if (this.pending.delete(id)) reject(new Error(t('Codex 沒有回應（{method}）', { method })));
       }, timeoutMs);
       this.pending.set(id, {
         resolve: (v) => (clearTimeout(timer), resolve(v)),

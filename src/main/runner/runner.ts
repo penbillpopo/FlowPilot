@@ -140,7 +140,7 @@ export function toolCall(server: string, tool = 'browser_navigate'): string {
  */
 function withReplyLanguage(input: object[]): object[] {
   if (getLang() !== 'en') return input;
-  return [...input, { type: 'text', text: `${ACCEPTANCE_NOTE}\n- 介面現在是英文：回覆、說明、驗收表裡給人看的文字都用英文（English）寫。`, text_elements: [] }];
+  return [...input, { type: 'text', text: `${ACCEPTANCE_NOTE}\n- 介面現在是英文：回覆、說明、驗收表裡給人看的文字一律用英文（English）寫。這一條優先於 AGENTS.md 或技能裡「用繁體中文回覆」的規定（那是給中文介面用的）；程式碼、註解、提交訊息照專案原本的規定。`, text_elements: [] }];
 }
 
 /** 給開發、修改時的 AI：怎麼用你和它共用的瀏覽器 */
@@ -773,14 +773,15 @@ export class Runner {
     const text = instructions
       .filter((line) => line !== '')
       .join('\n');
+    // 開工這一輪也要附上回覆語言（以前漏了：英文介面開工後，整段開發都用中文回覆）
     const { turn } = await codex.request<{ turn: { id: string } }>('turn/start', {
       threadId: thread.id,
-      input: [
+      input: withReplyLanguage([
         { type: 'skill', name: skill, path: await this.skillPath(skill) },
         { type: 'text', text, text_elements: [] },
         // 補充資料裡的截圖（例如 Confluence 問題表那一列的截圖）一起給開發的 AI 看
         ...(this.deps.store.getReview(item.ticketKey)?.review.supplementImages ?? []).filter((p) => existsSync(p)).map((path) => ({ type: 'localImage', path })),
-      ],
+      ]),
     });
     this.turns.set(thread.id, turn.id);
     // 不自動打開 VS Code：工作台就看得到對話與改動；需要時再按「在 VS Code 查看」

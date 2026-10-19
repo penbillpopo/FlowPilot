@@ -44,7 +44,7 @@ export async function runStructured<T>(rpc: CodexRpc, request: StructuredRequest
       sandbox: 'read-only',
       // 介面是英文：審閱、討論、試登這類給人看的結果請 AI 用英文寫
       developerInstructions:
-        [request.developerInstructions, getLang() === 'en' && !request.keepLanguage ? '所有給人看的文字（說明、問題、建議、結論）都用英文（English）寫；格式說明裡如果寫「用繁體中文」，以這一句為準。' : null].filter(Boolean).join('\n\n') || null,
+        [request.developerInstructions, getLang() === 'en' && !request.keepLanguage ? '所有給人看的文字（說明、問題、建議、結論）都用英文（English）寫；格式說明、AGENTS.md 或技能裡如果寫「用繁體中文」，以這一句為準。' : null].filter(Boolean).join('\n\n') || null,
       config: { model_reasoning_effort: request.effort ?? 'low', features: { computer_use: false, browser_use: false, browser_use_external: false }, skills, ...request.config, mcp_servers: { ...userBrowserToolsOff(), ...(request.config?.mcp_servers as object | undefined) } },
     });
     threadId = thread.id;

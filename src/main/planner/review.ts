@@ -6,7 +6,7 @@ import type { IssueContext } from '../jira';
 import type { Settings } from '../settings';
 import { ticketKeys } from '../../shared/group';
 import { fill } from './rules';
-import { buildGroupJudgePrompt, buildJudgePrompt, JUDGE_INSTRUCTIONS, judgementSchema, sanitizeJudgement, type PastDecision } from './judge';
+import { buildGroupJudgePrompt, buildJudgePrompt, JUDGE_RULES, judgementSchema, sanitizeJudgement, type PastDecision } from './judge';
 
 export const ISSUE_TYPES: IssueType[] = ['邏輯矛盾', '需求不明確', '遺漏情境', '前後端對不上', '跟設計稿不一致', '範圍不清', '跟現有功能衝突'];
 
@@ -66,7 +66,7 @@ export function reviewSchema(settings: Settings) {
   };
 }
 
-export const REVIEW_INSTRUCTIONS = `${JUDGE_INSTRUCTIONS}
+export const REVIEW_INSTRUCTIONS = `${JUDGE_RULES}
 
 你同時也是幫前端工程師審閱需求的人：讀懂需求之後，找出單子本身的問題，讓工程師在開發前先知道。
 - 問題類型：邏輯矛盾、需求不明確、遺漏情境（空資料、錯誤、權限、載入中…）、前後端對不上（欄位、API、錯誤處理）、跟設計稿不一致、範圍不清（哪些商戶、前後台要不要一起做）、跟現有功能衝突。

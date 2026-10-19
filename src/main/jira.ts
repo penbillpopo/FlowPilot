@@ -182,7 +182,8 @@ export function adfToText(node: unknown): string {
   return inner;
 }
 
-const MAX_TEXT = 6000;
+// 內文上限：太短會截掉需求（實際發生過：6000 字截在一半，AI 回報資料不完整）；超過時註明是刻意省略
+const MAX_TEXT = 15000;
 
 /** 「原始需求 / Merchant Requirements」段落的標題 */
 const MERCHANT_SECTION = /原始需求|Merchant\s+Requirements/i;
@@ -236,7 +237,7 @@ export async function getIssueContext(credentials: JiraCredentials, key: string,
     summary: fields.summary,
     issueType: fields.issuetype.name,
     snapshot,
-    description: fullDescription.slice(0, MAX_TEXT),
+    description: fullDescription.length > MAX_TEXT ? `${fullDescription.slice(0, MAX_TEXT)}\n\n（內容太長，後面 ${fullDescription.length - MAX_TEXT} 字省略）` : fullDescription,
     // 最近 5 則留言
     comments: (fields.comment?.comments ?? []).slice(-5).map((c) => adfToText(c.body).trim().slice(0, 1500)),
     subtasks: (fields.subtasks ?? []).map((s) => ({ key: s.key, summary: s.fields.summary, status: s.fields.status?.name })),

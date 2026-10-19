@@ -149,5 +149,7 @@ const en: Record<string, string> = {
   'AI 思考中…': 'AI is thinking…',
   '送出': 'Send',
   '{level}單': "{level} ticket",
+  '開發完自動測試（開瀏覽器跑一遍）': 'Auto test after development (runs it in a browser)',
+  '開發完不開瀏覽器，AI 照改動整理驗收表，每一條都要你測': 'No browser run after development; AI writes the checklist from the changes and you test every item',
 };
 export default en;

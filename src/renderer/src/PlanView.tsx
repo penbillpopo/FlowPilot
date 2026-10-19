@@ -43,13 +43,15 @@ const CHECK_LABEL: Record<keyof ReviewChecks, string> = {
   figma: '審閱時對照 Figma 設計稿',
   codeReview: '開發完 AI 先自我審查程式碼',
   designCompare: '測試時截圖跟設計稿比對',
+  autotest: '開發完自動測試（開瀏覽器跑一遍）',
 };
 
 /** 檢查計畫：AI 判斷這張單需要哪些額外檢查，你可以勾掉或加上 */
 function CheckPlan({ review, onChange }: { review: Review; onChange(review: Review): void }) {
   const [error, setError] = useState<string | null>(null);
   if (!review.checks) return null; // 舊的審閱結果沒有
-  const checks = review.checks;
+  // 自動測試是你決定的、AI 不會填：沒有就是要跑
+  const checks: Required<ReviewChecks> = { autotest: { need: true, reason: '' }, ...review.checks };
   async function toggle(key: keyof ReviewChecks) {
     setError(null);
     try {
@@ -70,6 +72,7 @@ function CheckPlan({ review, onChange }: { review: Review; onChange(review: Revi
               {key === 'figma' && review.figmaChecked && <span className="mark">{t('已對照')}</span>}
             </label>
             {checks[key].reason && <span className="muted small">{checks[key].reason}</span>}
+            {key === 'autotest' && !checks.autotest.need && <span className="muted small">{t('開發完不開瀏覽器，AI 照改動整理驗收表，每一條都要你測')}</span>}
           </li>
         ))}
       </ul>

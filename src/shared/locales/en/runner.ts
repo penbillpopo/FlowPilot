@@ -219,5 +219,7 @@ const en: Record<string, string> = {
   'FlowPilot 重新啟動時這一輪已經結束，看一下最後的回覆': 'This round ended while FlowPilot was restarting. Check the last reply.',
   '{message}（{url}）': '{message} ({url})',
   '已完成（{count} 項沒測就完成）': 'Done ({count} item(s) finished untested)',
+  '已跳過自動測試，等你測試': 'Auto test skipped, ready for you to test',
+  '已跳過自動測試：AI 整理驗收表中': 'Auto test skipped: AI is writing the checklist',
 };
 export default en;

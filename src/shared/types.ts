@@ -180,6 +180,8 @@ export interface ReviewChecks {
   figma: CheckDecision;
   codeReview: CheckDecision;
   designCompare: CheckDecision;
+  /** 開發完要不要跑自動測試（只由你決定，AI 不會改；沒有這個欄位就是要跑） */
+  autotest?: CheckDecision;
 }
 
 export interface Review extends Judgement {

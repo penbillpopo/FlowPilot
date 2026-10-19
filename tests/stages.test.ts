@@ -357,6 +357,20 @@ describe('流程階段', () => {
     expect(t.get().status).toBe('committed');
   });
 
+  it('檢查計畫取消了「開發完自動測試」：開發完不開瀏覽器，請 AI 整理驗收表（都要你測），整理完就等你測試', async () => {
+    const t = setup();
+    t.store.saveReview({ ticketKey: 'ALL-1', entries: [], prTitle: '', reason: '', summary: [], resources: [], level: '一般', codeChecked: true, issues: [], discussion: [], reviewedAt: '',
+      checks: { figma: { need: false, reason: '' }, codeReview: { need: false, reason: '' }, designCompare: { need: false, reason: '' }, autotest: { need: false, reason: '' } } }, null);
+    await t.complete(); // 開發完
+    const text: string = t.lastTurn().input[0].text;
+    expect(text).toContain('## 整理驗收表');
+    expect(text).toContain('不要開瀏覽器測試');
+    expect(t.sites).toEqual([]); // 沒有為了測試啟動本機網站
+    expect(t.get()).toMatchObject({ stage: 'manual', status: 'running', autotested: false });
+    await t.complete('驗收表整理好了');
+    expect(t.get()).toMatchObject({ stage: 'manual', status: 'review', activity: '已跳過自動測試，等你測試', autotested: false });
+  });
+
   it('檢查計畫要自我審查：開發完先審查，審查完才自動測試', async () => {
     const t = setup();
     t.store.saveReview({ ticketKey: 'ALL-1', entries: [], prTitle: '', reason: '', summary: [], resources: [], level: '一般', codeChecked: true, issues: [], discussion: [], reviewedAt: '',

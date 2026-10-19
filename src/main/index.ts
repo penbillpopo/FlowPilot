@@ -245,6 +245,9 @@ async function runReview(ticket: JiraTicket): Promise<Review> {
   review.snapshot = [...subs.map((x) => x.snapshot), ...mains.map((m) => m.snapshot)];
   if (supplements.length) review.supplements = supplements;
   if (supplementImages.length) review.supplementImages = supplementImages;
+  // 「開發完自動測試」是你決定的：重新審閱時保留你的選擇
+  const keptAutotest = store.getReview(ticket.key)?.review.checks?.autotest;
+  if (keptAutotest && review.checks) review.checks = { ...review.checks, autotest: keptAutotest };
   store.saveReview(review, threadId);
   return review;
 }

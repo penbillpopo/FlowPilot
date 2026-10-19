@@ -378,6 +378,8 @@ export class Runner {
   private i18nRuns = new Map<number, I18nProgress & { path?: string }>();
   /** 正在整理重點、換新對話的單 */
   private handingOff = new Set<number>();
+  /** 你選了不跑自動測試的單：整理完驗收表時狀態寫「已跳過自動測試」 */
+  private skippedAutotest = new Set<number>();
   /** 改多語系做到一半的單：自動叫 AI 繼續、請它換 key 名字的次數 */
   /** 你叫過它改多語系的單（工作檔還沒有內容時，用來分辨 AI 寫的進度是不是真的在做這件事） */
   private i18nRequested = new Set<number>();
@@ -939,6 +941,25 @@ export class Runner {
   }
 
   /** 請 AI 整理驗收表，不重新測試（例如自動測試沒跑成、還沒有驗收表） */
+  /**
+   * 開發完接著自動測試；檢查計畫裡你取消了「開發完自動測試」就跳過：
+   * 不開瀏覽器，請 AI 照改動整理驗收表（每一條都要你測），整理好就等你測試（階段顯示「略過」）
+   */
+  private async autotestOrSkip(id: number) {
+    const item = this.deps.store.getWorkItem(id)!;
+    if (this.deps.store.getReview(item.ticketKey)?.review.checks?.autotest?.need !== false) return this.startTest(id, false);
+    this.skippedAutotest.add(id);
+    this.update(id, { stage: 'manual' });
+    const review = this.deps.store.getReview(item.ticketKey)?.review ?? null;
+    const text = [
+      '## 整理驗收表',
+      '',
+      '這張單我選了不跑自動測試。請整理驗收表給我手動測試用：不要開瀏覽器測試、不要改程式碼。用 git diff 對照基底分支，確認每個改到的檔案都有說明。每一條的 result 都寫「沒測」、needYou 都寫 true。',
+      ...reportLines(review),
+    ].join('\n');
+    await this.reply(id, text, [], { asFix: false, activity: t('已跳過自動測試：AI 整理驗收表中') });
+  }
+
   async requestAcceptance(id: number) {
     this.assertIdle(id, t('整理驗收表'));
     const review = this.deps.store.getReview(this.deps.store.getWorkItem(id)!.ticketKey)?.review ?? null;
@@ -1129,12 +1150,12 @@ export class Runner {
           // 開發完：檢查計畫要自我審查就先審查，否則直接做無頭測試
           // 移植的不做自我審查：來源商戶開發時已經審過，移植只是照著改（自動測試照樣跑）
           if (!latest.portOf && this.deps.store.getReview(latest.ticketKey)?.review.checks?.codeReview.need) void this.startSelfCheck(item.id);
-          else void this.startTest(item.id, false);
+          else void this.autotestOrSkip(item.id);
         } else if (latest.stage === 'selfcheck') {
-          void this.startTest(item.id, false);
+          void this.autotestOrSkip(item.id);
         } else {
           const stageDone = STAGE_DONE[latest.stage];
-          let activity = stageDone ? t(stageDone) : t('等你測試');
+          let activity = this.skippedAutotest.delete(item.id) ? t('已跳過自動測試，等你測試') : stageDone ? t(stageDone) : t('等你測試');
           // 修改的這一輪什麼檔案都沒改：不要寫「改好了」（多半是回答了問題就停了，或遇到問題）
           const before = this.fixSnapshots.get(item.id);
           this.fixSnapshots.delete(item.id);

@@ -172,6 +172,15 @@ describe('流程階段', () => {
     expect(steer.input[0].text).toContain('繼續剛才還沒做完的工作');
   });
 
+  it('沒叫它改多語系，AI 卻順手寫了「多語系進度：完成」：不理它，照一般流程', async () => {
+    const t = setup();
+    t.store.updateWorkItem(t.id, { stage: 'manual', status: 'review' });
+    await t.runner.reply(t.id, '按鈕改成藍色');
+    await t.complete('改好了。\n多語系進度：完成');
+    expect(t.get().activity).not.toContain('多語系');
+    expect(t.get()).toMatchObject({ status: 'review', stage: 'manual' });
+  });
+
   it('改多語系沒做完：自動叫 AI 繼續；它在問問題就不叫，等你再說到多語系', async () => {
     const t = setup();
     t.store.updateWorkItem(t.id, { stage: 'manual', status: 'review' });

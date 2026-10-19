@@ -1,5 +1,5 @@
 // 工作台：左邊是你手上的單，中間跟 AI 對話，右邊是測試環境與帳號、本機網站與 Git 改動。
-import { createContext, useContext, useEffect, useState } from 'react';
+import { createContext, useContext, useEffect, useRef, useState } from 'react';
 import type { BoardState, WorkItem, WorkStatus } from '../../shared/types';
 import { ChatPanel, errorText, STATUS_LABEL } from './ChatPanel';
 import { PortPanel } from './PortPanel';
@@ -108,10 +108,14 @@ export function Workbench({ onGoTickets }: { onGoTickets(): void }) {
   const waitingTurn = items.filter((i) => i.status === 'queued');
   const finished = items.filter((i) => FINISHED.includes(i.status)).sort((a, b) => b.id - a.id);
 
-  // 預設選對話中的那張；選的那張不見了就換一張
+  // 預設選對話中的那張；選的那張不見了就換一張；有新的單進來（例如確認計畫後開工）就選到最新的那張
+  const known = useRef<Set<number> | null>(null);
   useEffect(() => {
     if (!board) return;
-    if (selected === null || !items.some((i) => i.id === selected)) setSelected(active[0]?.id ?? waitingTurn[0]?.id ?? null);
+    const added = known.current ? items.filter((i) => !known.current!.has(i.id)) : [];
+    known.current = new Set(items.map((i) => i.id));
+    if (added.length) setSelected(Math.max(...added.map((i) => i.id)));
+    else if (selected === null || !items.some((i) => i.id === selected)) setSelected(active[0]?.id ?? waitingTurn[0]?.id ?? null);
   }, [board]);
 
   const current = items.find((i) => i.id === selected) ?? null;

@@ -229,7 +229,7 @@ function Entry({ entry }: { entry: ChatEntry }) {
       return (
         <div className="msg assistant">
           {/* 驗收表的 JSON 畫在右邊「驗收」，對話裡只留一句 */}
-          <Markdown text={entry.text.replace(/```flowpilot-test[\s\S]*?(```|$)/g, t('_（驗收表已更新，看右邊「驗收」）_'))} />
+          <Markdown text={entry.text.replace(/```flowpilot-test[\s\S]*?(```|$)/g, t('_（驗收表已更新，看右邊「驗收」）_')).replace(/^.*多語系進度[：:].*$/gm, '').trimEnd()} />
         </div>
       );
     case 'reasoning':

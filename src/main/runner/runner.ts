@@ -156,7 +156,7 @@ function i18nLine(workFile: string): string {
     "  - 寫法照專案其他地方（例如 HTML 用 {{ 'key' | translate }}，TS 用專案現有的翻譯服務寫法）；有變數的照專案現有翻譯的格式（例如 ${0}）。",
     `  - 每改完一批（大約 10 段），就把這批附加到「${workFile}」（路徑有空白，要加引號；資料夾不存在就先建），一行一個 JSON：{"key":"…","en-us":"原本的英文"}。用 shell 附加（例如 cat >> "檔案" <<'EOF' … EOF），不要覆蓋掉之前的行。之前已經改好、還沒記進這個檔案的 key 也要補記。`,
     '  - 你不用翻譯其他語言，也不用做 Excel：FlowPilot 會檢查 key、另外翻好其他語言、存到桌面。',
-    '  - 不要做一點就停下來回報，一直做到全部改完。回覆最後一行寫「多語系進度：完成」，或「多語系進度：未完成（還剩哪些）」。',
+    '  - 不要做一點就停下來回報，一直做到全部改完。做這件事的回覆，最後一行寫「多語系進度：完成」或「多語系進度：未完成（還剩哪些）」；沒在改多語系的回覆不要寫這一行。',
   ].join('\n');
 }
 
@@ -379,6 +379,8 @@ export class Runner {
   /** 正在整理重點、換新對話的單 */
   private handingOff = new Set<number>();
   /** 改多語系做到一半的單：自動叫 AI 繼續、請它換 key 名字的次數 */
+  /** 你叫過它改多語系的單（工作檔還沒有內容時，用來分辨 AI 寫的進度是不是真的在做這件事） */
+  private i18nRequested = new Set<number>();
   private i18nJobs = new Map<number, { continues: number; renames: number; paused?: boolean }>();
   /** 修改那一輪開始前資料夾的樣子：結束時比對，看這一輪到底有沒有改到檔案 */
   private fixSnapshots = new Map<number, string>();
@@ -1259,11 +1261,13 @@ export class Runner {
     const workFile = i18nWorkFile(this.deps.dataDir, item.id);
     const progress = parseProgress(item.lastMessage);
     const entries = readWorkFile(workFile);
-    if (!entries.length && progress === null) return { retry: false };
+    // 工作檔是空的、你也沒叫它改多語系：不是在做這件事（AI 只是順手寫了進度那行），不理它
+    if (!entries.length && (progress === null || !this.i18nRequested.has(item.id))) return { retry: false };
     const state = this.i18nJobs.get(item.id) ?? { continues: 0, renames: 0 };
     this.i18nJobs.set(item.id, state);
     const stopJob = (note: string) => {
       this.i18nJobs.delete(item.id);
+      this.i18nRequested.delete(item.id);
       return { retry: false, note };
     };
 
@@ -1317,6 +1321,7 @@ export class Runner {
     }
 
     this.i18nJobs.delete(item.id);
+    this.i18nRequested.delete(item.id);
     // 工作檔先搬走：翻譯途中你又叫 AI 改多語系，新的會記在新的工作檔
     const taking = `${workFile}.${Date.now()}`;
     renameSync(workFile, taking);
@@ -1453,7 +1458,10 @@ export class Runner {
       return;
     }
     // 你又說到多語系（英文介面時說 translation 也算）：暫停的自動繼續重新開始算
-    if (/多語系|translat|i18n/i.test(text) && !text.startsWith('## ')) this.i18nJobs.delete(id);
+    if (/多語系|translat|i18n/i.test(text) && !text.startsWith('## ')) {
+      this.i18nJobs.delete(id);
+      this.i18nRequested.add(id);
+    }
     // 等你測試時要求修改：附上請 AI 一併更新驗收表的說明
     const asFix = !this.turns.get(item.threadId!) && item.stage === 'manual' && options.asFix !== false;
     let note = asFix && text.trim() && !options.noReportNote ? acceptanceUpdateNote(this.deps.store.getReview(item.ticketKey)?.review ?? null) : '';

@@ -575,3 +575,8 @@ td.time { white-space: nowrap; }
 .plan-block-title > .muted { margin-left: 8px; }
 /* 說明文字後面接的連結按鈕，留點空（例如「審閱於 … 重新審閱」） */
 .muted > button.link { margin-left: 6px; }
+
+/* 直接完成（不補測）的紀錄 */
+.ac-untested { margin: 4px 0 8px; padding: 6px 10px; border: 1px solid #e0a030; border-radius: 6px; color: #e0a030; }
+/* 標題下面那行的分支名稱不斷行（ban/m10/ALL-14796 不要在斜線處拆開） */
+.head-meta code { white-space: nowrap; }

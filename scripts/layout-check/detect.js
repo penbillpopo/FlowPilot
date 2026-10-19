@@ -6,7 +6,7 @@
   const inScroller = (el) => { for (let p = el.parentElement; p; p = p.parentElement) { const o = getComputedStyle(p).overflowY; if (o === 'auto' || o === 'scroll') return p; } return null; };
   // 1. 被切掉（沒有 … 的）
   for (const el of document.querySelectorAll('body *')) {
-    if (!visible(el) || el.children.length > 0 && !/^(BUTTON|A|LABEL|TH|TD|SPAN|STRONG|SUMMARY)$/.test(el.tagName)) continue;
+    if (!visible(el) || /^(INPUT|TEXTAREA|SELECT)$/.test(el.tagName) || el.children.length > 0 && !/^(BUTTON|A|LABEL|TH|TD|SPAN|STRONG|SUMMARY)$/.test(el.tagName)) continue; // 輸入框的文字太長本來就會在框裡捲動
     const cs = getComputedStyle(el);
     if ((cs.overflowX === 'hidden' || cs.overflowX === 'clip') && el.scrollWidth > el.clientWidth + 2 && cs.textOverflow !== 'ellipsis') problems.push(['被切掉', desc(el)]);
   }

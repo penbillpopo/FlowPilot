@@ -155,5 +155,9 @@ const en: Record<string, string> = {
   送出: 'Send',
   執行技能: 'Running skill',
   'AI 做完了，等你審查': 'AI is done, waiting for your review',
+  '直接完成（不補測）': 'Finish without testing',
+  '不補測直接完成這張單；還沒測的項目會記在驗收表上': 'Finish this ticket without the remaining tests; untested items are recorded on the checklist',
+  '還有 {count} 項沒測，確定直接完成 {key}？': '{count} item(s) are still untested. Finish {key} anyway?',
+  '沒測的項目會記在驗收表上，之後查得到。資料夾要乾淨（改動都提交或捨棄了）；environment.ts 會順便還原，本機網站也會停掉。': 'Untested items are recorded on the checklist so you can find them later. The folder must be clean (all changes committed or discarded); environment.ts will be restored and the local site stopped.',
 };
 export default en;

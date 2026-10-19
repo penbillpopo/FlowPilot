@@ -66,6 +66,7 @@ export function AcceptancePanel({ item }: { item: WorkItem }) {
         <span className="muted small">{t('共 {count} 條', { count: report.acceptance.length })}</span>
         <button className="link small ac-export" title={t('匯出成 CSV（Excel 打得開）')} onClick={() => run(() => api.test.exportCsv(item.id))}>{t('匯出 CSV')}</button>
       </div>
+      {!!report.finishedUntested && <div className="ac-untested small">{t('⚠️ 這張單是直接完成的：當時還有 {count} 項沒測', { count: report.finishedUntested })}</div>}
 
       {(report.attention.length > 0 || unexplained.length > 0) && (
         <div className="ac-attention">

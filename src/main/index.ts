@@ -656,7 +656,7 @@ function registerIpc() {
   ipcMain.handle('item:stop', (_event, id: number) => runner.stop(id));
   ipcMain.handle('item:remove', (_event, id: number) => runner.remove(id));
   ipcMain.handle('item:branchInfo', (_event, id: number) => runner.branchInfo(id));
-  ipcMain.handle('item:finish', (_event, id: number, restoreEnvironment: boolean) => runner.finish(id, restoreEnvironment));
+  ipcMain.handle('item:finish', (_event, id: number, restoreEnvironment: boolean, skipTests: boolean) => runner.finish(id, restoreEnvironment, skipTests));
   ipcMain.handle('item:interrupt', (_event, id: number) => runner.interrupt(id));
   ipcMain.handle('item:send', (_event, id: number, text: string, images: string[]) => runner.reply(id, text, images));
   ipcMain.handle('chat:saveImage', (_event, bytes: ArrayBuffer, extension: string) => {

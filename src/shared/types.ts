@@ -268,6 +268,8 @@ export interface TestReport {
   otherChanges: { change: string; why: string; files: string[]; impact: string }[];
   /** 其他要你手動測的項目 */
   manual: { text: string; done: boolean }[];
+  /** 「直接完成（不補測）」時還有幾項沒測（有這個欄位就是沒測完就完成的） */
+  finishedUntested?: number;
 }
 
 export interface AcceptanceItem {
@@ -591,7 +593,8 @@ export interface FlowPilotApi {
   /** 移除前查分支的狀況：刪掉會失去什麼 */
   branchInfo(itemId: number): Promise<BranchInfo | null>;
   /** 這張單做完了：資料夾要乾淨（environment.ts 可選擇還原），讓出資料夾給下一張 */
-  finish(itemId: number, restoreEnvironment: boolean): Promise<void>;
+  /** skipTests：直接完成（不補測），還沒測的項目記在驗收表上 */
+  finish(itemId: number, restoreEnvironment: boolean, skipTests?: boolean): Promise<void>;
   /** 中斷 AI 這一輪（單本身不停止，可以再補充指示） */
   interrupt(itemId: number): Promise<void>;
   /** 送訊息給 AI，可附截圖 */

@@ -184,5 +184,6 @@ const en: Record<string, string> = {
   // 差異（DiffView）
   '（沒有差異內容）': '(no differences)',
   '驗收表沒說明這些檔案為什麼改：{files}。請說明，不需要的改動請還原。': "The checklist doesn't explain why these files changed: {files}. Please explain, and revert any changes that aren't needed.",
+  '⚠️ 這張單是直接完成的：當時還有 {count} 項沒測': '⚠️ This ticket was finished without testing: {count} item(s) were still untested',
 };
 export default en;

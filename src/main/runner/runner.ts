@@ -1585,13 +1585,14 @@ export class Runner {
   /**
    * 這張單做完了：讓出資料夾給下一張。
    * 資料夾要乾淨（提交或捨棄都可以）；environment.ts（瀏覽器測試切 SIT／UAT 用的）可以選擇直接還原。
+   * skipTests：你選了「直接完成（不補測）」：欠的測試不擋，但記在驗收表上（之後查得到）。
    */
-  async finish(id: number, restoreEnvironment: boolean) {
+  async finish(id: number, restoreEnvironment: boolean, skipTests = false) {
     const item = this.deps.store.getWorkItem(id)!;
     if (['running', 'preparing'].includes(item.status)) throw new Error(t('AI 還在執行，請先等它停下來（或中斷）'));
     // 欠的測試要補完才能完成（可以先「先交付，待補測」讓出資料夾）
     const owed = pendingTests(item.testReport);
-    if (owed) throw new Error(t('還有 {count} 項測試沒勾「我測過了」，補測完才能完成；要先讓出資料夾，按「先交付，待補測」', { count: owed }));
+    if (owed && !skipTests) throw new Error(t('還有 {count} 項測試沒勾「我測過了」，補測完才能完成；要先讓出資料夾，按「先交付，待補測」', { count: owed }));
     if (item.folder) {
       const cwd = this.folderPath(item.folder);
       if ((await currentBranch(cwd)) === item.branch) {
@@ -1612,8 +1613,9 @@ export class Runner {
       lane: 'done',
       commitSha: sha,
       pending: null,
+      ...(owed && skipTests && item.testReport ? { testReport: { ...item.testReport, finishedUntested: owed } } : {}),
       activity:
-        t('已完成') +
+        (owed && skipTests ? t('已完成（{count} 項沒測就完成）', { count: owed }) : t('已完成')) +
         (item.targetMerchants.length ? t('；還要移植到 {merchants}（推送之後按右邊的「移植」）', { merchants: item.targetMerchants.map((m) => `m${m}`).join(t('、')) }) : ''),
     });
     await this.schedule();

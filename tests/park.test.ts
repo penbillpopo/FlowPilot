@@ -85,6 +85,17 @@ describe('先交付、待補測', () => {
     expect(git(t.folder, 'branch', '--show-current')).toBe('ban/ALL-1');
   });
 
+  it('直接完成（不補測）：欠的測試不擋，但記在驗收表上、狀態寫明幾項沒測；重開 FlowPilot 讀回來也還在', async () => {
+    const t = setup();
+    await t.runner.park(t.id);
+    await t.runner.finish(t.id, true, true);
+    const done = t.store.getWorkItem(t.id)!;
+    expect(done.status).toBe('committed');
+    expect(done.testReport?.finishedUntested).toBe(1);
+    expect(done.testReport?.acceptance[0].checked).toBe(false);
+    expect(done.activity).toContain('1 項沒測就完成');
+  });
+
   it('補測完就能完成；移除待補測的單會刪掉原本資料夾裡的分支', async () => {
     const t = setup();
     await t.runner.park(t.id);

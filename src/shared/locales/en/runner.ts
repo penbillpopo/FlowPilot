@@ -218,5 +218,6 @@ const en: Record<string, string> = {
   '已經開始移植到 {merchants}（在作戰中）': 'Started porting to {merchants} (see the War Room)',
   'FlowPilot 重新啟動時這一輪已經結束，看一下最後的回覆': 'This round ended while FlowPilot was restarting. Check the last reply.',
   '{message}（{url}）': '{message} ({url})',
+  '已完成（{count} 項沒測就完成）': 'Done ({count} item(s) finished untested)',
 };
 export default en;

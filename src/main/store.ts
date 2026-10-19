@@ -504,6 +504,7 @@ function normalizeReport(data: Partial<TestReport>): TestReport {
     attention: data.attention ?? [],
     otherChanges: data.otherChanges ?? [],
     manual: data.manual ?? [],
+    ...(data.finishedUntested ? { finishedUntested: data.finishedUntested } : {}),
     acceptance: (data.acceptance ?? []).map((a: Partial<AcceptanceItem>) => ({
       ...{ change: '', why: '', files: [], impact: '', howToTest: '', page: '', needYou: false, checked: false, changed: false },
       ...a,

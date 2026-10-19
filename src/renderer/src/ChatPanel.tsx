@@ -628,6 +628,21 @@ export function ChatPanel({ item }: { item: WorkItem }) {
                 {active && item.status !== 'review' && !running && item.status !== 'preparing' && item.folder && (
                   <button onClick={finish} disabled={!!owed} title={owed ? t('還有 {count} 項測試沒勾，補測完才能完成', { count: owed }) : undefined}>{t('完成這張單')}</button>
                 )}
+                {/* 還有沒測的項目時：可以不補測直接完成（平常的按鈕照舊要測完；沒測的記在驗收表上） */}
+                {!!owed && !running && item.status !== 'preparing' && ['review', 'waiting', 'parked'].includes(item.status) && (
+                  <button
+                    disabled={busy}
+                    title={t('不補測直接完成這張單；還沒測的項目會記在驗收表上')}
+                    onClick={(e) => {
+                      e.currentTarget.closest('details')?.removeAttribute('open');
+                      if (window.confirm(t('還有 {count} 項沒測，確定直接完成 {key}？', { count: owed, key: item.ticketKey }) + '\n\n' + t('沒測的項目會記在驗收表上，之後查得到。資料夾要乾淨（改動都提交或捨棄了）；environment.ts 會順便還原，本機網站也會停掉。'))) {
+                        act(() => api.finish(item.id, true, true));
+                      }
+                    }}
+                  >
+                    {t('直接完成（不補測）')}
+                  </button>
+                )}
                 <button
                   className="danger"
                   disabled={busy}

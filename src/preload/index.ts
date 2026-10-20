@@ -15,6 +15,7 @@ const api: FlowPilotApi = {
   openExternal: (url) => ipcRenderer.invoke('shell:openExternal', url),
   revealI18n: (id) => ipcRenderer.invoke('i18n:reveal', id),
   setLang: (lang) => ipcRenderer.invoke('lang:set', lang),
+  resetSharedBrowser: () => ipcRenderer.invoke('sharedBrowser:reset'),
   openSettingsFile: () => ipcRenderer.invoke('settings:open'),
   planOptions: () => ipcRenderer.invoke('plan:options'),
   listSkills: () => ipcRenderer.invoke('skills:list'),

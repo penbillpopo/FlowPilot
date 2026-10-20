@@ -677,6 +677,19 @@ export class Runner {
     return skill.path;
   }
 
+  /**
+   * 換一個全新的共用瀏覽器：結束 FlowPilot 開的所有共用瀏覽器工具，再請 Codex 重新載入（只重開結束掉的，別的工具不受影響）。
+   * 為什麼：Chrome 的 Playwright 擴充功能一次只接一個。換新對話、或別張單用過之後，舊的那個還佔著 Chrome，
+   * 新的一直等不到連線，「看我的」就沒反應（實際發生過：對話太長換新對話後，看我的再也接不上）。
+   * 共用瀏覽器是用到才連線，重開後下一次使用時 Chrome 會再跳出選分頁的頁面。
+   */
+  async resetSharedBrowser(): Promise<void> {
+    // 共用瀏覽器才有 --extension（測試瀏覽器是 --isolated），這組參數只有 FlowPilot 這樣開
+    await new Promise<void>((resolve) => execFile('pkill', ['-f', '@playwright/mcp@latest --extension --caps devtools|playwright-mcp --extension --caps devtools'], () => resolve()));
+    await new Promise((r) => setTimeout(r, 500));
+    await this.deps.codex.request('config/mcpServer/reload', undefined).catch((error) => this.deps.log(`重新載入共用瀏覽器失敗：${(error as Error).message}`));
+  }
+
   /** 開一段開發用的新對話（開工、對話太長換新對話都用這個） */
   private async newThread(item: StoredWorkItem, nameSuffix = ''): Promise<string> {
     const { codex } = this.deps;

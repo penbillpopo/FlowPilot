@@ -404,9 +404,10 @@ export function ChatPanel({ item }: { item: WorkItem }) {
       if ((e as CustomEvent<number>).detail !== item.id) return;
       setLookMode(true);
       input.current?.focus();
-      // Chrome 選分頁的頁面只有在 AI 第一次用共用瀏覽器時才會跳出來：按下去就請 AI 只接上、不做別的
+      // Chrome 選分頁的頁面只有在共用瀏覽器第一次用時才會跳出來：先換一個全新的共用瀏覽器（舊的可能還佔著 Chrome），再請 AI 只接上、不做別的
       api
-        .send(
+        .resetSharedBrowser()
+        .then(() => api.send(
           item.id,
           [
             zhOnly('## 接上你的 Chrome'),
@@ -415,7 +416,7 @@ export function ChatPanel({ item }: { item: WorkItem }) {
             zhOnly('只能用 flowpilot_shared_browser，不要用其他瀏覽器或控制電腦的工具代替。工具清單上看不到它是正常的，它在 exec 的 tools 裡；呼叫失敗就照實回「接不上」和錯誤訊息。'),
           ].join('\n'),
           [],
-        )
+        ))
         .catch((err) => setError(errorText(err)));
     };
     window.addEventListener('flowpilot:look', on);

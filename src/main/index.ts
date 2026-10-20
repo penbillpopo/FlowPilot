@@ -384,7 +384,7 @@ async function prOptions(itemId: number): Promise<PrOptions> {
   const item = store.getWorkItem(itemId);
   if (!item) throw new Error(t('找不到這張單'));
   const repo = await AzureRepo.open(projectFolder(item));
-  const [branches, reviewers, existing, pushed] = await Promise.all([repo.targetBranches(), repo.recentReviewers(), repo.activePrs(item.branch), repo.branchExists(item.branch)]);
+  const [branches, reviewers, existing, pushed] = await Promise.all([repo.targetBranches(loadSettings(settingsFile).projects[item.project]?.prTargets), repo.recentReviewers(), repo.activePrs(item.branch), repo.branchExists(item.branch)]);
   rememberPrs(itemId, existing);
   // 同一張單在其他商戶的工作（多商戶的單：來源商戶和移植出去的），可以一起發 PR
   const others = store.listWorkItems().filter((i) => i.id !== itemId && i.ticketKey === item.ticketKey && i.project === item.project && i.merchant !== null);

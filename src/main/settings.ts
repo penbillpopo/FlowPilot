@@ -25,6 +25,8 @@ export interface ProjectRule {
   merchantNames?: Record<number, string[]>;
   /** 在本機啟動網站的指令，{port} 會換成資料夾設定的連接埠 */
   startCommand?: string;
+  /** 發 PR 時可以選的目標分支（照這個順序列；可用 {商戶}，會展開成每個商戶）。沒寫就列 master、sit、uat、version、dev 這類 */
+  prTargets?: string[];
   /** 開發用的技能（沒寫就用 frontend-development） */
   devSkill: string;
   /** 瀏覽器測試用的技能（沒寫就用 frontend-playwright-test） */
@@ -98,12 +100,15 @@ projects:
     merchantNames: {}
     # 在本機啟動網站的指令（{port} 換成資料夾的連接埠）
     startCommand: npm start -- --port {port}
+    # 發 PR 時可以選的目標分支（{商戶} 展開成每個商戶）
+    prTargets: ['master-{商戶}', 'uat-{商戶}', 'sit-{商戶}']
   PlatformAdmin:
     side: 後台（GoGaming）
     description: GoGaming 後台（GG、GoGaming BO、Go Gaming 後台、BO）
     baseBranch: version/0.0.1
     branch: ban/{單號}
     startCommand: npm start -- --port {port}
+    prTargets: [version/0.0.1, master, dev]
   GoMoneyAdmin:
     side: 後台（GoMoney）
     description: GoMoney 後台（GM、GoMoney）
@@ -111,6 +116,7 @@ projects:
     branch: ban/{單號}
     # GoMoneyAdmin 的 npm start 已經固定用 5200
     startCommand: npm start
+    prTargets: [version/0.0.1, master, dev]
 
 # 固定的專案資料夾：一個資料夾同時只做一張單；port 是在本機啟動網站用的連接埠
 folders:
@@ -149,6 +155,10 @@ export function parseSettings(text: string): Settings {
   raw.jira.defaultStatuses ||= ['進行中'];
   if (!raw.projects || !Array.isArray(raw.folders)) throw new Error(t('設定檔缺少 projects 或 folders'));
   for (const rule of Object.values(raw.projects)) {
+    // {商戶} 展開成每個商戶：master-{商戶} → master-1、master-2…（先列完一種再列下一種）
+    if (Array.isArray(rule.prTargets)) {
+      rule.prTargets = rule.prTargets.flatMap((p) => (String(p).includes('{商戶}') ? (rule.merchants ?? []).map((m) => String(p).replaceAll('{商戶}', String(m))) : [String(p)]));
+    }
     rule.devSkill ||= 'frontend-development';
     rule.testSkill ||= 'frontend-playwright-test';
   }

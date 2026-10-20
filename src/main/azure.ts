@@ -121,12 +121,16 @@ export class AzureRepo {
     return [...count.values()].sort((a, b) => b.n - a.n).map(({ n: _, ...r }) => r);
   }
 
-  /** 遠端的分支（只列 PR 會用到的：master、sit、uat、version、release、develop 開頭的） */
-  async targetBranches(): Promise<string[]> {
+  /**
+   * 發 PR 可以選的目標分支。wanted（設定檔的 prTargets）有寫就只列這些、照這個順序（遠端沒有的不列）；
+   * 沒寫就列 master、sit、uat、version、release、dev 開頭的。
+   */
+  async targetBranches(wanted?: string[]): Promise<string[]> {
     // 分好幾次查：遠端有上千條個人分支，一次全拿會被截斷（實際發生過，master-8 這些被截掉）
-    const prefixes = ['master', 'main', 'sit', 'uat', 'version', 'release', 'develop'];
+    const prefixes = wanted?.length ? [...new Set(wanted.map((w) => w.split(/[-/]/)[0]))] : ['master', 'main', 'sit', 'uat', 'version', 'release', 'dev'];
     const lists = await Promise.all(prefixes.map((p) => this.api<{ value: { name: string }[] }>(`/refs?filter=${encodeURIComponent(`heads/${p}`)}&$top=500`)));
     const names = new Set(lists.flatMap((l) => l.value.map((r) => r.name.replace(/^refs\/heads\//, ''))));
+    if (wanted?.length) return wanted.filter((w) => names.has(w));
     return [...names].sort((a, b) => a.localeCompare(b, undefined, { numeric: true }));
   }
 

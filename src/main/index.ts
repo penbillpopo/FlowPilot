@@ -456,10 +456,10 @@ function writeGuardPath() {
   return join(app.getAppPath(), 'resources/write-guard.cjs').replace(/app\.asar([/\\])/, 'app.asar.unpacked$1');
 }
 
-/** 單列表上每張單的標記：在工作台上（不能再選）、本機已經有這張單的分支 */
+/** 單列表上每張單的標記：在工作台上（進行中的不能再選）、本機已經有這張單的分支（含 -2、-3） */
 async function ticketMarks(keys: string[]): Promise<Record<string, TicketMark>> {
   const settings = loadSettings(settingsFile);
-  // 每個資料夾的本機分支名稱讀一次就好；分支名稱結尾是單號就算有（例如 ban/ALL-1、ban/m8/ALL-1）
+  // 每個資料夾的本機分支名稱讀一次就好；分支名稱結尾是單號就算有（例如 ban/ALL-1、ban/m8/ALL-1、ban/ALL-1-2）
   const branches: string[] = [];
   for (const f of settings.folders) {
     const r = await runGit(f.path, ['for-each-ref', '--format=%(refname:short)', 'refs/heads']).catch(() => null);
@@ -468,7 +468,8 @@ async function ticketMarks(keys: string[]): Promise<Record<string, TicketMark>> 
   const marks: Record<string, TicketMark> = {};
   for (const key of keys) {
     const work = store.ticketWorkState(key);
-    marks[key] = { active: !!work, done: work === 'done', planning: !work && store.isDraft(key), branch: branches.some((b) => b.toUpperCase().endsWith(`/${key.toUpperCase()}`)) };
+    const ending = new RegExp(`/${key.toUpperCase()}(-\\d+)?$`);
+    marks[key] = { active: !!work, done: work === 'done', planning: work !== 'active' && store.isDraft(key), branch: branches.some((b) => ending.test(b.toUpperCase())) };
   }
   return marks;
 }
@@ -560,18 +561,19 @@ function registerIpc() {
   ipcMain.handle('pr:create', (_event, id: number, input: { title: string; description: string; target: string; reviewerIds: string[] }) => createPr(id, input));
   ipcMain.handle('plan:drafts', () => store.listDrafts());
   ipcMain.handle('plan:add', (_event, tickets: JiraTicket[]) => {
-    // 已經在工作台上的單不能再進一次（要等它在工作台移除）
-    const active = tickets.filter((t) => store.hasActiveTicket(t.key)).map((t) => t.key);
+    // 工作台上進行中的單不能再進一次（要等它在工作台移除）；已完成的可以再次開發
+    const active = tickets.filter((t) => store.ticketWorkState(t.key) === 'active').map((t) => t.key);
     if (active.length) throw new Error(t('{keys} 已經在工作台上，要在工作台移除後才能再選', { keys: active.join(t('、')) }));
     if (!tickets.length) throw new Error(t('沒有勾選任何單'));
     store.addDrafts(tickets);
-    // 審閱在背景跑：你可以先回單列表或去作戰室，回來時結果已經存好
-    for (const ticket of tickets) void reviewTicket(ticket).catch((error) => log(`${ticket.key} 背景審閱失敗：${(error as Error).message}`));
+    // 審閱在背景跑：你可以先回單列表或去作戰室，回來時結果已經存好。
+    // 再次開發的單重新審閱（Jira 上的需求可能變了），不沿用上次的審閱
+    for (const ticket of tickets) void reviewTicket(ticket, store.ticketWorkState(ticket.key) === 'done').catch((error) => log(`${ticket.key} 背景審閱失敗：${(error as Error).message}`));
     return store.listDrafts();
   });
   // 好幾張單合成一個任務：計畫表裡變成一張，審閱、分支、對話、PR 都只有一份
   ipcMain.handle('plan:addGroup', (_event, tickets: JiraTicket[]) => {
-    const busy = tickets.filter((t) => store.hasActiveTicket(t.key) || store.isDraft(t.key)).map((t) => t.key);
+    const busy = tickets.filter((t) => store.ticketWorkState(t.key) === 'active' || store.isDraft(t.key)).map((t) => t.key);
     if (busy.length) throw new Error(t('{keys} 已經在工作台或計畫表裡了', { keys: busy.join(t('、')) }));
     const group = groupTicket(tickets);
     store.addDrafts([group]);
@@ -643,12 +645,17 @@ function registerIpc() {
         }
       }
     }
-    const already = plans.filter((p) => store.hasActiveTicket(p.ticket.key)).map((p) => p.ticket.key);
+    // 同名分支已經有了，一定要選好接著做還是開新分支
+    const undecided = plans.filter((p) => branches.some((b) => b.ticketKey === p.ticket.key && b.role !== 'target' && b.versions.length && !p.entries.find((e) => e.project === b.project)?.branchSeq));
+    if (undecided.length) throw new Error(t('{keys}：已經有同名分支，請選擇接著做還是開新分支', { keys: undecided.map((p) => p.ticket.key).join(t('、')) }));
+    const already = plans.filter((p) => store.ticketWorkState(p.ticket.key) === 'active').map((p) => p.ticket.key);
     if (already.length) throw new Error(t('{keys} 已經在工作台上，要等它結束（完成或移除）才能再選', { keys: already.join(t('、')) }));
     // 確認的這幾張自成一批；計畫表裡其他還沒確認的不受影響
     const created = store.createRun(plans.map((p) => p.ticket));
     const run = store.confirmPlan(created.id, plans, judgements);
     store.removeDrafts(plans.map((p) => p.ticket.key));
+    // 再次開發：舊的已完成卡片收起來（分支不刪）
+    runner.shelveDone(plans.flatMap((p) => [p.ticket.key, ...(p.ticket.members ?? []).map((m) => m.key)]));
     runner.startRun(created.id); // 確認計畫後直接開始：建立分支、分配資料夾、啟動 AI
     return run;
   });

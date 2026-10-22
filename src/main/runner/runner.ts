@@ -27,7 +27,7 @@ import {
   switchBranch,
   switchToRemoteBranch,
 } from '../git';
-import { deriveBranches, fill } from '../planner/rules';
+import { deriveBranches, fill, seqOf, withSeq } from '../planner/rules';
 import type { Settings } from '../settings';
 import { FINISHED, OCCUPYING, type StoredWorkItem, type Store } from '../store';
 import type { VSCode } from '../vscode';
@@ -1655,6 +1655,15 @@ export class Runner {
     await this.schedule();
   }
 
+  /**
+   * 再次開發：把這幾張單在工作台上已完成的舊卡片收起來。
+   * 跟「移除」不同，分支和審閱紀錄都不動（新任務接著用或從它旁邊開新分支）。
+   */
+  shelveDone(ticketKeys: string[]) {
+    const ids = new Set(ticketKeys.flatMap((key) => this.deps.store.doneWorkItemIds(key)));
+    for (const id of ids) this.update(id, { status: 'removed', lane: 'done', activity: t('再次開發，舊的已完成卡片收起來了'), pending: null });
+  }
+
   /** 審閱紀錄跟著工作台走：這張單沒有別的列還在工作台上，就刪掉審閱紀錄 */
   private forgetReview(ticketKey: string) {
     if (!this.deps.store.hasActiveTicket(ticketKey)) this.deps.store.deleteReview(ticketKey);
@@ -1850,8 +1859,10 @@ export class Runner {
     if (!('folder' in where)) await runGit(at, ['fetch', 'origin', source.branch]);
     const ahead = await runGit(at, ['rev-list', '--count', `origin/${source.baseBranch}..${ref}`]);
     if (ahead.code === 0 && Number(ahead.stdout.trim()) === 0) throw new Error(t('m{merchant} 的分支 {branch} 比 {base} 沒有任何提交，沒有東西可以移植', { merchant: source.merchant ?? '', branch: source.branch, base: source.baseBranch }));
+    // 來源是開新分支（-2、-3）做的，移植目標也用同一版
+    const seq = seqOf(source.branch, fill(rule.branch, { merchant: source.merchant, key: source.ticketKey })) ?? 1;
     const items = source.targetMerchants
-      .map((m) => ({ m, branch: fill(rule.branch, { merchant: m, key: source.ticketKey }), baseBranch: fill(rule.baseBranch, { merchant: m, key: source.ticketKey }) }))
+      .map((m) => ({ m, branch: withSeq(fill(rule.branch, { merchant: m, key: source.ticketKey }), seq), baseBranch: fill(rule.baseBranch, { merchant: m, key: source.ticketKey }) }))
       .filter((t) => !this.deps.store.activeWorkItem(source.project, t.branch));
     if (!items.length) throw new Error(t('要移植的商戶都已經在工作台上了'));
     this.deps.store.createWorkItems(items.map((t) => ({

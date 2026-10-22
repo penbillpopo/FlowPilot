@@ -57,6 +57,10 @@ describe('單列表的標記', () => {
     expect(store.ticketWorkState('ALL-2')).toBe('done');
     expect(store.ticketWorkState('ALL-3')).toBeNull();
     expect(store.ticketWorkState('ALL-9')).toBeNull();
+    // 再次開發時要收起來的舊卡片：只有已完成的
+    expect(store.doneWorkItemIds('ALL-2')).toEqual([b.id]);
+    expect(store.doneWorkItemIds('ALL-1')).toEqual([]);
+    expect(store.doneWorkItemIds('ALL-3')).toEqual([]);
   });
 });
 

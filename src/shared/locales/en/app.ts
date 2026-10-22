@@ -88,11 +88,11 @@ const en: Record<string, string> = {
   更新: 'Updated',
   '這張單在工作台上，要在工作台移除後才能再選': 'This ticket is on the Workbench. Remove it there before selecting it again.',
   '這張單在計畫表裡，點一下打開計畫表': 'This ticket is in the plan. Click to open the plan.',
-  '這張單在工作台上已完成；在工作台移除後才能再選': 'This ticket is done on the Workbench. Remove it there before selecting it again.',
+  '這張單在工作台上已完成；可以再勾選再次開發，確認後舊卡片會收起來': 'This ticket is done on the Workbench. You can select it again to keep developing; the old card is put away once you confirm.',
   這張單正在工作台上進行: 'This ticket is in progress on the Workbench',
   '這張單在計畫表裡，還沒確認': 'This ticket is in the plan, not confirmed yet',
   計畫中: 'Planning',
-  '本機已經有這張單的分支，確認後會切換過去繼續開發': 'A local branch already exists for this ticket. After you confirm, work continues on it.',
+  '本機已經有這張單的分支，計畫表會讓你選接著做還是開新分支': 'A local branch already exists for this ticket. The plan lets you continue on it or start a new branch.',
   有分支: 'Has branch',
   '（本身是主單）': '(Is a parent ticket)',
   '一次加一個任務：勾一張就是那張；勾好幾張會合成一個任務（同一條分支、一個 PR）。加進計畫表後 AI 在背景審閱，你可以先去做別的。':

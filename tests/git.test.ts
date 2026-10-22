@@ -30,8 +30,8 @@ function setup() {
   ];
 }
 
-function branch(name: string): PlanBranch {
-  return { ticketKey: 'X', project: 'PlatformWeb', merchant: 8, role: 'single', branch: name, baseBranch: 'master-8', existsIn: [] };
+function branch(name: string, root = name): PlanBranch {
+  return { ticketKey: 'X', project: 'PlatformWeb', merchant: 8, role: 'single', branch: name, baseBranch: 'master-8', existsIn: [], root, versions: [] };
 }
 
 describe('分支是否已建立', () => {
@@ -48,6 +48,15 @@ describe('分支是否已建立', () => {
       ['ban/m8/ALL-4', ['遠端']],
       ['ban/m8/ALL-2-2', []],
     ]);
+  });
+
+  it('找出本機和遠端已有的版本（原本的名稱、-2、-3），別張單的分支不算', async () => {
+    const folders = setup();
+    git(folders[0].path, 'branch', 'ban/m8/ALL-3-3');
+    git(folders[1].path, 'branch', 'ban/m8/ALL-31');
+    const [result] = await checkExisting([branch('ban/m8/ALL-3-4', 'ban/m8/ALL-3')], folders);
+    expect(result.existsIn).toEqual([]);
+    expect(result.versions).toEqual([1, 3]);
   });
 });
 

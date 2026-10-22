@@ -7,6 +7,18 @@ export function fill(template: string, values: { merchant: number | null; key: s
   return template.replaceAll('{商戶}', values.merchant === null ? '' : String(values.merchant)).replaceAll('{單號}', values.key.toUpperCase());
 }
 
+/** 第幾版的分支名稱：1（或沒選）是原本的名稱，2 起加上 -2、-3 */
+export function withSeq(branch: string, seq: number | undefined): string {
+  return seq && seq > 1 ? `${branch}-${seq}` : branch;
+}
+
+/** 分支名稱是不是 root 的某一版；是的話回傳第幾版 */
+export function seqOf(branch: string, root: string): number | null {
+  if (branch === root) return 1;
+  const m = branch.startsWith(`${root}-`) ? /^(\d+)$/.exec(branch.slice(root.length + 1)) : null;
+  return m && Number(m[1]) > 1 ? Number(m[1]) : null;
+}
+
 export function hasMerchants(rule: ProjectRule): boolean {
   return !!rule.merchants?.length;
 }
@@ -51,15 +63,20 @@ export function deriveBranches(plan: TicketPlan, settings: Settings): PlanBranch
     const rule = settings.projects[raw.project];
     if (!rule) continue;
     const entry = normalizeEntry(raw, rule);
-    const make = (merchant: number | null, role: PlanBranch['role']): PlanBranch => ({
-      ticketKey: key,
-      project: entry.project,
-      merchant,
-      role,
-      branch: fill(rule.branch, { merchant, key }),
-      baseBranch: fill(rule.baseBranch, { merchant, key }),
-      existsIn: [],
-    });
+    const make = (merchant: number | null, role: PlanBranch['role']): PlanBranch => {
+      const root = fill(rule.branch, { merchant, key });
+      return {
+        ticketKey: key,
+        project: entry.project,
+        merchant,
+        role,
+        branch: withSeq(root, entry.branchSeq),
+        baseBranch: fill(rule.baseBranch, { merchant, key }),
+        existsIn: [],
+        root,
+        versions: [],
+      };
+    };
     if (!hasMerchants(rule)) {
       branches.push(make(null, 'single'));
     } else if (entry.merchants.length === 1) {

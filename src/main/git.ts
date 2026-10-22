@@ -3,6 +3,7 @@ import { t } from '../shared/i18n';
 import { execFile } from 'node:child_process';
 import type { PlanBranch } from '../shared/types';
 import type { FolderSetting } from './settings';
+import { seqOf } from './planner/rules';
 
 export interface GitResult {
   code: number;
@@ -72,9 +73,24 @@ export async function checkExisting(branches: PlanBranch[], folders: FolderSetti
       }
       // 同一個專案的資料夾都連到同一個遠端，看第一個就好
       if (await refExists(list[0].path, `refs/remotes/origin/${branch.branch}`)) existsIn.push('遠端');
-      return { ...branch, existsIn };
+      return { ...branch, existsIn, versions: await branchVersions(list, branch.root) };
     }),
   );
+}
+
+/** 本機（任何一個資料夾）或遠端已經有 root 的哪幾版：原本的名稱是 1，root-2 是 2… */
+async function branchVersions(folders: FolderSetting[], root: string): Promise<number[]> {
+  const seqs = new Set<number>();
+  for (const [i, folder] of folders.entries()) {
+    const patterns = [`refs/heads/${root}`, `refs/heads/${root}-*`];
+    if (i === 0) patterns.push(`refs/remotes/origin/${root}`, `refs/remotes/origin/${root}-*`);
+    const result = await runGit(folder.path, ['for-each-ref', '--format=%(refname)', ...patterns]);
+    for (const ref of result.code === 0 ? result.stdout.split('\n').filter(Boolean) : []) {
+      const seq = seqOf(ref.replace(/^refs\/(heads|remotes\/origin)\//, ''), root);
+      if (seq) seqs.add(seq);
+    }
+  }
+  return [...seqs].sort((a, b) => a - b);
 }
 
 /** 資料夾目前所在的分支（不在任何分支上時回傳空字串） */

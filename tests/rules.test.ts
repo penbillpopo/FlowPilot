@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { deriveBranches, normalizeEntry, pickSourceMerchant, planProblem } from '../src/main/planner/rules';
+import { deriveBranches, normalizeEntry, pickSourceMerchant, planProblem, seqOf, withSeq } from '../src/main/planner/rules';
 import { DEFAULT_SETTINGS_YAML, parseSettings } from '../src/main/settings';
 import type { PlanEntry, TicketPlan } from '../src/shared/types';
 
@@ -34,7 +34,7 @@ describe('來源商戶', () => {
 describe('分支展開', () => {
   it('PlatformWeb 單一商戶', () => {
     expect(deriveBranches(plan([{ merchants: [8] }]), settings)).toEqual([
-      { ticketKey: 'ALL-14734', project: 'PlatformWeb', merchant: 8, role: 'single', branch: 'ban/m8/ALL-14734', baseBranch: 'master-8', existsIn: [] },
+      { ticketKey: 'ALL-14734', project: 'PlatformWeb', merchant: 8, role: 'single', branch: 'ban/m8/ALL-14734', baseBranch: 'master-8', existsIn: [], root: 'ban/m8/ALL-14734', versions: [] },
     ]);
   });
 
@@ -55,6 +55,26 @@ describe('分支展開', () => {
   it('一張單牽涉兩個專案，拆成兩條', () => {
     const branches = deriveBranches(plan([{ merchants: [5] }, { project: 'PlatformAdmin' }]), settings);
     expect(branches.map((b) => b.branch)).toEqual(['ban/m5/ALL-14734', 'ban/ALL-14734']);
+  });
+
+  it('同名分支已存在、選開新分支：加上 -2、-3，移植目標跟著同一版', () => {
+    const branches = deriveBranches(plan([{ merchants: [1, 2], branchSeq: 3 }]), settings);
+    expect(branches.map((b) => [b.branch, b.root])).toEqual([
+      ['ban/m1/ALL-14734-3', 'ban/m1/ALL-14734'],
+      ['ban/m2/ALL-14734-3', 'ban/m2/ALL-14734'],
+    ]);
+  });
+});
+
+describe('分支版本', () => {
+  it('認得原本的名稱和 -2、-3，其他名稱不算', () => {
+    expect(seqOf('ban/ALL-1', 'ban/ALL-1')).toBe(1);
+    expect(seqOf('ban/ALL-1-3', 'ban/ALL-1')).toBe(3);
+    expect(seqOf('ban/ALL-1-1', 'ban/ALL-1')).toBeNull();
+    expect(seqOf('ban/ALL-12', 'ban/ALL-1')).toBeNull();
+    expect(seqOf('ban/ALL-1-fix', 'ban/ALL-1')).toBeNull();
+    expect(withSeq('ban/ALL-1', 1)).toBe('ban/ALL-1');
+    expect(withSeq('ban/ALL-1', 2)).toBe('ban/ALL-1-2');
   });
 });
 

@@ -103,6 +103,8 @@ code { background: var(--code-bg); padding: 1px 6px; border-radius: 4px; font-fa
 .badge.exists { background: var(--error-bg); color: var(--error-fg); }
 .badge.continue { background: var(--selected); color: var(--accent); }
 .folder-choice { display: flex; gap: 8px; align-items: center; font-size: 13px; }
+.branch-choice { display: flex; flex-wrap: wrap; gap: 12px; align-items: center; font-size: 13px; }
+.branch-choice label { display: flex; gap: 4px; align-items: center; }
 .notice { border: 1px solid var(--line); border-radius: 8px; padding: 14px 16px; flex: 1; overflow: auto; }
 .notice ul { padding-left: 18px; }
 .notice li { margin: 6px 0; }

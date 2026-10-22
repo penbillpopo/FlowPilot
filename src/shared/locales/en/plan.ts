@@ -45,6 +45,11 @@ const en: Record<string, string> = {
   '檢查分支中': 'Checking branches',
   '檢查分支失敗': 'Branch check failed',
   '還沒選資料夾': 'No folder selected yet',
+  '還沒選分支': 'Branch not chosen yet',
+  '已經有同名分支 {branch}：': 'A branch named {branch} already exists:',
+  '接著這條分支繼續': 'Continue on this branch',
+  '開新分支 {branch}': 'Start a new branch {branch}',
+  '（這條分支的合併請求已經合併）': '(the pull request for this branch is already merged)',
   '{keys} 已經交給 AI 開發，到作戰室看進度；其他的單還留在這裡': '{keys} handed to AI for development. Check progress in the War Room; the other tickets stay here.',
   '從計畫表移除 {key}？\n\nAI 的審閱、討論紀錄和你改過的內容都會刪掉，單列表上的「計畫中」也會消失，回到原本的樣子。之後要做可以再從單列表加進來（會重新審閱）。':
     'Remove {key} from the Plan?\n\nThe AI review, discussion, and your edits will be deleted, and the "Planned" mark in the ticket list will go away. You can add it from the ticket list again later (it will be reviewed again).',

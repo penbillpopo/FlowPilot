@@ -33,6 +33,11 @@ function formatTime(iso: string) {
   return new Date(iso).toLocaleString(getLang() === 'en' ? 'en-US' : 'zh-TW', { month: 'numeric', day: 'numeric', hour: '2-digit', minute: '2-digit', hour12: false });
 }
 
+/** 單列表上不能勾的單：工作台上進行中、已經在計畫表裡；已完成的可以再次開發 */
+function locked(mark: TicketMark | undefined) {
+  return !!mark && ((mark.active && !mark.done) || mark.planning);
+}
+
 export function App() {
   const [tab, setTabNow] = useState<'tickets' | 'board'>('board');
   const [settings, setSkin] = useSkin();
@@ -353,14 +358,14 @@ function TicketList({ onConfirmed }: { onConfirmed(): void }) {
         if (!keys.length) return;
         api.ticketMarks(keys).then((next) => {
           setMarks(next);
-          setSelected((prev) => new Set([...prev].filter((key) => !next[key]?.active && !next[key]?.planning)));
+          setSelected((prev) => new Set([...prev].filter((key) => !locked(next[key]))));
         }).catch(() => {});
       }, 500);
     });
   }, [tickets]);
 
   function toggle(key: string) {
-    if (marks[key]?.active || marks[key]?.planning) return; // 在工作台上、已經在計畫表裡的單不能再選
+    if (locked(marks[key])) return; // 在工作台上進行中、已經在計畫表裡的單不能再選；已完成的可以再次開發
     setSelected((prev) => {
       const next = new Set(prev);
       next.has(key) ? next.delete(key) : next.add(key);
@@ -406,7 +411,7 @@ function TicketList({ onConfirmed }: { onConfirmed(): void }) {
     );
   }
 
-  const selectable = tickets?.filter((t) => !marks[t.key]?.active && !marks[t.key]?.planning) ?? [];
+  const selectable = tickets?.filter((t) => !locked(marks[t.key])) ?? [];
   const allChecked = selectable.length > 0 && selectable.every((t) => selected.has(t.key));
 
   return (
@@ -470,22 +475,22 @@ function TicketList({ onConfirmed }: { onConfirmed(): void }) {
             {tickets.map((ticket) => (
               <tr
                 key={ticket.key}
-                className={`${selected.has(ticket.key) ? 'selected' : ''} ${marks[ticket.key]?.active ? 'locked' : ''} ${marks[ticket.key]?.planning ? 'planning' : ''}`}
+                className={`${selected.has(ticket.key) ? 'selected' : ''} ${locked(marks[ticket.key]) && !marks[ticket.key]?.planning ? 'locked' : ''} ${marks[ticket.key]?.planning ? 'planning' : ''}`}
                 onClick={() => (marks[ticket.key]?.planning ? setShowPlan(true) : toggle(ticket.key))}
-                title={marks[ticket.key]?.active ? t('這張單在工作台上，要在工作台移除後才能再選') : marks[ticket.key]?.planning ? t('這張單在計畫表裡，點一下打開計畫表') : undefined}
+                title={marks[ticket.key]?.planning ? t('這張單在計畫表裡，點一下打開計畫表') : marks[ticket.key]?.active && !marks[ticket.key]?.done ? t('這張單在工作台上，要在工作台移除後才能再選') : undefined}
               >
                 <td className="check">
-                  <input type="checkbox" checked={selected.has(ticket.key)} disabled={!!marks[ticket.key]?.active || !!marks[ticket.key]?.planning} onChange={() => toggle(ticket.key)} onClick={(e) => e.stopPropagation()} />
+                  <input type="checkbox" checked={selected.has(ticket.key)} disabled={locked(marks[ticket.key])} onChange={() => toggle(ticket.key)} onClick={(e) => e.stopPropagation()} />
                 </td>
                 <td className="key">
                   <a href={ticket.url} onClick={(e) => { e.preventDefault(); e.stopPropagation(); api.openExternal(ticket.url); }}>{ticket.key}</a>
                   <span className="tag">{jiraName(ticket.issueType)}</span>
                   <span className="marks">
                     {marks[ticket.key]?.active && (marks[ticket.key].done
-                      ? <span className="mark done" title={t('這張單在工作台上已完成；在工作台移除後才能再選')}>{t('已完成')}</span>
+                      ? <span className="mark done" title={t('這張單在工作台上已完成；可以再勾選再次開發，確認後舊卡片會收起來')}>{t('已完成')}</span>
                       : <span className="mark active" title={t('這張單正在工作台上進行')}>{t('進行中')}</span>)}
                     {marks[ticket.key]?.planning && <span className="mark planning" title={t('這張單在計畫表裡，還沒確認')}>{t('計畫中')}</span>}
-                    {marks[ticket.key]?.branch && !marks[ticket.key]?.active && <span className="mark" title={t('本機已經有這張單的分支，確認後會切換過去繼續開發')}>{t('有分支')}</span>}
+                    {marks[ticket.key]?.branch && !marks[ticket.key]?.active && <span className="mark" title={t('本機已經有這張單的分支，計畫表會讓你選接著做還是開新分支')}>{t('有分支')}</span>}
                   </span>
                 </td>
                 <td>{ticket.summary}</td>

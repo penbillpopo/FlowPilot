@@ -384,9 +384,14 @@ export class Store {
   }
 
   /** 工作台上跟這張單有關的工作：單號一樣，或這張單是某個合成任務的成員 */
-  private activeRowsOf(ticketKey: string): { status: string }[] {
-    const rows = this.db.prepare("SELECT status, ticket_key, members FROM work_items WHERE status != 'removed'").all() as { status: string; ticket_key: string; members: string | null }[];
+  private activeRowsOf(ticketKey: string): { id: number; status: string }[] {
+    const rows = this.db.prepare("SELECT id, status, ticket_key, members FROM work_items WHERE status != 'removed'").all() as { id: number; status: string; ticket_key: string; members: string | null }[];
     return rows.filter((r) => r.ticket_key === ticketKey || (r.members ? (JSON.parse(r.members) as TicketRef[]).some((m) => m.key === ticketKey) : false));
+  }
+
+  /** 工作台上這張單已完成的工作（再次開發確認後要收起來的舊卡片） */
+  doneWorkItemIds(ticketKey: string): number[] {
+    return this.activeRowsOf(ticketKey).filter((r) => r.status === 'committed').map((r) => r.id);
   }
 
   /** 這張單在工作台上的狀態：每一列都已完成才算「已完成」，其他（含失敗、停止、排隊）都算「進行中」；不在工作台上回 null */

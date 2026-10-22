@@ -28,6 +28,11 @@ function problemOf(plan: TicketPlan, options: PlanOptions): string | null {
 }
 
 /** 分支所在位置：資料夾名稱照原樣，「遠端」要翻 */
+/** 第幾版的分支名稱：1 是原本的名稱，2 起加上 -2、-3 */
+function versionName(root: string, seq: number) {
+  return seq > 1 ? `${root}-${seq}` : root;
+}
+
 function placesText(places: string[]) {
   return places.map((w) => (w === zhOnly('遠端') ? t('遠端') : w)).join(t('、'));
 }
@@ -214,6 +219,8 @@ export function PlanView({ drafts, onChange, onBack, onConfirmed }: Props) {
   const started = useRef(new Set<string>());
   /** 看板上還沒結束的工作（同一條分支不會重複建立） */
   const [active, setActive] = useState<{ branch: string; status: string }[]>([]);
+  /** 看板上已完成的分支裡，合併請求已經合併的（再次開發時預設開新分支） */
+  const [merged, setMerged] = useState<string[]>([]);
 
   async function judge(ticket: JiraTicket, force = false) {
     setJudgeErrors(({ [ticket.key]: _, ...rest }) => rest);
@@ -239,7 +246,10 @@ export function PlanView({ drafts, onChange, onBack, onConfirmed }: Props) {
     api.planOptions().then(setOptions);
     api
       .board()
-      .then((b) => setActive(b.items.filter((i) => !['failed', 'stopped', 'removed'].includes(i.status)).map((i) => ({ branch: i.branch, status: i.status }))))
+      .then((b) => {
+        setActive(b.items.filter((i) => !['failed', 'stopped', 'removed', 'committed'].includes(i.status)).map((i) => ({ branch: i.branch, status: i.status })));
+        setMerged(b.items.filter((i) => i.status === 'committed' && i.prs.some((p) => p.status === 'completed')).map((i) => i.branch));
+      })
       .catch(() => {});
   }, []);
 
@@ -287,6 +297,24 @@ export function PlanView({ drafts, onChange, onBack, onConfirmed }: Props) {
     }
   }
 
+  // 同名分支已經有了：預設接著做最新那一版；那一版的合併請求已經合併，預設開新分支（在合併過的分支上接著做容易出問題）。
+  // 分支都不見了就清掉之前的選擇
+  useEffect(() => {
+    if (!branches) return;
+    for (const b of branches) {
+      if (b.role === 'target') continue;
+      const plan = plans[b.ticketKey];
+      const index = plan?.entries.findIndex((e) => e.project === b.project) ?? -1;
+      if (index < 0) continue;
+      const seq = plan.entries[index].branchSeq;
+      if (!b.versions.length && seq) updateEntry(b.ticketKey, index, { branchSeq: undefined });
+      if (b.versions.length && !seq) {
+        const latest = Math.max(...b.versions);
+        updateEntry(b.ticketKey, index, { branchSeq: merged.includes(versionName(b.root, latest)) ? latest + 1 : latest });
+      }
+    }
+  }, [branches]);
+
   function update(key: string, change: (plan: TicketPlan) => TicketPlan) {
     setPlans((prev) => {
       const next = change(prev[key]);
@@ -333,6 +361,7 @@ export function PlanView({ drafts, onChange, onBack, onConfirmed }: Props) {
     if (checkError) return t('檢查分支失敗');
     if (!branches.some((b) => b.ticketKey === key)) return t('檢查分支中');
     if (unchosenFolder(key)) return t('還沒選資料夾');
+    if (branchesOf(key).some((b) => b.role !== 'target' && b.versions.length && !plans[key].entries.find((e) => e.project === b.project)?.branchSeq)) return t('還沒選分支');
     return null;
   };
   const ready = tickets.filter((t) => !blockerOf(t.key)).map((t) => t.key);
@@ -532,6 +561,27 @@ export function PlanView({ drafts, onChange, onBack, onConfirmed }: Props) {
                     </ul>
                   )}
 
+                  {branchesOf(ticket.key)
+                    .filter((b) => b.role !== 'target' && b.versions.length)
+                    .map((b) => {
+                      const entryIndex = plan.entries.findIndex((e) => e.project === b.project);
+                      const latest = Math.max(...b.versions);
+                      const seq = plan.entries[entryIndex]?.branchSeq;
+                      return (
+                        <div key={`seq-${b.root}`} className="branch-choice">
+                          <span>{t('已經有同名分支 {branch}：', { branch: versionName(b.root, latest) })}</span>
+                          <label>
+                            <input type="radio" checked={seq === latest} onChange={() => updateEntry(ticket.key, entryIndex, { branchSeq: latest, folder: null })} />
+                            {t('接著這條分支繼續')}
+                          </label>
+                          <label>
+                            <input type="radio" checked={seq === latest + 1} onChange={() => updateEntry(ticket.key, entryIndex, { branchSeq: latest + 1, folder: null })} />
+                            {t('開新分支 {branch}', { branch: versionName(b.root, latest + 1) })}
+                          </label>
+                          {merged.includes(versionName(b.root, latest)) && <span className="muted">{t('（這條分支的合併請求已經合併）')}</span>}
+                        </div>
+                      );
+                    })}
                   {folderChoices(ticket.key).map(({ branch, local }) => {
                     const entryIndex = plan.entries.findIndex((e) => e.project === branch.project);
                     return (

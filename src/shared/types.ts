@@ -46,6 +46,8 @@ export interface PlanEntry {
   reason: string;
   /** 分支已經存在於好幾個資料夾時，你選要用哪一個 */
   folder?: string | null;
+  /** 同名分支已存在時，你選要用第幾版：1 是原本的名稱，2 起是加上 -2、-3 的新分支；還沒選是 undefined */
+  branchSeq?: number;
 }
 
 /** 一張單的計畫（計畫表的一列） */
@@ -91,6 +93,10 @@ export interface PlanBranch {
   baseBranch: string;
   /** 已經存在的位置（資料夾名稱或「遠端」）；空陣列代表還沒建立 */
   existsIn: string[];
+  /** 沒加序號的原本名稱（例如 ban/ALL-1） */
+  root: string;
+  /** 本機或遠端已經有的版本（1 是原本的名稱，2 是 -2…），小到大；檢查分支前是空陣列 */
+  versions: number[];
 }
 
 /** 單上附的參考資料（從 Jira 內文、留言、附件直接擷取，不經過 AI） */
@@ -466,9 +472,9 @@ export interface GitState {
 
 /** 單列表上的標記 */
 export interface TicketMark {
-  /** 在工作台上（進行中或已完成），不能再選 */
+  /** 在工作台上（進行中或已完成）；進行中的不能再選 */
   active: boolean;
-  /** 在工作台上而且已完成 */
+  /** 在工作台上而且已完成：可以再選，再次開發確認後舊卡片會收起來 */
   done: boolean;
   /** 在計畫表裡（還沒確認） */
   planning: boolean;

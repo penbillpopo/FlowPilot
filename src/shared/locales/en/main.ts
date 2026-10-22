@@ -125,6 +125,7 @@ const en: Record<string, string> = {
   '打開設定檔': 'Open settings file',
   '結束 FlowPilot': 'Quit FlowPilot',
   '{keys} 已經在工作台上，要在工作台移除後才能再選': '{keys} is already on the workbench. Remove it from the workbench before selecting it again.',
+  '{keys}：已經有同名分支，請選擇接著做還是開新分支': '{keys}: a branch with the same name already exists. Choose whether to continue on it or start a new branch.',
   '{keys} 已經在工作台或計畫表裡了': '{keys} is already on the workbench or in the plan',
   '只能打開 https 網址': 'Only https links can be opened',
   '這張單還沒有產生多語系檔': 'No translation file has been generated for this ticket yet',

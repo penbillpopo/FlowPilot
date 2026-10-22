@@ -198,6 +198,7 @@ const en: Record<string, string> = {
   'AI 還在執行，請先中斷這一輪再移除': 'The AI is still running. Interrupt this round before removing.',
   '你從看板移除了，也刪掉了本機分支': 'You removed it from the board and deleted the local branch',
   '你從看板移除了': 'You removed it from the board',
+  '再次開發，舊的已完成卡片收起來了': 'Developing again, so the old done card was put away',
   '只有卡住、失敗或停止的單可以重試': 'Only blocked, failed, or stopped tickets can be retried',
   '資料夾 {folder} 正在做 {ticket}，等它完成或移除後再重試': 'Folder {folder} is working on {ticket}. Retry after it is finished or removed.',
   '資料夾 {folder} 現在在 {current}，不是這張單的分支 {branch}；切回這條分支後再重試':

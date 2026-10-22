@@ -429,10 +429,11 @@ export function ChatPanel({ item }: { item: WorkItem }) {
     const message = lookMode
       ? [
           zhOnly('## 看我的畫面'),
-          zhOnly('我開著「看我的」模式：我說的話都是在講我在 Chrome 開的畫面。先用共用瀏覽器（flowpilot_shared_browser）看我選給你的分頁（看現在的畫面，不要用之前看過的），只拿回答需要的東西（通常一次畫面快照或截圖就夠），不要多看。'),
+          zhOnly('我開著「看我的」模式：我說的話是在講我在 Chrome 開的畫面。先用共用瀏覽器（flowpilot_shared_browser）看我選給你的分頁現在的樣子（不要用之前看過的），再照我這句話做。'),
           zhOnly(`我想問：${text.trim()}`),
-          zhOnly('只看不動：不要點擊、填寫或送出；我這句話沒叫你改，就不要改程式碼。'),
-          zhOnly('只能用 flowpilot_shared_browser 看（在 exec 裡用 tools.mcp__flowpilot_shared_browser__browser_snapshot、browser_take_screenshot 這類名稱呼叫），不要用其他瀏覽器或控制電腦的工具代替；呼叫失敗就照實說接不上和錯誤訊息。'),
+          zhOnly('照我這句話決定做多少：只是問問題，就看完回答；要你測，就在這個分頁親自點擊、填寫、捲動、切換頁面去測，測完說結果。'),
+          zhOnly('共用瀏覽器沒有寫入防護，資料會真的寫進去：會存檔、送出、刪除、下注、儲值、改設定這類寫入的動作，先問我再做。要大量或完整測試時，也可以改用測試瀏覽器（有寫入防護），用之前跟我說一聲。'),
+          zhOnly('操作我的畫面要用 flowpilot_shared_browser（在 exec 裡用 tools.mcp__flowpilot_shared_browser__browser_snapshot、browser_click 這類名稱呼叫），不要用其他控制電腦的工具代替；呼叫失敗就照實說接不上和錯誤訊息。我這句話沒叫你改程式，就不要改程式碼。'),
         ].join('\n')
       : text;
     const attached = attach.images;
@@ -735,7 +736,7 @@ export function ChatPanel({ item }: { item: WorkItem }) {
           {attach.view}
           {lookMode && (
             <div className="look-chip">
-              <span className="fp-tag">FlowPilot</span> {t('看我的模式開著：你說的話 AI 都會先看你在 Chrome 選的畫面再回答')}
+              <span className="fp-tag">FlowPilot</span> {t('看我的模式開著：你說的話 AI 都會先看你在 Chrome 選的畫面，要它測它就會親自操作（寫入資料前會先問你）')}
               <button className="link" title={t('關掉看我的模式')} onClick={() => setLookMode(false)}>×</button>
             </div>
           )}

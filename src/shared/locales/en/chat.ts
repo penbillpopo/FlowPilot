@@ -147,7 +147,7 @@ const en: Record<string, string> = {
   '選項：{options}': 'Options: {options}',
   '／': ' / ',
   '在下面的輸入框回答。': 'Answer in the box below.',
-  '看我的模式開著：你說的話 AI 都會先看你在 Chrome 選的畫面再回答': 'Watch-my-screen mode is on: AI will look at the tab you picked in Chrome before answering',
+  '看我的模式開著：你說的話 AI 都會先看你在 Chrome 選的畫面，要它測它就會親自操作（寫入資料前會先問你）': 'Watch-my-screen mode is on: AI looks at the tab you picked in Chrome first, and tests it hands-on when you ask (it checks with you before saving any data)',
   關掉看我的模式: 'Turn off watch-my-screen mode',
   '補充指示（會插進正在進行的這一輪，Enter 送出，Shift＋Enter 換行）。可以附圖。': 'Add instructions (inserted into the current round; Enter to send, Shift+Enter for a new line). You can attach images.',
   'AI 在等你回答…（Enter 送出，Shift＋Enter 換行；可以附圖：按「附圖」、拖曳進來或直接貼上）': 'AI is waiting for your answer… (Enter to send, Shift+Enter for a new line; attach images with "Attach image", drag and drop, or paste)',

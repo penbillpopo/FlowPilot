@@ -3,7 +3,7 @@ import { chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, writeFileS
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { describe, expect, it } from 'vitest';
-import { commitAll, commitStaged, discard, fileDiff, gitState, parseStatus, pushBranch, stage, unstage } from '../src/main/gitpanel';
+import { branchCommits, commitAll, commitDiff, commitFiles, commitStaged, discard, fileDiff, gitState, parseNameStatus, parseStatus, pushBranch, stage, unstage } from '../src/main/gitpanel';
 
 const git = (cwd: string, ...args: string[]) => execFileSync('git', args, { cwd, stdio: 'pipe' }).toString();
 
@@ -118,5 +118,35 @@ describe('Git 改動面板', () => {
     expect(readFileSync(join(dir, 'a.ts'), 'utf8')).toBe('a\n'); // 回到原樣
     expect(git(dir, 'status', '--porcelain').trim()).toBe('M src/environments/environment.ts'); // 只剩測試用的
     await expect(commitAll(dir, 'x')).rejects.toThrow('沒有要提交的改動');
+  });
+});
+
+describe('這條分支的提交', () => {
+  it('列出比基底多的提交（新的在前）、哪些推送了、每個提交和整條分支改了哪些檔案', async () => {
+    const dir = repo();
+    writeFileSync(join(dir, 'a.ts'), 'a2\n');
+    git(dir, 'commit', '-qam', '改 a');
+    git(dir, 'push', '-q', 'origin', 'ban/ALL-1');
+    writeFileSync(join(dir, 'c.ts'), 'c\n');
+    git(dir, 'rm', '-q', 'b.ts');
+    git(dir, 'add', '.');
+    git(dir, 'commit', '-qm', '加 c、刪 b');
+    git(dir, 'switch', '-q', 'main'); // 資料夾不在這條分支上也讀得到
+
+    const result = await branchCommits(dir, 'ban/ALL-1', 'ban/ALL-1', 'main');
+    expect(result.total).toBe(2);
+    expect(result.commits.map((c) => [c.subject, c.pushed])).toEqual([['加 c、刪 b', false], ['改 a', true]]);
+    expect(result.files).toEqual([{ code: 'M', path: 'a.ts' }, { code: 'D', path: 'b.ts' }, { code: 'A', path: 'c.ts' }]);
+
+    const latest = result.commits[0].sha;
+    expect(await commitFiles(dir, latest)).toEqual([{ code: 'D', path: 'b.ts' }, { code: 'A', path: 'c.ts' }]);
+    expect(await commitDiff(dir, 'ban/ALL-1', 'main', result.commits[1].sha, 'a.ts')).toContain('+a2');
+    expect(await commitDiff(dir, 'ban/ALL-1', 'main', null, 'c.ts')).toContain('+c');
+    await expect(commitFiles(dir, '--all')).rejects.toThrow('提交編號不對');
+    await expect(commitDiff(dir, 'ban/ALL-1', 'main', null, '../x')).rejects.toThrow('路徑不在資料夾裡');
+  });
+
+  it('改名顯示新的路徑', () => {
+    expect(parseNameStatus('R100\0old.ts\0new.ts\0M\0a.ts\0')).toEqual([{ code: 'R', path: 'new.ts' }, { code: 'M', path: 'a.ts' }]);
   });
 });

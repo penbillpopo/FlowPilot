@@ -131,8 +131,8 @@ const en: Record<string, string> = {
   '資料夾 {folder} 已經讓出，可能正在做別張單。按「重試」會重新分配資料夾接著做；不做了可以從「更多 → 移除」拿掉。':
     'Folder {folder} has been released and may be in use by another ticket. Click "Retry" to get a folder and continue; if you are done with it, remove it from "More → Remove".',
   這張單已完成: 'This ticket is done',
-  '資料夾 {folder} 已經讓出，可能正在做別張單，所以這裡不再顯示環境切換、終端機和改動。':
-    'Folder {folder} has been released and may be in use by another ticket, so environment switching, the terminal and changes are no longer shown here.',
+  '資料夾 {folder} 已經讓出，可能正在做別張單，所以這裡不再顯示環境切換和終端機；下面的提交是直接讀分支，不會動到資料夾。':
+    'Folder {folder} has been released and may be in use by another ticket, so environment switching and the terminal are no longer shown here. The commits below are read straight from the branch and do not touch the folder.',
   '確定不用再改了，可以從「更多 → 移除」把它從工作台拿掉：會刪掉本機分支（遠端分支不動），單列表上的「已完成」標籤也會消失。':
     'If no more changes are needed, remove it from the Workbench with "More → Remove": this deletes the local branch (the remote branch stays), and the "Done" tag in Tickets goes away.',
   '這張單分配到資料夾之後，這裡會顯示終端機與 Git 改動。': 'Once this ticket gets a folder, the terminal and Git changes will show here.',

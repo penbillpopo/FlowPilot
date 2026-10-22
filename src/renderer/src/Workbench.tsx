@@ -6,7 +6,7 @@ import { PortPanel } from './PortPanel';
 import { PrPanel } from './PrPanel';
 import { sideName, t, zhOnly } from '../../shared/i18n';
 import { term } from './skin';
-import { AcceptancePanel, FolderTerminalPanel, GitPanel, pendingChecks, TestPanel } from './SidePanels';
+import { AcceptancePanel, BranchCommitsPanel, FolderTerminalPanel, GitPanel, pendingChecks, TestPanel } from './SidePanels';
 
 const api = window.flowpilot;
 
@@ -200,6 +200,7 @@ export function Workbench({ onGoTickets }: { onGoTickets(): void }) {
               <p className="muted small">{t('資料夾已經讓出，分支、提交、對話都留著。補測完勾「我測過了」，全部勾完才能完成；要修時按上方的「繼續修」（資料夾都在用時會告訴你哪張單在用）。')}</p>
               <p className="small">{t('分支：')}<code>{current.branch}</code></p>
             </div>
+            <div className="panel git"><BranchCommitsPanel key={current.id} item={current} /></div>
             <AcceptancePanel item={current} />
             <PrPanel key={current.id} item={current} />
           </>
@@ -215,12 +216,13 @@ export function Workbench({ onGoTickets }: { onGoTickets(): void }) {
           <div className="panel finished-note">
             <strong>{t('這張單已完成')}</strong>
             <p className="muted small">
-              {t('資料夾 {folder} 已經讓出，可能正在做別張單，所以這裡不再顯示環境切換、終端機和改動。', { folder: current.folder ?? '—' })}
+              {t('資料夾 {folder} 已經讓出，可能正在做別張單，所以這裡不再顯示環境切換和終端機；下面的提交是直接讀分支，不會動到資料夾。', { folder: current.folder ?? '—' })}
             </p>
             <p className="muted small">{t('確定不用再改了，可以從「更多 → 移除」把它從工作台拿掉：會刪掉本機分支（遠端分支不動），單列表上的「已完成」標籤也會消失。')}</p>
             <p className="small">{t('分支：')}<code>{current.branch}</code></p>
             {current.activity && <p className="muted small">{current.activity}</p>}
           </div>
+          {current.status === 'committed' && <div className="panel git"><BranchCommitsPanel key={current.id} item={current} /></div>}
           {current.status === 'committed' && <PortPanel item={current} all={items} />}
           {current.status === 'committed' && <PrPanel key={current.id} item={current} />}
           </>

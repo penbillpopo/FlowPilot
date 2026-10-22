@@ -69,6 +69,9 @@ const api: FlowPilotApi = {
     commit: (id, message, identity) => ipcRenderer.invoke('git:commit', id, message, identity),
     commitAll: (id, message, identity) => ipcRenderer.invoke('git:commitAll', id, message, identity),
     push: (id) => ipcRenderer.invoke('git:push', id),
+    commits: (id) => ipcRenderer.invoke('git:commits', id),
+    commitFiles: (id, sha) => ipcRenderer.invoke('git:commitFiles', id, sha),
+    commitDiff: (id, sha, path) => ipcRenderer.invoke('git:commitDiff', id, sha, path),
   },
   folderTerminal: {
     open: (id, cols, rows) => ipcRenderer.invoke('folderTerm:open', id, cols, rows),

@@ -111,6 +111,7 @@ const en: Record<string, string> = {
   '原因不明': 'unknown reason',
   '這張單還沒有分配資料夾': "This ticket hasn't been given a folder yet",
   '找不到這張單': 'Couldn\'t find this ticket',
+  '提交編號不對：{sha}': 'Invalid commit id: {sha}',
   '這張單還沒開始開發，開始之後才能更新需求': 'Development hasn\'t started on this ticket yet. You can update the requirements once it starts.',
   '請 AI 比對需求變更': 'Asking the AI to compare requirement changes',
   '{key} 還沒有審閱': '{key} hasn\'t been reviewed yet',

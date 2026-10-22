@@ -450,6 +450,31 @@ export interface GitFile {
   code: string;
 }
 
+/** 這條分支自己的一個提交 */
+export interface BranchCommit {
+  sha: string;
+  /** 提交訊息的第一行 */
+  subject: string;
+  /** 提交時間（ISO） */
+  date: string;
+  /** 遠端已經有了 */
+  pushed: boolean;
+}
+
+/** 這條分支比基底分支多出來的提交，和合計改了哪些檔案 */
+export interface BranchCommits {
+  /** 從哪裡讀的：資料夾名稱，或「遠端」 */
+  where: string;
+  /** 跟哪條基底分支比 */
+  base: string;
+  /** 最新的在前面，最多 50 個 */
+  commits: BranchCommit[];
+  /** 總共幾個提交（可能比 commits 多） */
+  total: number;
+  /** 整條分支跟基底比，合計改了哪些檔案 */
+  files: GitFile[];
+}
+
 export interface GitState {
   branch: string;
   /** 準備提交（已暫存） */
@@ -627,6 +652,12 @@ export interface FlowPilotApi {
     /** 提交；identity 是這一次要用的身分的信箱，不填就用資料夾設定的 */
     commit(itemId: number, message: string, identity?: string): Promise<CommitResult>;
     push(itemId: number): Promise<string>;
+    /** 這條分支的提交（待補測、已完成的單沒有資料夾也讀得到） */
+    commits(itemId: number): Promise<BranchCommits>;
+    /** 某個提交改了哪些檔案 */
+    commitFiles(itemId: number, sha: string): Promise<GitFile[]>;
+    /** 某個檔案在某個提交改了什麼；sha 是 null 代表整條分支跟基底比 */
+    commitDiff(itemId: number, sha: string | null, path: string): Promise<string>;
   };
   /** 資料夾終端機：每個資料夾一個互動式 shell */
   folderTerminal: {

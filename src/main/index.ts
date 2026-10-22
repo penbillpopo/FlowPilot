@@ -12,14 +12,14 @@ import { AzureRepo, defaultPrTitle, prDescription, prIdFromUrl } from './azure';
 import type { Env, JiraTicket, PrOptions, PrRecord, SupplementItem, WorkItem, Judgement, PlanOptions, Review, ReviewChecks, ReviewIssue, TicketMark, TicketPlan, TicketSnapshot } from '../shared/types';
 import { CodexRpc } from './codex/rpc';
 import { listSkills, runStructured } from './codex/structured';
-import { checkExisting, runGit } from './git';
+import { checkExisting, localBranchExists, remoteBranchExists, runGit } from './git';
 import { buildJql, downloadAttachment, getIssueContext, getTransitions, loadCredentials, searchTickets, statusIdsByName, transitionIssue } from './jira';
 import { applyDiscussion, buildCodeCheckPrompt, buildDiscussionPrompt, buildFigmaPrompt, buildGroupReviewPrompt, buildReviewPrompt, discussionSchema, REVIEW_INSTRUCTIONS, reviewSchema, sanitizeReview } from './planner/review';
 import { deriveBranches, planProblem } from './planner/rules';
 import { loadHistory } from './chat';
 import { getLang, type Lang, setLang, t, zhOnly } from '../shared/i18n';
 import { FolderTerminals } from './folderterminals';
-import { commitAll, commitStaged, discard, fileDiff, gitState, pushBranch, stage, unstage } from './gitpanel';
+import { branchCommits, commitAll, commitDiff, commitFiles, commitStaged, discard, fileDiff, gitState, pushBranch, stage, unstage } from './gitpanel';
 import { diffSnapshots, updateMessage } from './requirements';
 import { HANDOFF_PROMPT_TITLE, HEADLESS_BROWSER_NAME, Runner, threadConfig } from './runner/runner';
 import { VSCode } from './vscode';
@@ -107,6 +107,22 @@ function folderOf(itemId: number) {
   const folder = settings.folders.find((f) => f.name === item.folder);
   if (!folder) throw new Error(t('設定檔裡沒有資料夾「{folder}」', { folder: item.folder }));
   return { item, folder, rule: settings.projects[folder.project] };
+}
+
+/**
+ * 讀這張單分支的地方（只讀，不切換）：自己的資料夾優先，再找同專案其他有這條本機分支的資料夾，
+ * 都沒有就讀遠端的分支。待補測、已完成的單沒有資料夾也看得到提交。
+ */
+async function branchSource(itemId: number): Promise<{ cwd: string; ref: string; where: string; branch: string; base: string }> {
+  const item = store.getWorkItem(itemId);
+  if (!item) throw new Error(t('找不到這張單'));
+  const folders = loadSettings(settingsFile).folders.filter((f) => f.project === item.project);
+  if (!folders.length) throw new Error(t('設定檔裡沒有「{project}」的資料夾', { project: item.project }));
+  const ordered = [...folders.filter((f) => f.name === item.folder), ...folders.filter((f) => f.name !== item.folder)];
+  const at = { branch: item.branch, base: item.baseBranch };
+  for (const f of ordered) if (await localBranchExists(f.path, item.branch).catch(() => false)) return { cwd: f.path, ref: item.branch, where: f.name, ...at };
+  if (await remoteBranchExists(folders[0].path, item.branch).catch(() => false)) return { cwd: folders[0].path, ref: `origin/${item.branch}`, where: '遠端', ...at };
+  throw new Error(t('找不到 {branch}：本機的資料夾和遠端都沒有', { branch: item.branch }));
 }
 
 function notify(title: string, body: string, itemId: number) {
@@ -722,6 +738,15 @@ function registerIpc() {
     return commitStaged(folderOf(id).folder.path, message, identity);
   });
   ipcMain.handle('git:push', (_event, id: number) => pushBranch(folderOf(id).folder.path));
+  ipcMain.handle('git:commits', async (_event, id: number) => {
+    const src = await branchSource(id);
+    return { where: src.where, ...(await branchCommits(src.cwd, src.ref, src.branch, src.base)) };
+  });
+  ipcMain.handle('git:commitFiles', async (_event, id: number, sha: string) => commitFiles((await branchSource(id)).cwd, sha));
+  ipcMain.handle('git:commitDiff', async (_event, id: number, sha: string | null, path: string) => {
+    const src = await branchSource(id);
+    return commitDiff(src.cwd, src.ref, src.base, sha, path);
+  });
   ipcMain.handle('folderTerm:open', (_event, id: number, cols: number, rows: number) => {
     const { folder } = folderOf(id);
     return { folder: folder.name, ...folderTerminals.open(folder.name, folder.path, cols, rows) };

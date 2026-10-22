@@ -4,7 +4,7 @@ import { execFile } from 'node:child_process';
 import { mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join, resolve, sep } from 'node:path';
-import type { CommitResult, GitFile, GitIdentity, GitState } from '../shared/types';
+import type { BranchCommits, CommitResult, GitFile, GitIdentity, GitState } from '../shared/types';
 import { currentBranch, remoteBranchExists, runGit } from './git';
 
 /** 解析 git status --porcelain=v1 -z：X 是暫存區、Y 是工作區 */
@@ -65,6 +65,64 @@ export async function fileDiff(cwd: string, path: string, staged: boolean): Prom
     if (!tracked) return (await runGit(cwd, ['diff', '--no-index', '--', '/dev/null', path])).stdout;
   }
   return git(cwd, ['diff', ...(staged ? ['--cached'] : []), '--', path]);
+}
+
+/** 解析 --name-status -z：改名、複製的那一筆後面跟著舊路徑和新路徑，顯示新路徑 */
+export function parseNameStatus(raw: string): GitFile[] {
+  const files: GitFile[] = [];
+  const parts = raw.split('\0').filter(Boolean);
+  for (let i = 0; i < parts.length; i++) {
+    const code = parts[i][0];
+    if (code === 'R' || code === 'C') {
+      files.push({ code, path: parts[i + 2] });
+      i += 2;
+    } else {
+      files.push({ code, path: parts[i + 1] });
+      i += 1;
+    }
+  }
+  return files.filter((f) => f.path);
+}
+
+const SHA = /^[0-9a-f]{7,40}$/;
+
+/** 基底分支的參照：先用遠端的（最新），本機沒抓過才用本機的 */
+async function baseRef(cwd: string, base: string): Promise<string> {
+  return (await runGit(cwd, ['rev-parse', '--verify', '--quiet', `refs/remotes/origin/${base}`])).code === 0 ? `origin/${base}` : base;
+}
+
+/**
+ * 這條分支比基底多出來的提交（不含合併提交），和整條分支合計改了哪些檔案。唯讀，不切換分支。
+ * ref 是本機分支名稱，或本機沒有時的 origin/分支。
+ */
+export async function branchCommits(cwd: string, ref: string, branch: string, base: string): Promise<Omit<BranchCommits, 'where'>> {
+  const from = await baseRef(cwd, base);
+  const range = `${from}..${ref}`;
+  const log = await git(cwd, ['log', '--no-merges', '-n', '50', '--format=%H%x1f%s%x1f%cI', range, '--']);
+  const total = Number((await git(cwd, ['rev-list', '--no-merges', '--count', range, '--'])).trim()) || 0;
+  // 還沒推送的：遠端分支沒有的提交；遠端還沒有這條分支就全部都還沒推送
+  const hasRemote = await remoteBranchExists(cwd, branch);
+  const unpushed = new Set(hasRemote ? (await git(cwd, ['rev-list', `refs/remotes/origin/${branch}..${ref}`, '--'])).split('\n').filter(Boolean) : []);
+  const commits = log.split('\n').filter(Boolean).map((line) => {
+    const [sha, subject, date] = line.split('\x1f');
+    return { sha, subject, date, pushed: hasRemote && !unpushed.has(sha) };
+  });
+  const files = parseNameStatus(await git(cwd, ['diff', '--name-status', '-z', `${from}...${ref}`, '--']));
+  return { base, commits, total, files };
+}
+
+/** 某個提交改了哪些檔案 */
+export async function commitFiles(cwd: string, sha: string): Promise<GitFile[]> {
+  if (!SHA.test(sha)) throw new Error(t('提交編號不對：{sha}', { sha }));
+  return parseNameStatus(await git(cwd, ['show', '--format=', '--name-status', '-z', sha, '--']));
+}
+
+/** 某個檔案在某個提交改了什麼；sha 是 null 代表整條分支跟基底比 */
+export async function commitDiff(cwd: string, ref: string, base: string, sha: string | null, path: string): Promise<string> {
+  inside(cwd, path);
+  if (sha === null) return git(cwd, ['diff', `${await baseRef(cwd, base)}...${ref}`, '--', path]);
+  if (!SHA.test(sha)) throw new Error(t('提交編號不對：{sha}', { sha }));
+  return git(cwd, ['show', '--format=', sha, '--', path]);
 }
 
 export async function stage(cwd: string, paths: string[]): Promise<void> {

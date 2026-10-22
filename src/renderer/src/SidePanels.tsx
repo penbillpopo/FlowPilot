@@ -3,7 +3,7 @@ import { FitAddon } from '@xterm/addon-fit';
 import { Terminal } from '@xterm/xterm';
 import '@xterm/xterm/css/xterm.css';
 import { useEffect, useRef, useState } from 'react';
-import type { Env, GitFile, TestState, WorkItem } from '../../shared/types';
+import type { BranchCommits, Env, GitFile, TestState, WorkItem } from '../../shared/types';
 import { errorText } from './ChatPanel';
 import { DiffView } from './DiffView';
 import { needsYou, unexplainedFiles } from '../../shared/acceptance';
@@ -479,27 +479,10 @@ export function GitPanel({ item, onCount }: { item: WorkItem; onCount?(changes: 
       {status && <p className="muted small git-status">{status}</p>}
 
       <div className="git-section">
-        <div className="git-section-head"><span>{t('AI 改了 {count} 個檔案', { count: changes.length })}</span></div>
+        <div className="git-section-head"><span>{t('還沒提交的改動（{count} 個檔案）', { count: changes.length })}</span></div>
         {changes.length === 0 && <p className="muted small">{pushCount > 0 || state.ahead > 0 ? t('改動都提交了。') : t('目前沒有改動。')}</p>}
         <ul className="git-files">
-          {changes.map((file) => {
-            const name = file.path.split('/').pop();
-            return (
-              <li key={file.path} className={diff?.path === file.path ? 'open' : ''}>
-                <button className="file-name" onClick={() => showDiff(file)} title={t('{path}（點一下看改了什麼）', { path: file.path })}>
-                  <span className={`code c-${file.code}`}>{CHANGE_LABEL[file.code] ? t(CHANGE_LABEL[file.code]) : t('修改')}</span> {name} <span className="muted small">{file.path.slice(0, file.path.length - (name?.length ?? 0))}</span>
-                </button>
-                <button
-                  className="link small file-actions"
-                  title={t('這個檔案改得不對？按一下會把檔名帶進中間的輸入框，接著打要怎麼改，送出給 AI')}
-                  onClick={() => window.dispatchEvent(new CustomEvent('flowpilot:ask-ai', { detail: t('{path}：', { path: file.path }) }))}
-                >
-                  {t('要 AI 改')}
-                </button>
-                {diff?.path === file.path && <div className="diff-row"><DiffView diff={diff.text} /></div>}
-              </li>
-            );
-          })}
+          {changes.map((file) => <FileRow key={file.path} file={file} diff={diff?.path === file.path ? diff.text : null} onClick={() => showDiff(file)} />)}
         </ul>
         {testOnly.length > 0 && <p className="muted small">{t('environment.ts 是測試時切環境改的，不會提交；完成這張單時會還原。')}</p>}
       </div>
@@ -539,6 +522,125 @@ export function GitPanel({ item, onCount }: { item: WorkItem; onCount?(changes: 
             </>
           )}
         </div>
+      )}
+
+      <BranchCommitsPanel item={item} refreshKey={`${state.branch}-${state.ahead}-${state.unpushed}`} />
+    </div>
+  );
+}
+
+/** 改動的一個檔案：點檔名看改了什麼；覺得不對就「要 AI 改」 */
+function FileRow({ file, diff, onClick }: { file: GitFile; diff: string | null; onClick(): void }) {
+  const name = file.path.split('/').pop();
+  return (
+    <li className={diff !== null ? 'open' : ''}>
+      <button className="file-name" onClick={onClick} title={t('{path}（點一下看改了什麼）', { path: file.path })}>
+        <span className={`code c-${file.code}`}>{CHANGE_LABEL[file.code] ? t(CHANGE_LABEL[file.code]) : t('修改')}</span> {name} <span className="muted small">{file.path.slice(0, file.path.length - (name?.length ?? 0))}</span>
+      </button>
+      <button
+        className="link small file-actions"
+        title={t('這個檔案改得不對？按一下會把檔名帶進中間的輸入框，接著打要怎麼改，送出給 AI')}
+        onClick={() => window.dispatchEvent(new CustomEvent('flowpilot:ask-ai', { detail: t('{path}：', { path: file.path }) }))}
+      >
+        {t('要 AI 改')}
+      </button>
+      {diff !== null && <div className="diff-row"><DiffView diff={diff} /></div>}
+    </li>
+  );
+}
+
+function shortTime(iso: string) {
+  const d = new Date(iso);
+  const pad = (n: number) => String(n).padStart(2, '0');
+  return `${pad(d.getMonth() + 1)}/${pad(d.getDate())} ${pad(d.getHours())}:${pad(d.getMinutes())}`;
+}
+
+/**
+ * 這條分支的提交：比基底多出來的提交，最新的在上面。點提交看那次改了哪些檔案、點檔名看改了什麼；
+ * 最上面一列「全部合計」是整條分支跟基底比。唯讀；待補測、已完成的單沒有資料夾也看得到（讀本機的分支或遠端）。
+ */
+export function BranchCommitsPanel({ item, refreshKey }: { item: WorkItem; refreshKey?: string }) {
+  const [data, setData] = useState<BranchCommits | null>(null);
+  const [error, setError] = useState<string | null>(null);
+  /** 展開的是哪一列：'all' 是全部合計，其他是提交編號 */
+  const [open, setOpen] = useState<string | null>(null);
+  const [files, setFiles] = useState<Record<string, GitFile[]>>({});
+  const [diff, setDiff] = useState<{ row: string; path: string; text: string } | null>(null);
+
+  useEffect(() => {
+    api.git
+      .commits(item.id)
+      .then((d) => {
+        setData(d);
+        setError(null);
+      })
+      .catch((e) => setError(errorText(e)));
+  }, [item.id, item.status, refreshKey]);
+
+  async function toggle(row: string) {
+    setDiff(null);
+    if (open === row) return setOpen(null);
+    setOpen(row);
+    if (row === 'all' || files[row]) return;
+    try {
+      const list = await api.git.commitFiles(item.id, row);
+      setFiles((prev) => ({ ...prev, [row]: list }));
+    } catch (e) {
+      setError(errorText(e));
+    }
+  }
+
+  async function showDiff(row: string, path: string) {
+    if (diff?.row === row && diff.path === path) return setDiff(null);
+    try {
+      setDiff({ row, path, text: await api.git.commitDiff(item.id, row === 'all' ? null : row, path) });
+    } catch (e) {
+      setError(errorText(e));
+    }
+  }
+
+  const fileList = (row: string, list: GitFile[] | undefined) =>
+    !list ? <p className="muted small">{t('讀取中…')}</p> : (
+      <ul className="git-files">
+        {list.map((file) => <FileRow key={file.path} file={file} diff={diff?.row === row && diff.path === file.path ? diff.text : null} onClick={() => showDiff(row, file.path)} />)}
+      </ul>
+    );
+
+  const merged = item.prs.some((p) => p.status === 'completed');
+  return (
+    <div className="git-section branch-commits">
+      <div className="git-section-head">
+        <span>{data ? t('這條分支的提交（{count} 個）', { count: data.total }) : t('這條分支的提交')}</span>
+        {data && <span className="muted small">{t('跟 {base} 比', { base: data.base })}{data.where === zhOnly('遠端') ? t('（讀遠端的分支）') : ''}</span>}
+      </div>
+      {error && <div className="error">{error}</div>}
+      {!data && !error && <p className="muted small">{t('讀取中…')}</p>}
+      {data && data.commits.length === 0 && (
+        <p className="muted small">{merged ? t('這條分支的提交都已經合併進 {base}。', { base: data.base }) : t('還沒有提交。')}</p>
+      )}
+      {data && data.commits.length > 0 && (
+        <ul className="commit-list">
+          <li className={open === 'all' ? 'open' : ''}>
+            <button className="commit-row" onClick={() => toggle('all')} title={t('整條分支跟 {base} 比，總共改了哪些檔案', { base: data.base })}>
+              <span className="caret">{open === 'all' ? '▾' : '▸'}</span>
+              <strong>{t('全部合計')}</strong>
+              <span className="muted small">{t('{count} 個檔案', { count: data.files.length })}</span>
+            </button>
+            {open === 'all' && fileList('all', data.files)}
+          </li>
+          {data.commits.map((c) => (
+            <li key={c.sha} className={open === c.sha ? 'open' : ''}>
+              <button className="commit-row" onClick={() => toggle(c.sha)} title={t('{sha}（點一下看這次改了哪些檔案）', { sha: c.sha.slice(0, 8) })}>
+                <span className="caret">{open === c.sha ? '▾' : '▸'}</span>
+                <span className="commit-subject">{c.subject}</span>
+                <span className="muted small">{shortTime(c.date)}</span>
+                <span className={`commit-push ${c.pushed ? 'pushed' : 'local'}`}>{c.pushed ? t('已推送') : t('未推送')}</span>
+              </button>
+              {open === c.sha && fileList(c.sha, files[c.sha])}
+            </li>
+          ))}
+          {data.total > data.commits.length && <li className="muted small">{t('只列最近 {count} 個', { count: data.commits.length })}</li>}
+        </ul>
       )}
     </div>
   );

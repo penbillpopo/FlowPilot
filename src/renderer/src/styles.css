@@ -260,6 +260,17 @@ ul.git-files { list-style: none; margin: 4px 0 0; padding: 0; display: flex; fle
 ul.git-files li { display: flex; align-items: center; gap: 4px; border-radius: 4px; }
 ul.git-files li:hover, ul.git-files li.open { background: var(--hover); }
 ul.git-files li.diff-row { display: block; background: none; padding: 4px 0 8px; }
+.branch-commits { margin-top: 14px; }
+ul.commit-list { list-style: none; margin: 4px 0 0; padding: 0; display: flex; flex-direction: column; gap: 2px; }
+ul.commit-list > li { border-radius: 4px; }
+ul.commit-list > li.open { background: var(--hover); padding-bottom: 4px; }
+ul.commit-list ul.git-files { padding-left: 16px; }
+.commit-row { display: flex; align-items: center; gap: 8px; width: 100%; text-align: left; background: none; border: 0; padding: 4px 6px; color: inherit; cursor: pointer; font-size: 13px; }
+.commit-row:hover { background: var(--hover); }
+.commit-row .caret { width: 10px; color: var(--muted); }
+.commit-subject { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.commit-push { font-size: 11px; padding: 0 6px; border-radius: 8px; border: 1px solid var(--line); white-space: nowrap; }
+.commit-push.local { color: var(--accent); border-color: var(--accent); }
 .file-name { flex: 1; min-width: 0; border: none; background: none; text-align: left; padding: 3px 4px; color: var(--fg); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .file-actions { display: flex; gap: 2px; }
 .file-actions button.link { font-size: 15px; padding: 0 6px; }

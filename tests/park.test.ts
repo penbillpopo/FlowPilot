@@ -51,7 +51,7 @@ function setup() {
     store, settings: () => settings, codex: { on: () => () => {}, setDisconnectHandler: () => {} } as unknown as CodexRpc, vscode: {} as VSCode,
     notify: () => {}, onChange: () => {}, onStream: () => {}, log: () => {}, paused: true,
   });
-  return { folder, store, runner, id: item.id, make, stopped };
+  return { root, remote, folder, settings, store, runner, id: item.id, make, stopped };
 }
 
 describe('先交付、待補測', () => {
@@ -128,5 +128,51 @@ describe('先交付、待補測', () => {
     const again = u.make('ALL-1', 'ban/ALL-1');
     u.store.updateWorkItem(again.id, { status: 'review', folder: 'PlatformAdmin' });
     await expect(u.runner.resume(u.id)).rejects.toThrow('已經有另一張卡片在作戰中');
+  });
+});
+
+describe('資料夾不在這張單的分支', () => {
+  it('被切走了：不能跟 AI 說話、不能完成；切回之後就好。有沒提交的改動先說是哪些、不切', async () => {
+    const t = setup();
+    t.runner.setChecked(t.id, 1, true);
+    git(t.folder, 'switch', '-q', 'version/0.0.1');
+    await expect(t.runner.reply(t.id, '繼續')).rejects.toThrow('不是這張單的分支 ban/ALL-1');
+    await expect(t.runner.finish(t.id, true)).rejects.toThrow('不是這張單的分支 ban/ALL-1');
+
+    writeFileSync(join(t.folder, 'a.ts'), 'mine\n');
+    await expect(t.runner.switchBack(t.id)).rejects.toThrow('PlatformAdmin 現在在 version/0.0.1，有 1 個沒提交的改動（a.ts）');
+    expect(git(t.folder, 'branch', '--show-current')).toBe('version/0.0.1');
+
+    git(t.folder, 'checkout', '--', 'a.ts');
+    await t.runner.switchBack(t.id);
+    expect(git(t.folder, 'branch', '--show-current')).toBe('ban/ALL-1');
+    await t.runner.finish(t.id, true);
+    expect(t.store.getWorkItem(t.id)!.status).toBe('committed');
+  });
+
+  it('在退役的資料夾被切走：搬到 FlowPilot 的資料夾，沒推送的提交一起帶過去，原本的資料夾不動', async () => {
+    const t = setup();
+    const mine = join(t.root, 'FlowPilot-PlatformAdmin');
+    git(t.root, 'clone', '-q', t.remote, mine);
+    t.settings.folders = [
+      { name: 'PlatformAdmin-1', path: mine, project: 'PlatformAdmin' },
+      { name: 'PlatformAdmin', path: t.folder, project: 'PlatformAdmin', retired: true },
+    ];
+    git(t.folder, 'switch', '-q', '-c', 'ban/fix-ui');
+    writeFileSync(join(t.folder, 'a.ts'), 'my own work\n'); // 你自己在做的，不能被動到
+
+    await t.runner.relocate(t.id);
+    expect(t.store.getWorkItem(t.id)).toMatchObject({ folder: 'PlatformAdmin-1', status: 'review', threadId: 'th' });
+    expect(git(mine, 'branch', '--show-current')).toBe('ban/ALL-1');
+    expect(git(mine, 'log', '-1', '--format=%s')).toBe('work'); // 沒推送的提交也帶過來了
+    expect(git(t.folder, 'branch', '--show-current')).toBe('ban/fix-ui');
+    expect(git(t.folder, 'status', '--porcelain')).toBe('M a.ts');
+  });
+
+  it('繼續修不會拿退役的資料夾', async () => {
+    const t = setup();
+    await t.runner.park(t.id);
+    t.settings.folders = [{ name: 'PlatformAdmin', path: t.folder, project: 'PlatformAdmin', retired: true }];
+    await expect(t.runner.resume(t.id)).rejects.toThrow('資料夾都在用');
   });
 });

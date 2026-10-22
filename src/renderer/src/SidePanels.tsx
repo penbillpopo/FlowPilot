@@ -479,7 +479,7 @@ export function GitPanel({ item, onCount }: { item: WorkItem; onCount?(changes: 
       {status && <p className="muted small git-status">{status}</p>}
 
       <div className="git-section">
-        <div className="git-section-head"><span>{t('還沒提交的改動（{count} 個檔案）', { count: changes.length })}</span></div>
+        <div className="git-section-head"><span>{onBranch ? t('還沒提交的改動（{count} 個檔案）', { count: changes.length }) : t('資料夾裡沒提交的改動（{count} 個檔案，在 {current} 上，不是這張單的）', { count: changes.length, current: state.branch || t('（不在任何分支）') })}</span></div>
         {changes.length === 0 && <p className="muted small">{pushCount > 0 || state.ahead > 0 ? t('改動都提交了。') : t('目前沒有改動。')}</p>}
         <ul className="git-files">
           {changes.map((file) => <FileRow key={file.path} file={file} diff={diff?.path === file.path ? diff.text : null} onClick={() => showDiff(file)} />)}

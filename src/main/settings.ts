@@ -39,6 +39,8 @@ export interface FolderSetting {
   project: string;
   /** 在本機啟動網站用的連接埠（每個資料夾不同，才能同時跑） */
   port?: number;
+  /** 退役：不再分給新的卡片（例如你自己也在用的資料夾），已經在裡面的卡片照常做完 */
+  retired?: boolean;
 }
 
 export interface Settings {
@@ -118,7 +120,8 @@ projects:
     startCommand: npm start
     prTargets: [version/0.0.1, master, dev]
 
-# 固定的專案資料夾：一個資料夾同時只做一張單；port 是在本機啟動網站用的連接埠
+# 固定的專案資料夾：一個資料夾同時只做一張單；port 是在本機啟動網站用的連接埠。
+# retired: true 是退役：不再分給新的卡片，已經在裡面的卡片照常做完
 folders:
   - name: PlatformWeb
     path: ~/Desktop/Project/PlatformWeb

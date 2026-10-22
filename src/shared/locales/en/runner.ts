@@ -175,6 +175,12 @@ const en: Record<string, string> = {
   // 先交付、繼續修、完成
   'AI 還在執行，請先等它停下來（或中斷）': 'The AI is still running. Wait for it to stop (or interrupt it) first.',
   '這張單沒有在用資料夾': 'This ticket is not using a folder',
+  '{folder} 現在在 {current}，有 {count} 個沒提交的改動（{files}{more}）：這些是 {current} 的改動，先提交或捨棄，再切回這張單的分支': '{folder} is on {current} with {count} uncommitted changes ({files}{more}). They belong to {current}: commit or discard them first, then switch back to this ticket\'s branch',
+  '資料夾 {folder} 現在在 {current}，不是這張單的分支 {branch}；先切回來才能繼續': 'Folder {folder} is on {current}, not this ticket\'s branch {branch}. Switch back before continuing',
+  '已切回 {branch}': 'Switched back to {branch}',
+  '從 {from} 搬到 {folder} 繼續（{from} 不再動）': 'Moved from {from} to {folder} ({from} is left alone)',
+  '{branch} 只在退役的資料夾 {folders}，遠端還沒有：先在那裡推送，再按「重試」': '{branch} only exists in the retired folder {folders} and not on the remote yet. Push it there first, then press "Retry"',
+  '設定檔裡沒有資料夾「{folder}」': 'No folder named "{folder}" in the settings file',
   '測試都勾完了，直接「完成這張單」就好': 'All tests are checked. Just use "Finish ticket".',
   '還有 {count} 個沒提交的改動（{files}{more}），先提交再交付': '{count} changes are not committed yet ({files}{more}). Commit them before handing off.',
   '先交付了，待補測 {count} 項；要修時按「繼續修」': 'Handed off with {count} tests still to do. Press "Keep fixing" when you want to fix it.',

@@ -103,6 +103,7 @@ const en: Record<string, string> = {
   '（不在分支上）': '(not on a branch)',
   'AI 改了 {count} 個檔案': 'AI changed {count} files',
   '還沒提交的改動（{count} 個檔案）': 'Uncommitted changes ({count} files)',
+  '資料夾裡沒提交的改動（{count} 個檔案，在 {current} 上，不是這張單的）': 'Uncommitted changes in the folder ({count} files, on {current}, not this ticket\'s)',
   '這條分支的提交（{count} 個）': 'Commits on this branch ({count})',
   這條分支的提交: 'Commits on this branch',
   '跟 {base} 比': 'compared with {base}',

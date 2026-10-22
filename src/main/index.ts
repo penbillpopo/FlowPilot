@@ -720,7 +720,7 @@ function registerIpc() {
   });
   ipcMain.handle('git:state', async (_event, id: number) => {
     const { item, folder } = folderOf(id);
-    return { ...(await gitState(folder.path, item.baseBranch)), identities: loadSettings(settingsFile).gitIdentities };
+    return { ...(await gitState(folder.path, item.baseBranch)), identities: loadSettings(settingsFile).gitIdentities, retired: !!folder.retired };
   });
   ipcMain.handle('git:diff', (_event, id: number, path: string, staged: boolean) => fileDiff(folderOf(id).folder.path, path, staged));
   ipcMain.handle('git:stage', (_event, id: number, paths: string[]) => stage(folderOf(id).folder.path, paths));
@@ -797,6 +797,8 @@ function registerIpc() {
   ipcMain.handle('item:port', (_event, id: number) => runner.port(id));
   ipcMain.handle('item:park', (_event, id: number) => runner.park(id));
   ipcMain.handle('item:resume', (_event, id: number) => runner.resume(id));
+  ipcMain.handle('item:switchBack', (_event, id: number) => runner.switchBack(id));
+  ipcMain.handle('item:relocate', (_event, id: number) => runner.relocate(id));
 }
 
 // 盟軍外觀的提示音、語音：AI 做完時你可能沒在點畫面，也要能播

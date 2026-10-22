@@ -478,6 +478,33 @@ export function ChatPanel({ item }: { item: WorkItem }) {
   // 交付：標題列的主要按鈕照進度變成「提交 → 推送 → 完成這張單」
   const { state: git } = useGitState(item, active && !!item.threadId);
   const delivery = deliveryOf(item, git);
+  // 資料夾被切到別的分支（例如你在 VS Code 切走了）：整張卡片鎖住，主要按鈕變成切回（退役的資料夾是搬走，不切你的資料夾）
+  const offBranch = active && !!item.folder && !!git && git.branch !== item.branch;
+  const fixBranch = !offBranch || !git
+    ? null
+    : git.retired
+      ? {
+          label: t('搬到 FlowPilot 的資料夾繼續'),
+          title: t('{folder} 是你自己也在用的資料夾，不切它；把這張單搬到 FlowPilot 專用的資料夾，接著原本的對話', { folder: String(item.folder) }),
+          run: () => {
+            const message =
+              t('把 {key} 搬到 FlowPilot 的資料夾繼續？', { key: item.ticketKey }) +
+              '\n\n' +
+              t('{folder} 留在 {current}，不會動到；分支 {branch} 沒推送的提交會一起帶過去，對話和驗收表照舊。', { folder: String(item.folder), current: git.branch || t('（不在任何分支）'), branch: item.branch });
+            if (window.confirm(message)) act(async () => {
+              await api.relocate(item.id);
+              gitChanged();
+            });
+          },
+        }
+      : {
+          label: t('切回 {branch}', { branch: item.branch }),
+          title: t('把資料夾 {folder} 切回這張單的分支；有沒提交的改動會先告訴你是哪些', { folder: String(item.folder) }),
+          run: () => act(async () => {
+            await api.switchBack(item.id);
+            gitChanged();
+          }),
+        };
   const canDeliver = active && !!item.folder && !!item.threadId && ['review', 'waiting'].includes(item.status) && !item.pending?.kind?.match(/approval|decision/);
   // 欠的測試：還有沒勾「我測過了」的，不能完成，只能「先交付，待補測」
   const owed = pendingChecks(item);
@@ -534,12 +561,13 @@ export function ChatPanel({ item }: { item: WorkItem }) {
     // 待補測：補測完就可以完成；要修就「繼續修」（拿資料夾）
     next = owed ? { label: t('繼續修'), title: t('拿一個空的資料夾、切回這條分支，接著原本的對話'), run: () => act(() => api.resume(item.id)) } : { label: t('完成這張單'), run: finish };
   }
+  if (fixBranch) next = fixBranch;
   // 自動測試沒測成或看不出結果時，處理好之後可以再跑一次
-  const canRerun = active && !!item.threadId && item.stage === 'manual' && ['review', 'waiting'].includes(item.status) && !item.pending && !!item.autotestResult && item.autotestResult.kind !== 'passed';
-  const canRetest = active && !!item.threadId && item.stage === 'manual' && ['review', 'waiting'].includes(item.status) && !item.pending;
+  const canRerun = active && !offBranch && !!item.threadId && item.stage === 'manual' && ['review', 'waiting'].includes(item.status) && !item.pending && !!item.autotestResult && item.autotestResult.kind !== 'passed';
+  const canRetest = active && !offBranch && !!item.threadId && item.stage === 'manual' && ['review', 'waiting'].includes(item.status) && !item.pending;
   // AI 在等你回話（問問題、被中斷、或有事要你處理）：輸入框加醒目外框
   const awaitingYou = item.status === 'waiting' && (!item.pending || item.pending.kind === 'userInput');
-  const canSend = !!item.threadId && active && !['queued', 'preparing', 'parked'].includes(item.status) && item.pending?.kind !== 'approval' && item.pending?.kind !== 'decision';
+  const canSend = !!item.threadId && active && !offBranch && !['queued', 'preparing', 'parked'].includes(item.status) && item.pending?.kind !== 'approval' && item.pending?.kind !== 'decision';
 
   return (
     <section className="chat">
@@ -613,7 +641,7 @@ export function ChatPanel({ item }: { item: WorkItem }) {
                 )}
                 {active && item.threadId && (
                   <button
-                    disabled={busy || running}
+                    disabled={busy || running || offBranch}
                     title={running ? t('AI 執行中，等它停下來再更新需求') : t('重新讀 Jira，跟上次的內容比對，請 AI 在對話裡說明有沒有變更、打算怎麼改')}
                     onClick={(e) => {
                       e.currentTarget.closest('details')?.removeAttribute('open');
@@ -627,11 +655,11 @@ export function ChatPanel({ item }: { item: WorkItem }) {
                   </button>
                 )}
                 {active && item.threadId && item.folder && <button onClick={() => act(() => api.openInVSCode(item.id))}>{t('在 VS Code 查看')}</button>}
-                {active && item.status !== 'review' && !running && item.status !== 'preparing' && item.folder && (
+                {active && !offBranch && item.status !== 'review' && !running && item.status !== 'preparing' && item.folder && (
                   <button onClick={finish} disabled={!!owed} title={owed ? t('還有 {count} 項測試沒勾，補測完才能完成', { count: owed }) : undefined}>{t('完成這張單')}</button>
                 )}
                 {/* 還有沒測的項目時：可以不補測直接完成（平常的按鈕照舊要測完；沒測的記在驗收表上） */}
-                {!!owed && !running && item.status !== 'preparing' && ['review', 'waiting', 'parked'].includes(item.status) && (
+                {!!owed && !offBranch && !running && item.status !== 'preparing' && ['review', 'waiting', 'parked'].includes(item.status) && (
                   <button
                     disabled={busy}
                     title={t('不補測直接完成這張單；還沒測的項目會記在驗收表上')}
@@ -685,6 +713,14 @@ export function ChatPanel({ item }: { item: WorkItem }) {
           {item.threadId && <Stages item={item} delivering={!!delivery?.delivering} />}
         </div>
       </div>
+      {offBranch && git && (
+        <div className="error branch-off">
+          {t('資料夾 {folder} 現在在 {current}，不是這張單的分支 {branch}。', { folder: String(item.folder), current: git.branch || t('（不在任何分支）'), branch: item.branch })}
+          {git.retired
+            ? t('這是你自己也在用的資料夾，FlowPilot 不切它：按上方的「搬到 FlowPilot 的資料夾繼續」。')
+            : t('切回來之前不能跟 AI 說話、測試或完成：按上方的「切回」。')}
+        </div>
+      )}
 
       <div
         className="chat-scroll"

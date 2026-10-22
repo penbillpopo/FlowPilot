@@ -28,7 +28,7 @@ import {
   switchToRemoteBranch,
 } from '../git';
 import { deriveBranches, fill, seqOf, withSeq } from '../planner/rules';
-import type { Settings } from '../settings';
+import type { FolderSetting, Settings } from '../settings';
 import { FINISHED, OCCUPYING, type StoredWorkItem, type Store } from '../store';
 import type { VSCode } from '../vscode';
 import { pickFolder } from './allocate';
@@ -279,6 +279,16 @@ function short(text: string, max = 120) {
 }
 
 /** 在資料夾裡用登入 shell 執行（拿得到 nvm 的 node／npm） */
+/** 讀 .git/HEAD 看資料夾在哪條分支（不開 git 程序：每次叫 AI 做事前都要看）；不在分支上回空字串，讀不到回 null */
+function headBranch(cwd: string): string | null {
+  try {
+    const head = readFileSync(join(cwd, '.git', 'HEAD'), 'utf8').trim();
+    return /^ref: refs\/heads\/(.+)$/.exec(head)?.[1] ?? '';
+  } catch {
+    return null;
+  }
+}
+
 function shell(cwd: string, command: string, timeoutMs: number): Promise<void> {
   return new Promise((resolve, reject) => {
     const env = { ...process.env };
@@ -485,7 +495,19 @@ export class Runner {
         this.update(next.id, { status: 'blocked', activity: t('設定檔裡沒有「{project}」的規則', { project: next.project }) });
         continue;
       }
-      const projectFolders = settings.folders.filter((f) => f.project === next.project);
+      // 退役的資料夾不再分給新的卡片
+      const projectFolders = settings.folders.filter((f) => f.project === next.project && !f.retired);
+      // 分支只在退役資料夾的本機、遠端又沒有：在新資料夾開工會漏掉那些提交，先請你推送
+      const stranded: FolderSetting[] = [];
+      for (const f of settings.folders.filter((x) => x.project === next.project && x.retired)) if (await localBranchExists(f.path, next.branch).catch(() => false)) stranded.push(f);
+      if (stranded.length && !(await remoteBranchExists(stranded[0].path, next.branch).catch(() => false))) {
+        let usable = false;
+        for (const f of projectFolders) if (await localBranchExists(f.path, next.branch).catch(() => false)) usable = true;
+        if (!usable) {
+          this.update(next.id, { status: 'blocked', activity: t('{branch} 只在退役的資料夾 {folders}，遠端還沒有：先在那裡推送，再按「重試」', { branch: next.branch, folders: stranded.map((f) => f.name).join(t('、')) }) });
+          continue;
+        }
+      }
 
       // 分支已經存在於某個資料夾：之前的提交只在那裡，一定要用那個資料夾
       const holding: string[] = [];
@@ -1477,6 +1499,7 @@ export class Runner {
     const { codex } = this.deps;
     let item = this.deps.store.getWorkItem(id)!;
     if (!item.threadId) throw new Error(t('這張單還沒有 AI 對話'));
+    this.assertOnBranch(item);
     if (this.handingOff.has(id)) throw new Error(t('對話太長，FlowPilot 正在整理重點、換新對話，大約一分鐘，好了再說'));
     await codex.start();
     // 要開新的一輪、對話卻已經太長（例如自動叫它繼續、或上一輪結束時沒換成）：先換新對話，再把這句交給新對話
@@ -1587,32 +1610,7 @@ export class Runner {
     const reopening = item.status === 'committed';
     // 這條分支已經在別張卡片上開發（例如從單列表再次開發），不要兩張卡片搶同一條分支
     if (reopening && this.deps.store.activeWorkItem(item.project, item.branch)) throw new Error(t('{branch} 已經有另一張卡片在作戰中，到那張繼續就好', { branch: item.branch }));
-    const settings = this.deps.settings();
-    const folders = settings.folders.filter((f) => f.project === item.project);
-    const items = this.deps.store.listWorkItems();
-    const owner = (name: string) => items.find((i) => i.folder === name && OCCUPYING.includes(i.status));
-    const free = folders.filter((f) => !owner(f.name));
-    if (!free.length) {
-      throw new Error(
-        t('{project} 的資料夾都在用（{busy}），等其中一張完成或先交付再繼續修', {
-          project: item.project,
-          busy: folders.map((f) => t('{folder} 在做 {ticket}', { folder: f.name, ticket: owner(f.name)!.ticketKey })).join(t('、')),
-        }),
-      );
-    }
-    // 原本有這條分支的資料夾優先（不用再抓、也保留本機才有的提交）
-    let folder = free[0];
-    for (const f of free) if (await localBranchExists(f.path, item.branch).catch(() => false)) { folder = f; break; }
-    const cwd = folder.path;
-    if ((await currentBranch(cwd)) !== item.branch) {
-      for (const file of (await dirtyFiles(cwd)).filter(isEnvironmentFile)) await runGit(cwd, ['restore', '--staged', '--worktree', '--', file]);
-      const dirty = await dirtyFiles(cwd);
-      if (dirty.length) throw new Error(t('{folder} 有沒提交的修改（{files}），請先處理', { folder: folder.name, files: dirty.slice(0, 3).join(t('、')) }));
-      await fetchOrigin(cwd).catch(() => {});
-      if (await localBranchExists(cwd, item.branch)) await switchBranch(cwd, item.branch);
-      else if (await remoteBranchExists(cwd, item.branch)) await switchToRemoteBranch(cwd, item.branch);
-      else throw new Error(t('找不到 {branch}：{folder} 本機和遠端都沒有，原本做的資料夾可能已經刪掉了', { branch: item.branch, folder: folder.name }));
-    }
+    const folder = await this.claimFolder(item);
     this.update(id, {
       status: 'review',
       lane: 'development',
@@ -1625,6 +1623,111 @@ export class Runner {
     await this.schedule();
   }
 
+  /**
+   * 拿一個空的資料夾給這張單、切到它的分支（繼續修、退回作戰中、搬離退役資料夾共用）。退役的資料夾不拿。
+   * 原本有這條分支的資料夾優先；資料夾都在用就不動，告訴你哪張單在用——不會去搶別張單的資料夾。
+   */
+  private async claimFolder(item: StoredWorkItem): Promise<FolderSetting> {
+    const folders = this.deps.settings().folders.filter((f) => f.project === item.project && !f.retired);
+    const items = this.deps.store.listWorkItems();
+    const owner = (name: string) => items.find((i) => i.id !== item.id && i.folder === name && OCCUPYING.includes(i.status));
+    const free = folders.filter((f) => !owner(f.name));
+    if (!free.length) {
+      throw new Error(
+        t('{project} 的資料夾都在用（{busy}），等其中一張完成或先交付再繼續修', {
+          project: item.project,
+          busy: folders.map((f) => t('{folder} 在做 {ticket}', { folder: f.name, ticket: owner(f.name)!.ticketKey })).join(t('、')),
+        }),
+      );
+    }
+    let folder = free[0];
+    for (const f of free) if (await localBranchExists(f.path, item.branch).catch(() => false)) { folder = f; break; }
+    await this.checkoutTaskBranch(item, folder);
+    return folder;
+  }
+
+  /**
+   * 把資料夾切到這張單的分支。environment.ts 先還原；其他沒提交的改動不動，告訴你是哪些、請你先處理。
+   * 這個資料夾沒有這條本機分支時：別的資料夾（例如退役的）有就直接從那裡抓過來（沒推送的提交也帶得到），再不然用遠端的。
+   * 切完套件不同就重新安裝。
+   */
+  private async checkoutTaskBranch(item: StoredWorkItem, folder: FolderSetting) {
+    const cwd = folder.path;
+    const here = await currentBranch(cwd);
+    if (here === item.branch) return;
+    for (const file of (await dirtyFiles(cwd)).filter(isEnvironmentFile)) await runGit(cwd, ['restore', '--staged', '--worktree', '--', file]);
+    const dirty = await dirtyFiles(cwd);
+    if (dirty.length) {
+      throw new Error(
+        t('{folder} 現在在 {current}，有 {count} 個沒提交的改動（{files}{more}）：這些是 {current} 的改動，先提交或捨棄，再切回這張單的分支', {
+          folder: folder.name,
+          current: here || t('（不在任何分支）'),
+          count: dirty.length,
+          files: dirty.slice(0, 3).join(t('、')),
+          more: dirty.length > 3 ? t(' 等') : '',
+        }),
+      );
+    }
+    const lockBefore = await fileHash(cwd, 'package-lock.json');
+    await fetchOrigin(cwd).catch(() => {});
+    if (await localBranchExists(cwd, item.branch)) await switchBranch(cwd, item.branch);
+    else if (await this.fetchFromOtherFolder(item, cwd)) await switchBranch(cwd, item.branch);
+    else if (await remoteBranchExists(cwd, item.branch)) await switchToRemoteBranch(cwd, item.branch);
+    else throw new Error(t('找不到 {branch}：{folder} 本機和遠端都沒有，原本做的資料夾可能已經刪掉了', { branch: item.branch, folder: folder.name }));
+    await this.reinstallIfNeeded(item, cwd, lockBefore);
+  }
+
+  /** 同專案別的資料夾有這條本機分支：直接抓過來變成這裡的本機分支（不經過遠端，沒推送的提交也帶得到） */
+  private async fetchFromOtherFolder(item: StoredWorkItem, cwd: string): Promise<boolean> {
+    for (const f of this.deps.settings().folders.filter((x) => x.path !== cwd && x.project === item.project)) {
+      if (!(await localBranchExists(f.path, item.branch).catch(() => false))) continue;
+      if ((await runGit(cwd, ['fetch', f.path, `+refs/heads/${item.branch}:refs/heads/${item.branch}`])).code === 0) return true;
+    }
+    return false;
+  }
+
+  private async reinstallIfNeeded(item: StoredWorkItem, cwd: string, lockBefore: string | null) {
+    if (!existsSync(join(cwd, 'package.json'))) return;
+    if (lockBefore === (await fileHash(cwd, 'package-lock.json')) && existsSync(join(cwd, 'node_modules'))) return;
+    this.update(item.id, { activity: t('套件不同，安裝套件中（npm install，可能要幾分鐘）') });
+    await shell(cwd, 'npm install', 20 * 60_000);
+  }
+
+  /** 資料夾不在這張單的分支上（例如你在 VS Code 切走了）：叫 AI 做事、完成這張單之前都要擋下來，免得改到別條分支 */
+  private assertOnBranch(item: StoredWorkItem) {
+    if (!item.folder) return;
+    const here = headBranch(this.folderPath(item.folder));
+    if (here === null) return; // 讀不到：看不出來，不擋
+    if (here !== item.branch) {
+      throw new Error(t('資料夾 {folder} 現在在 {current}，不是這張單的分支 {branch}；先切回來才能繼續', { folder: item.folder, current: here || t('（不在任何分支）'), branch: item.branch }));
+    }
+  }
+
+  /** 資料夾被切到別的分支：切回這張單的分支（只用在 FlowPilot 自己的資料夾；退役的資料夾用「搬到 FlowPilot 的資料夾」） */
+  async switchBack(id: number) {
+    const item = this.deps.store.getWorkItem(id)!;
+    if (!item.folder) throw new Error(t('這張單沒有在用資料夾'));
+    if (['running', 'preparing'].includes(item.status)) throw new Error(t('AI 還在執行，請先等它停下來（或中斷）'));
+    const folder = this.deps.settings().folders.find((f) => f.name === item.folder);
+    if (!folder) throw new Error(t('設定檔裡沒有資料夾「{folder}」', { folder: item.folder }));
+    await this.checkoutTaskBranch(item, folder);
+    this.update(id, { activity: t('已切回 {branch}', { branch: item.branch }) });
+  }
+
+  /**
+   * 卡片在退役的資料夾（你自己也在用的），而且被你切到別的分支了：搬到 FlowPilot 的資料夾繼續，不動你的資料夾。
+   * 分支沒推送的提交直接從原本的資料夾抓過來；對話、驗收表都照舊。
+   */
+  async relocate(id: number) {
+    const item = this.deps.store.getWorkItem(id)!;
+    if (!item.folder) throw new Error(t('這張單沒有在用資料夾'));
+    if (['running', 'preparing'].includes(item.status)) throw new Error(t('AI 還在執行，請先等它停下來（或中斷）'));
+    const from = item.folder;
+    const folder = await this.claimFolder(item);
+    this.deps.stopSite?.(from);
+    this.update(id, { folder: folder.name, activity: t('從 {from} 搬到 {folder} 繼續（{from} 不再動）', { from, folder: folder.name }) });
+  }
+
   // ---- 完成 ----
 
   /**
@@ -1635,6 +1738,7 @@ export class Runner {
   async finish(id: number, restoreEnvironment: boolean, skipTests = false) {
     const item = this.deps.store.getWorkItem(id)!;
     if (['running', 'preparing'].includes(item.status)) throw new Error(t('AI 還在執行，請先等它停下來（或中斷）'));
+    this.assertOnBranch(item);
     // 欠的測試要補完才能完成（可以先「先交付，待補測」讓出資料夾）
     const owed = pendingTests(item.testReport);
     if (owed && !skipTests) throw new Error(t('還有 {count} 項測試沒勾「我測過了」，補測完才能完成；要先讓出資料夾，按「先交付，待補測」', { count: owed }));
@@ -1799,6 +1903,7 @@ export class Runner {
    * 對話不在 Codex 的記憶體裡時（例如 FlowPilot 重新啟動過，失敗或停止的單不會自動接回），先接回再開始。
    */
   private async startTurn(item: StoredWorkItem, input: object[]): Promise<string> {
+    this.assertOnBranch(item); // 叫 AI 做事一律經過這裡：資料夾不在這張單的分支就不開始
     const threadId = item.threadId!;
     input = withReplyLanguage(input);
     const start = () => this.deps.codex.request<{ turn: { id: string } }>('turn/start', { threadId, input });

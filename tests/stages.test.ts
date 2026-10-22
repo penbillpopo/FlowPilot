@@ -149,7 +149,7 @@ describe('流程階段', () => {
   it('修改那一輪沒改到任何檔案：不寫「改好了」；有改才寫', async () => {
     const t = setup();
     const git = (...args: string[]) => execFileSync('git', ['-c', 'user.name=t', '-c', 'user.email=t@t', ...args], { cwd: t.folder });
-    git('init', '-q');
+    git('init', '-q', '-b', 'ban/ALL-1');
     git('add', '.');
     git('commit', '-qm', 'init');
     t.store.updateWorkItem(t.id, { stage: 'manual', status: 'review' });
@@ -348,7 +348,7 @@ describe('流程階段', () => {
 
   it('完成這張單時停掉本機網站', async () => {
     const t = setup();
-    execFileSync('git', ['init', '-q'], { cwd: t.folder });
+    execFileSync('git', ['init', '-q', '-b', 'ban/ALL-1'], { cwd: t.folder });
     execFileSync('git', ['-c', 'user.name=t', '-c', 'user.email=t@t', 'add', '.'], { cwd: t.folder });
     execFileSync('git', ['-c', 'user.name=t', '-c', 'user.email=t@t', 'commit', '-qm', 'init'], { cwd: t.folder });
     t.store.updateWorkItem(t.id, { stage: 'manual', status: 'review' });

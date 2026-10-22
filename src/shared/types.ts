@@ -493,6 +493,8 @@ export interface GitState {
   identity: GitIdentity;
   /** 提交時可以選的身分（設定檔的 gitIdentities） */
   identities: GitIdentity[];
+  /** 這個資料夾退役了（你自己也在用）：被切走時改成搬到 FlowPilot 的資料夾，不切你的資料夾 */
+  retired?: boolean;
 }
 
 /** 單列表上的標記 */
@@ -680,6 +682,10 @@ export interface FlowPilotApi {
   park(itemId: number): Promise<void>;
   /** 繼續修待補測的單：拿一個空的資料夾、切回分支（資料夾都在用就失敗並說明） */
   resume(itemId: number): Promise<void>;
+  /** 資料夾被切到別的分支：切回這張單的分支 */
+  switchBack(itemId: number): Promise<void>;
+  /** 卡片在退役的資料夾、又被切到別的分支：搬到 FlowPilot 的資料夾繼續 */
+  relocate(itemId: number): Promise<void>;
   /** 多商戶的單：來源商戶完成後，移植到其他商戶（每個商戶一張新的工作），回傳建立的分支 */
   port(itemId: number): Promise<string[]>;
   /** 開瀏覽器測給我看：AI 先列測試計畫給你確認，再開有頭的瀏覽器測 */

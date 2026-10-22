@@ -109,4 +109,24 @@ describe('先交付、待補測', () => {
     expect(await u.runner.remove(u.id)).toEqual({ branchDeleted: true });
     expect(git(u.folder, 'branch', '--format=%(refname:short)')).toBe('version/0.0.1');
   });
+
+  it('已完成的單退回作戰中：切回分支、拿回資料夾，不補測的記號清掉；同一條分支已經有別張卡片在作戰中就不行', async () => {
+    const t = setup();
+    await t.runner.park(t.id);
+    await t.runner.finish(t.id, true, true);
+    git(t.folder, 'switch', '-q', 'version/0.0.1');
+    await t.runner.resume(t.id);
+    const back = t.store.getWorkItem(t.id)!;
+    expect(back).toMatchObject({ status: 'review', lane: 'development', stage: 'manual', folder: 'PlatformAdmin', threadId: 'th' });
+    expect(back.testReport?.finishedUntested).toBeUndefined();
+    expect(back.activity).toContain('退回作戰中');
+    expect(git(t.folder, 'branch', '--show-current')).toBe('ban/ALL-1');
+
+    const u = setup();
+    await u.runner.park(u.id);
+    await u.runner.finish(u.id, true, true);
+    const again = u.make('ALL-1', 'ban/ALL-1');
+    u.store.updateWorkItem(again.id, { status: 'review', folder: 'PlatformAdmin' });
+    await expect(u.runner.resume(u.id)).rejects.toThrow('已經有另一張卡片在作戰中');
+  });
 });

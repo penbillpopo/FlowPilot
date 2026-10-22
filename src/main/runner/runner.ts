@@ -1578,12 +1578,15 @@ export class Runner {
   }
 
   /**
-   * 繼續修待補測的單：拿一個資料夾（先找原本有這條分支的；被佔用就找同專案其他空的），切回分支，接著原本的對話。
+   * 繼續修待補測的單、或把已完成的單退回作戰中：拿一個資料夾（先找原本有這條分支的；被佔用就找同專案其他空的），切回分支，接著原本的對話。
    * 資料夾都在用就不動，告訴你哪張單在用——不會去搶別張單的資料夾。
    */
   async resume(id: number) {
     const item = this.deps.store.getWorkItem(id)!;
-    if (item.status !== 'parked') throw new Error(t('只有待補測的單可以繼續修'));
+    if (!['parked', 'committed'].includes(item.status)) throw new Error(t('只有待補測或已完成的單可以繼續修'));
+    const reopening = item.status === 'committed';
+    // 這條分支已經在別張卡片上開發（例如從單列表再次開發），不要兩張卡片搶同一條分支
+    if (reopening && this.deps.store.activeWorkItem(item.project, item.branch)) throw new Error(t('{branch} 已經有另一張卡片在作戰中，到那張繼續就好', { branch: item.branch }));
     const settings = this.deps.settings();
     const folders = settings.folders.filter((f) => f.project === item.project);
     const items = this.deps.store.listWorkItems();
@@ -1610,7 +1613,15 @@ export class Runner {
       else if (await remoteBranchExists(cwd, item.branch)) await switchToRemoteBranch(cwd, item.branch);
       else throw new Error(t('找不到 {branch}：{folder} 本機和遠端都沒有，原本做的資料夾可能已經刪掉了', { branch: item.branch, folder: folder.name }));
     }
-    this.update(id, { status: 'review', stage: 'manual', folder: folder.name, activity: t('繼續修（在 {folder}）：跟 AI 說要改什麼', { folder: folder.name }) });
+    this.update(id, {
+      status: 'review',
+      lane: 'development',
+      stage: 'manual',
+      folder: folder.name,
+      // 之前「直接完成（不補測）」留下的記號：退回來就是還要做，不再算已完成
+      ...(reopening && item.testReport?.finishedUntested ? { testReport: { ...item.testReport, finishedUntested: undefined } } : {}),
+      activity: reopening ? t('退回作戰中（在 {folder}）：跟 AI 說要改什麼', { folder: folder.name }) : t('繼續修（在 {folder}）：跟 AI 說要改什麼', { folder: folder.name }),
+    });
     await this.schedule();
   }
 

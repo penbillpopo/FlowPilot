@@ -645,6 +645,21 @@ export function ChatPanel({ item }: { item: WorkItem }) {
                     {t('直接完成（不補測）')}
                   </button>
                 )}
+                {/* 已完成的單發現還要改：退回作戰中，拿資料夾、切回分支、接著原本的對話 */}
+                {item.status === 'committed' && (
+                  <button
+                    disabled={busy}
+                    title={t('拿一個空的資料夾、切回這條分支，接著原本的對話')}
+                    onClick={(e) => {
+                      e.currentTarget.closest('details')?.removeAttribute('open');
+                      if (window.confirm(t('把 {key} 退回作戰中？', { key: item.ticketKey }) + '\n\n' + t('會拿一個空的資料夾、切回 {branch}，接著原本的對話繼續改；改完再完成一次。', { branch: item.branch }))) {
+                        act(() => api.resume(item.id));
+                      }
+                    }}
+                  >
+                    {t('退回作戰中')}
+                  </button>
+                )}
                 <button
                   className="danger"
                   disabled={busy}

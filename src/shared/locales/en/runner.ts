@@ -178,7 +178,8 @@ const en: Record<string, string> = {
   '測試都勾完了，直接「完成這張單」就好': 'All tests are checked. Just use "Finish ticket".',
   '還有 {count} 個沒提交的改動（{files}{more}），先提交再交付': '{count} changes are not committed yet ({files}{more}). Commit them before handing off.',
   '先交付了，待補測 {count} 項；要修時按「繼續修」': 'Handed off with {count} tests still to do. Press "Keep fixing" when you want to fix it.',
-  '只有待補測的單可以繼續修': 'Only tickets with tests still to do can be fixed further',
+  '只有待補測或已完成的單可以繼續修': 'Only tickets with tests still to do, or done tickets, can be fixed further',
+  '{branch} 已經有另一張卡片在作戰中，到那張繼續就好': 'Another card is already in progress on {branch}; continue there',
   '{project} 的資料夾都在用（{busy}），等其中一張完成或先交付再繼續修':
     'All {project} folders are in use ({busy}). Wait until one of those tickets is finished or handed off, then continue fixing.',
   '{folder} 在做 {ticket}': '{folder} is on {ticket}',
@@ -186,6 +187,7 @@ const en: Record<string, string> = {
   '找不到 {branch}：{folder} 本機和遠端都沒有，原本做的資料夾可能已經刪掉了':
     "Can't find {branch}: it's neither in {folder} nor on the remote. The original folder may have been deleted.",
   '繼續修（在 {folder}）：跟 AI 說要改什麼': 'Keep fixing (in {folder}): tell the AI what to change',
+  '退回作戰中（在 {folder}）：跟 AI 說要改什麼': 'Moved back to In Progress (in {folder}): tell the AI what to change',
   '還有 {count} 項測試沒勾「我測過了」，補測完才能完成；要先讓出資料夾，按「先交付，待補測」':
     '{count} tests are not marked "I tested this" yet. Finish them before completing; to free the folder now, press "Deliver now, test later".',
   '還有 {count} 個未提交的修改（{files}{more}），請先提交或捨棄': '{count} changes are not committed yet ({files}{more}). Commit or discard them first.',

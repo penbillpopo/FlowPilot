@@ -124,6 +124,7 @@ const api: FlowPilotApi = {
     changedFiles: (id) => ipcRenderer.invoke('test:changedFiles', id),
     exportCsv: (id) => ipcRenderer.invoke('test:exportCsv', id),
     openPage: (id, page) => ipcRenderer.invoke('test:openPage', id, page),
+    shot: (name) => ipcRenderer.invoke('test:shot', name),
   },
 };
 

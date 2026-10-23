@@ -282,8 +282,16 @@ export interface TestReport {
 
 export interface AcceptanceItem {
   no: number;
-  /** 預期結果的內容 */
+  /** 預期結果的內容：照抄 Jira 的原文（你對著單子測時對得上） */
   text: string;
+  /** Jira 沒寫預期結果，這一條是 AI 自己整理的 */
+  fromAi?: boolean;
+  /** 給你測的三行白話步驟：打開哪裡、做什麼、應該看到什麼 */
+  open?: string;
+  act?: string;
+  expect?: string;
+  /** AI 測試時這一條的截圖（存在瀏覽器測試紀錄資料夾的檔名），「應該長這樣」 */
+  shot?: string;
   /** AI 的測試結果 */
   result: '通過' | '沒過' | '沒測';
   /** 證據或原因 */
@@ -725,6 +733,8 @@ export interface FlowPilotApi {
     exportCsv(itemId: number): Promise<string | null>;
     /** 在你的瀏覽器打開本機網站的某一頁（網站沒開會先啟動） */
     openPage(itemId: number, page: string): Promise<void>;
+    /** 驗收截圖（瀏覽器測試紀錄資料夾裡的檔名）轉成可以顯示的圖；找不到是 null */
+    shot(name: string): Promise<string | null>;
     /** 關掉瀏覽器測試開出來的瀏覽器（不會關到你自己的 Chrome），回傳關掉幾個 */
     closeBrowsers(): Promise<number>;
   };

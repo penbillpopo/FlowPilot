@@ -72,6 +72,11 @@ export function parseTestReport(message: string, previous: TestReport | null = n
         impact: /^(沒有|無|none)?$/i.test(text(a?.impact)) ? '' : text(a?.impact),
         howToTest: text(a?.howToTest),
         page: text(a?.page),
+        ...(a?.fromAi === true ? { fromAi: true } : {}),
+        ...(text(a?.open) ? { open: text(a?.open) } : {}),
+        ...(text(a?.act) ? { act: text(a?.act) } : {}),
+        ...(text(a?.expect) ? { expect: text(a?.expect) } : {}),
+        ...(/^[\w.\-]+\.(png|jpe?g)$/i.test(text(a?.shot)) ? { shot: text(a?.shot) } : {}),
         needYou: a?.needYou === true,
       };
       const old = before.get(item.no);

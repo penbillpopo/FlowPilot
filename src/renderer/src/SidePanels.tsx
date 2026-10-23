@@ -3,7 +3,7 @@ import { FitAddon } from '@xterm/addon-fit';
 import { Terminal } from '@xterm/xterm';
 import '@xterm/xterm/css/xterm.css';
 import { useEffect, useRef, useState } from 'react';
-import type { BranchCommits, Env, GitFile, TestState, WorkItem } from '../../shared/types';
+import type { AcceptanceItem, BranchCommits, Env, GitFile, TestState, WorkItem } from '../../shared/types';
 import { errorText } from './ChatPanel';
 import { DiffView } from './DiffView';
 import { needsYou, unexplainedFiles } from '../../shared/acceptance';
@@ -59,6 +59,69 @@ export function AcceptancePanel({ item }: { item: WorkItem }) {
   const forYou = report.acceptance.filter(needsYou);
   const left = forYou.filter((a) => !a.checked).length;
 
+  /** 一條驗收：標題照 Jira 原文；打開／做／應該看到三行；AI 測試時的截圖；開發資訊另外摺起來 */
+  function renderItem(a: AcceptanceItem, mine: boolean) {
+    const expanded = open.has(a.no) || (mine && !a.checked);
+    const badge = a.result === zhOnly('沒過') ? { text: t('沒過'), cls: 'bad' } : mine ? { text: a.checked ? t('你測過了') : t('要你測'), cls: a.checked ? 'ok' : 'you' } : { text: t('AI 測過'), cls: 'ok' };
+    const toggle = () => setOpen((prev) => {
+      const next = new Set(prev);
+      expanded ? next.delete(a.no) : next.add(a.no);
+      return next;
+    });
+    const steps = a.open || a.act || a.expect;
+    const devInfo = a.change || a.why || a.files.length > 0 || a.impact || a.note;
+    return (
+      <li key={a.no} className={`ac-item ${mine && !a.checked ? 'mine' : 'quiet'}`}>
+        <button className="ac-head" onClick={toggle} title={expanded ? t('收起') : t('展開')}>
+          <span className={`ac-badge ${badge.cls}`}>{badge.text}</span>
+          <span className="ac-title">{a.no}. {a.text}</span>
+          {a.fromAi && <span className="ac-from-ai" title={t('Jira 沒寫預期結果，這一條是 AI 整理的')}>{t('AI 整理')}</span>}
+          {a.changed && <span className="ac-new" title={t('這次修改或重測後內容有變，要重新看')}>{t('有變動')}</span>}
+        </button>
+        {expanded && (
+          <div className="ac-body">
+            {steps ? (
+              <ol className="ac-steps">
+                {a.open && <li><span className="ac-label">{t('打開')}</span>{a.open}</li>}
+                {a.act && <li><span className="ac-label">{t('做')}</span>{a.act}</li>}
+                {a.expect && <li><span className="ac-label">{t('應該看到')}</span>{a.expect}</li>}
+              </ol>
+            ) : (
+              a.howToTest && <p className="ac-how"><span className="ac-label">{t('怎麼測')}</span>{a.howToTest}</p>
+            )}
+            {a.shot && <AcceptanceShot name={a.shot} />}
+            <div className="ac-actions">
+              {mine && (
+                <label>
+                  <input type="checkbox" checked={a.checked} onChange={(e) => run(() => api.test.setChecked(item.id, a.no, e.target.checked))} />
+                  {t('我測過了')}
+                </label>
+              )}
+              {a.page && !/\/:/.test(a.page) && item.folder && (
+                <button className="link small" title={t('在你的瀏覽器打開本機網站這一頁（網站沒開會先啟動）')} onClick={() => run(() => api.test.openPage(item.id, a.page))}>
+                  {t('打開這頁')}
+                </button>
+              )}
+              <button className="link small" title={t('這一條有問題？在輸入框帶入，跟 AI 說要怎麼改')} onClick={() => askAI(t('驗收第 {no} 條（{text}）：', { no: a.no, text: a.text }))}>
+                {t('不對，跟 AI 說')}
+              </button>
+            </div>
+            {devInfo && (
+              <details className="ac-dev">
+                <summary>{t('開發資訊')}</summary>
+                {a.change && <p><span className="ac-label">{t('改了')}</span>{a.change}</p>}
+                {a.why && <p><span className="ac-label">{t('為什麼')}</span>{a.why}</p>}
+                {a.files.length > 0 && <p title={a.files.join('\n')}><span className="ac-label">{t('改在')}</span>{a.files.map(fileName).join(t('、'))}</p>}
+                {a.impact && <p><span className="ac-label">{t('也影響')}</span>{a.impact}</p>}
+                {a.note && <p className="muted small"><span className="ac-label">{t('AI 測試')}</span>{a.result}{t('：')}{a.note}</p>}
+              </details>
+            )}
+          </div>
+        )}
+      </li>
+    );
+  }
+
   return (
     <div className="panel acceptance-panel">
       <div className="ac-summary">
@@ -83,55 +146,16 @@ export function AcceptancePanel({ item }: { item: WorkItem }) {
         </div>
       )}
 
+      {/* 要你測的排前面，做成三行步驟的卡片；AI 已經測過的收起來，要看再展開 */}
       <ul className="ac-list">
-        {report.acceptance.map((a) => {
-          const mine = needsYou(a);
-          const expanded = open.has(a.no) || (mine && !a.checked && detailed);
-          const badge = a.result === zhOnly('沒過') ? { text: t('沒過'), cls: 'bad' } : mine ? { text: a.checked ? t('你測過了') : t('要你測'), cls: a.checked ? 'ok' : 'you' } : { text: t('AI 測過'), cls: 'ok' };
-          const toggle = () => setOpen((prev) => {
-            const next = new Set(prev);
-            expanded ? next.delete(a.no) : next.add(a.no);
-            return next;
-          });
-          return (
-            <li key={a.no} className={`ac-item ${mine && !a.checked ? 'mine' : 'quiet'}`}>
-              <button className="ac-head" onClick={toggle} title={expanded ? t('收起') : t('展開')}>
-                <span className={`ac-badge ${badge.cls}`}>{badge.text}</span>
-                <span className="ac-title">{a.no}. {a.text}</span>
-                {a.changed && <span className="ac-new" title={t('這次修改或重測後內容有變，要重新看')}>{t('有變動')}</span>}
-              </button>
-              {expanded && (
-                <div className="ac-body">
-                  {a.change && <p><span className="ac-label">{t('改了')}</span>{a.change}</p>}
-                  {a.why && <p><span className="ac-label">{t('為什麼')}</span>{a.why}</p>}
-                  {a.files.length > 0 && (
-                    <p title={a.files.join('\n')}><span className="ac-label">{t('改在')}</span>{a.files.map(fileName).join(t('、'))}</p>
-                  )}
-                  <p><span className="ac-label">{t('也影響')}</span>{a.impact || (detailed ? t('沒有') : '—')}</p>
-                  {a.howToTest && <p className="ac-how"><span className="ac-label">{t('怎麼測')}</span>{a.howToTest}</p>}
-                  {a.note && <p className="muted small"><span className="ac-label">{t('AI 測試')}</span>{a.result}{t('：')}{a.note}</p>}
-                  <div className="ac-actions">
-                    {mine && (
-                      <label>
-                        <input type="checkbox" checked={a.checked} onChange={(e) => run(() => api.test.setChecked(item.id, a.no, e.target.checked))} />
-                        {t('我測過了')}
-                      </label>
-                    )}
-                    {a.page && !/\/:/.test(a.page) && item.folder && (
-                      <button className="link small" title={t('在你的瀏覽器打開本機網站這一頁（網站沒開會先啟動）')} onClick={() => run(() => api.test.openPage(item.id, a.page))}>
-                        {t('打開這頁')}
-                      </button>
-                    )}
-                    <button className="link small" title={t('這一條有問題？在輸入框帶入，跟 AI 說要怎麼改')} onClick={() => askAI(t('驗收第 {no} 條（{text}）：', { no: a.no, text: a.text }))}>
-                      {t('跟 AI 說')}
-                    </button>
-                  </div>
-                </div>
-              )}
-            </li>
-          );
-        })}
+        {report.acceptance.filter((a) => needsYou(a)).map((a) => renderItem(a, true))}
       </ul>
+      {report.acceptance.some((a) => !needsYou(a)) && (
+        <details className="ac-ai-tested">
+          <summary>{t('AI 測過的（{count}）', { count: report.acceptance.filter((a) => !needsYou(a)).length })}</summary>
+          <ul className="ac-list">{report.acceptance.filter((a) => !needsYou(a)).map((a) => renderItem(a, false))}</ul>
+        </details>
+      )}
 
       {report.otherChanges.length > 0 && (
         <>
@@ -650,3 +674,23 @@ export function BranchCommitsPanel({ item, refreshKey }: { item: WorkItem; refre
 // i18n-keys：顯示時才翻
 const CHANGE_LABEL: Record<string, string> = { M: '修改', A: '新增', U: '新增', D: '刪除', R: '改名', C: '複製' };
 
+
+/** 驗收截圖：AI 測試時截的「應該長這樣」，點一下放大 */
+function AcceptanceShot({ name }: { name: string }) {
+  const [src, setSrc] = useState<string | null>(null);
+  const [big, setBig] = useState(false);
+  useEffect(() => {
+    let alive = true;
+    api.test.shot(name).then((url) => alive && setSrc(url)).catch(() => {});
+    return () => {
+      alive = false;
+    };
+  }, [name]);
+  if (!src) return null;
+  return (
+    <figure className={`ac-shot ${big ? 'big' : ''}`} onClick={() => setBig(!big)} title={big ? t('縮小') : t('放大')}>
+      <img src={src} alt={t('應該長這樣')} />
+      <figcaption className="muted small">{t('AI 測試時的畫面（應該長這樣）')}</figcaption>
+    </figure>
+  );
+}

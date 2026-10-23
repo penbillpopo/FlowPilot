@@ -111,6 +111,16 @@ describe('測試報告', () => {
     expect(next.otherChanges.map((c) => c.change)).toEqual(['順便修了樣式']);
   });
 
+  it('驗收卡片的欄位：三行步驟、AI 整理標記、截圖檔名（帶路徑的不收）', () => {
+    const r = parseTestReport(block({ acceptance: [
+      { no: 1, text: 'Jira 原文', open: '打開個人資料頁', act: '點設定', expect: '看到隱身模式是開的', shot: 'ac-ALL-1-1.png', fromAi: true, result: '通過', needYou: false },
+      { no: 2, text: 'B', shot: '../../secret.png', result: '沒測', needYou: true },
+    ] }))!;
+    expect(r.acceptance[0]).toMatchObject({ open: '打開個人資料頁', act: '點設定', expect: '看到隱身模式是開的', shot: 'ac-ALL-1-1.png', fromAi: true });
+    expect(r.acceptance[1].shot).toBeUndefined();
+    expect(r.acceptance[1].fromAi).toBeUndefined();
+  });
+
   it('沒有報告或格式不對就是 null', () => {
     expect(parseTestReport('測試結果：通過')).toBeNull();
     expect(parseTestReport('```flowpilot-test\n{壞掉的 JSON\n```')).toBeNull();

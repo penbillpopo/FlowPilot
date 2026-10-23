@@ -784,6 +784,13 @@ function registerIpc() {
     shell.showItemInFolder(target.filePath);
     return target.filePath;
   });
+  // 驗收截圖：只讀瀏覽器測試紀錄資料夾裡的圖片（檔名不能帶路徑）
+  ipcMain.handle('test:shot', (_event, name: string) => {
+    if (!/^[\w.\-]+\.(png|jpe?g)$/i.test(name)) return null;
+    const file = join(dataDir, '瀏覽器測試紀錄', name);
+    if (!existsSync(file)) return null;
+    return `data:image/${/png$/i.test(name) ? 'png' : 'jpeg'};base64,${readFileSync(file).toString('base64')}`;
+  });
   ipcMain.handle('test:openPage', async (_event, id: number, page: string) => {
     await openInChrome(await runner.pageUrl(id, String(page ?? '')));
   });

@@ -593,3 +593,17 @@ td.time { white-space: nowrap; }
 .ac-untested { margin: 4px 0 8px; padding: 6px 10px; border: 1px solid #e0a030; border-radius: 6px; color: #e0a030; }
 /* 標題下面那行的分支名稱不斷行（ban/m10/ALL-14796 不要在斜線處拆開） */
 .head-meta code { white-space: nowrap; }
+
+/* 驗收卡片：三行步驟、AI 截圖、開發資訊摺疊、AI 測過的收起來 */
+.ac-steps { margin: 4px 0; padding-left: 0; list-style: none; display: flex; flex-direction: column; gap: 4px; }
+.ac-steps li { display: flex; gap: 8px; align-items: baseline; }
+.ac-steps .ac-label { flex-shrink: 0; min-width: 4.5em; }
+.ac-from-ai { font-size: 11px; padding: 0 6px; border-radius: 8px; border: 1px dashed currentColor; opacity: 0.8; white-space: nowrap; flex-shrink: 0; }
+.ac-shot { margin: 6px 0; cursor: zoom-in; }
+.ac-shot img { display: block; max-width: 100%; max-height: 160px; border-radius: 6px; border: 1px solid var(--line); object-fit: contain; }
+.ac-shot.big { cursor: zoom-out; }
+.ac-shot.big img { max-height: none; }
+.ac-dev { margin-top: 6px; }
+.ac-dev > summary { cursor: pointer; font-size: 12px; color: var(--muted); }
+.ac-ai-tested { margin: 8px 0; }
+.ac-ai-tested > summary { cursor: pointer; font-size: 12px; color: var(--muted); padding: 4px 0; }

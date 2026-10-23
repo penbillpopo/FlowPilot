@@ -199,5 +199,16 @@ const en: Record<string, string> = {
   '（沒有差異內容）': '(no differences)',
   '驗收表沒說明這些檔案為什麼改：{files}。請說明，不需要的改動請還原。': "The checklist doesn't explain why these files changed: {files}. Please explain, and revert any changes that aren't needed.",
   '⚠️ 這張單是直接完成的：當時還有 {count} 項沒測': '⚠️ This ticket was finished without testing: {count} item(s) were still untested',
+  'AI 測過的（{count}）': 'Tested by AI ({count})',
+  'Jira 沒寫預期結果，這一條是 AI 整理的': 'The Jira ticket has no acceptance criteria; AI wrote this item',
+  'AI 整理': 'By AI',
+  '做': 'Do',
+  '應該看到': 'Expect',
+  '不對，跟 AI 說': 'Wrong? Tell AI',
+  '開發資訊': 'Dev details',
+  '縮小': 'Shrink',
+  '放大': 'Enlarge',
+  '應該長這樣': 'What it should look like',
+  'AI 測試時的畫面（應該長這樣）': 'Screen from the AI test (what it should look like)',
 };
 export default en;

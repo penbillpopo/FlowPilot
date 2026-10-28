@@ -19,7 +19,7 @@ import { applyDiscussion, buildCodeCheckPrompt, buildDiscussionPrompt, buildFigm
 import { deriveBranches, planProblem } from './planner/rules';
 import { loadHistory } from './chat';
 import { generateReport } from './report';
-import { generateSpec } from './planner/spec';
+import { generateSpec, specNextStep } from './planner/spec';
 import { reviewBrief } from './planner/review';
 import { getLang, type Lang, setLang, t, zhOnly } from '../shared/i18n';
 import { FolderTerminals } from './folderterminals';
@@ -298,11 +298,11 @@ function updateReview(ticketKey: string, change: (review: Review) => Review | nu
  */
 function ensureSpec(ticketKey: string, force = false): Promise<void> {
   const review = store.getReview(ticketKey)?.review;
-  if (paused || !review || !wantsSpec(review)) return Promise.resolve();
+  if (paused || !review) return Promise.resolve();
   const running = specJobs.get(ticketKey);
-  if (running && running.reviewedAt === review.reviewedAt) return running.job;
-  const current = review.spec?.reviewedAt === review.reviewedAt;
-  if (!force && current && review.spec?.status !== 'running') return Promise.resolve(); // 寫好了或失敗了（失敗要你按重試）
+  const next = specNextStep(review, running?.reviewedAt ?? null, force);
+  if (next === 'wait') return running!.job;
+  if (next === 'none') return Promise.resolve();
   const job = generateSpec({ codex, settings: () => loadSettings(settingsFile), cwd: dataDir, updateReview, log }, ticketKey).finally(() => {
     if (specJobs.get(ticketKey)?.job === job) specJobs.delete(ticketKey);
   });
@@ -677,9 +677,10 @@ function registerIpc() {
   ipcMain.handle('skills:list', () => listSkills(codex, loadSettings(settingsFile).folders[0]?.path ?? dataDir));
   ipcMain.handle('review:run', async (_event, ticket: JiraTicket, force: boolean) => {
     const review = await reviewTicket(ticket, force);
-    // 規格寫到一半 FlowPilot 重新啟動過：接著重寫（計畫表打開時會一直問進度）
-    if (!force && review.spec?.status === 'running' && !specJobs.has(ticket.key)) void ensureSpec(ticket.key, true);
-    return review;
+    // 該寫規格卻還沒寫的就開始寫：換版前就審閱好的複雜單、規格寫到一半 FlowPilot 重新啟動過。
+    // 以前只在審閱完才開始，這些單計畫表會一直顯示「準備寫規格」，其實沒在寫（正在寫的不會重複開始）
+    void ensureSpec(ticket.key);
+    return store.getReview(ticket.key)?.review ?? review;
   });
   ipcMain.handle('review:setChecks', (_event, ticketKey: string, checks: ReviewChecks) => {
     const saved = store.getReview(ticketKey);

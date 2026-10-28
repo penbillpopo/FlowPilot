@@ -1,7 +1,7 @@
 // 規格流程：寫規格 → 沒看過的 AI 審查 → 處理意見；做完後比對的處理結果。用假的 Codex，不會啟動真正的 AI。
 import { describe, expect, it } from 'vitest';
 import type { CodexRpc, RpcMessage } from '../src/main/codex/rpc';
-import { applySpecReplies, buildReviewerPrompt, buildSpecPrompt, generateSpec, resolveSchema, reviewerSchema, SPEC_REVIEWERS, specBrief, specSchema, withSpecQuestions } from '../src/main/planner/spec';
+import { applySpecReplies, specNextStep, buildReviewerPrompt, buildSpecPrompt, generateSpec, resolveSchema, reviewerSchema, SPEC_REVIEWERS, specBrief, specSchema, withSpecQuestions } from '../src/main/planner/spec';
 import { DEFAULT_SETTINGS_YAML, parseSettings } from '../src/main/settings';
 import type { Review, SpecCheck } from '../src/shared/types';
 import { specItemsForYou, wantsSpec } from '../src/shared/types';
@@ -142,6 +142,20 @@ describe('規格流程', () => {
     await generateSpec({ codex, settings: () => settings, cwd: '/data', updateReview: mem.updateReview, log: () => {} }, 'ALL-1');
     expect(mem.get().spec).toMatchObject({ status: 'failed', error: '四個審查角色都沒有完成' });
     expect(specBrief(mem.get())).toBe('');
+  });
+
+  it('什麼時候開始寫規格：還沒寫、換版前審閱好的、寫到一半重新啟動過的要寫；正在寫的等它；寫好或失敗的不動', () => {
+    const r = review();
+    expect(specNextStep(r, null)).toBe('start'); // 換版前就審閱好的複雜單：還沒有規格
+    expect(specNextStep(r, r.reviewedAt)).toBe('wait');
+    const spec = { step: '', markdown: '', findings: [], failedReviewers: 0, reviewedAt: r.reviewedAt, at: '' };
+    expect(specNextStep({ ...r, spec: { ...spec, status: 'running' } }, null)).toBe('start'); // 存著寫規格中，卻沒在寫
+    expect(specNextStep({ ...r, spec: { ...spec, status: 'done' } }, null)).toBe('none');
+    expect(specNextStep({ ...r, spec: { ...spec, status: 'failed' } }, null)).toBe('none');
+    expect(specNextStep({ ...r, spec: { ...spec, status: 'failed' } }, null, true)).toBe('start'); // 你按重試
+    expect(specNextStep({ ...r, spec: { ...spec, status: 'done', reviewedAt: '舊的審閱' } }, null)).toBe('start'); // 重新審閱過
+    expect(specNextStep({ ...r, spec: { ...spec, status: 'done', reviewedAt: '舊的審閱' } }, '舊的審閱')).toBe('start'); // 舊的在寫，不等它
+    expect(specNextStep(review({ level: '一般' }), null)).toBe('none');
   });
 
   it('重寫規格：上一版問的、你還沒回答的拿掉，回答過的留著；同樣的問題不重複', () => {

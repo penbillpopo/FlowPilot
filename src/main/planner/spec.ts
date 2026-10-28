@@ -8,6 +8,7 @@
 // 不用 Codex 的子 AI（spawn_agent）：子 AI 要求同意時 FlowPilot 認不得、兩邊互等卡住（實際卡過 20 分鐘）。
 import { t, zhOnly } from '../../shared/i18n';
 import type { Review, ReviewIssue, Spec, SpecCheck, SpecCheckItem, SpecFinding } from '../../shared/types';
+import { wantsSpec } from '../../shared/types';
 import type { CodexRpc } from '../codex/rpc';
 import { runStructured } from '../codex/structured';
 import type { Settings } from '../settings';
@@ -291,6 +292,20 @@ export async function generateSpec(deps: SpecDeps, ticketKey: string): Promise<v
 
 function emptySpec(reviewedAt: string): Spec {
   return { status: 'running', step: '', markdown: '', findings: [], failedReviewers: 0, reviewedAt, at: new Date().toISOString() };
+}
+
+/**
+ * 這張單的規格接下來要怎樣：start 開始寫、wait 等正在寫的那個、none 不用動。
+ * - 不走規格流程、或這次審閱的規格已經寫好或失敗了（失敗要你按重試，force）：不用動
+ * - 正在寫的是這次審閱的：等它（不重複開始）
+ * - 還沒寫、寫的是舊審閱的、或寫到一半 FlowPilot 重新啟動過（存著「寫規格中」卻沒在寫）：開始寫
+ */
+export function specNextStep(review: Review, runningFor: string | null, force = false): 'start' | 'wait' | 'none' {
+  if (!wantsSpec(review)) return 'none';
+  if (runningFor === review.reviewedAt) return 'wait';
+  const current = review.spec?.reviewedAt === review.reviewedAt;
+  if (!force && current && review.spec?.status !== 'running') return 'none';
+  return 'start';
 }
 
 let nextId = 0;

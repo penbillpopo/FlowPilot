@@ -613,19 +613,50 @@ export function ChatPanel({ item }: { item: WorkItem }) {
             <details className="more">
               <summary>{t('更多')}</summary>
               <div className="more-menu">
-                {canRerun && (
+                {/* 重跑自動測試：可以選用真實資料（後端要好了）或假資料（後端還沒好，AI 自己產生假的 API 回應） */}
+                {(canRerun || canRetest) && (
+                  <>
+                    <button
+                      disabled={busy}
+                      title={t('用無頭瀏覽器再跑一次自動測試，打真的後端')}
+                      onClick={(e) => {
+                        e.currentTarget.closest('details')?.removeAttribute('open');
+                        act(async () => {
+                          stick.current = true;
+                          await api.rerunAutotest(item.id, false);
+                        });
+                      }}
+                    >
+                      {t('重跑自動測試（真實資料）')}
+                    </button>
+                    <button
+                      disabled={busy}
+                      title={t('後端還沒好時用：AI 自己判斷哪些 API 還沒好、產生假資料來測；用到假資料的項目，後端好了要重測')}
+                      onClick={(e) => {
+                        e.currentTarget.closest('details')?.removeAttribute('open');
+                        act(async () => {
+                          stick.current = true;
+                          await api.rerunAutotest(item.id, true);
+                        });
+                      }}
+                    >
+                      {t('重跑自動測試（假資料）')}
+                    </button>
+                  </>
+                )}
+                {canRetest && (
                   <button
                     disabled={busy}
-                    title={t('用無頭瀏覽器再跑一次自動測試（例如處理好帳號、開了 VPN 之後）')}
+                    title={t('後端還沒好時用：AI 先列測試計畫給你確認，再開瀏覽器用假資料測給你看')}
                     onClick={(e) => {
                       e.currentTarget.closest('details')?.removeAttribute('open');
                       act(async () => {
                         stick.current = true;
-                        await api.rerunAutotest(item.id);
+                        await api.retest(item.id, true);
                       });
                     }}
                   >
-                    {t('重跑自動測試')}
+                    {t('開瀏覽器測給我看（假資料）')}
                   </button>
                 )}
                 {canRetest && delivery?.delivering && (

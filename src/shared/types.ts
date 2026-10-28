@@ -186,8 +186,8 @@ export interface ReviewChecks {
   figma: CheckDecision;
   codeReview: CheckDecision;
   designCompare: CheckDecision;
-  /** 開發完要不要跑自動測試（只由你決定，AI 不會改；沒有這個欄位就是要跑） */
-  autotest?: CheckDecision;
+  /** 開發完要不要跑自動測試（只由你決定，AI 不會改；沒有這個欄位就是要跑）；mock 是用假資料測（後端還沒好） */
+  autotest?: CheckDecision & { mock?: boolean };
 }
 
 export interface Review extends Judgement {
@@ -389,8 +389,6 @@ export interface WorkItem {
   members: TicketRef[];
   /** 改多語系的進度（沒在改就沒有） */
   i18n?: I18nProgress | null;
-  /** 開著的假資料有幾筆（總開關關著就沒有） */
-  mockCount?: number;
   /** 基底分支比這張單的分支多了幾個新提交（每 10 分鐘檢查；有才會有） */
   baseBehind?: number;
   /** 自動測試的結果（AI 回覆最後一行的「測試結果：…」；沒開始成也算沒測成） */
@@ -602,13 +600,6 @@ export interface FlowPilotApi {
   openExternal(url: string): Promise<void>;
   /** 在 Finder 顯示這張單產生的多語系檔 */
   revealI18n(id: number): Promise<void>;
-  /** 假資料（後端還沒好時用）：讀、存、請 AI 依需求產生、用假資料打開網頁 */
-  mocks: {
-    get(itemId: number): Promise<import('./mocks').MockSet>;
-    save(itemId: number, set: import('./mocks').MockSet): Promise<void>;
-    generate(itemId: number): Promise<import('./mocks').MockSet>;
-    open(itemId: number): Promise<void>;
-  };
   /** 換一個全新的共用瀏覽器（按「看我的」時用，Chrome 才會再跳出選分頁的頁面） */
   resetSharedBrowser(): Promise<void>;
   /** 介面語言（後端的狀態、錯誤、通知也跟著換） */
@@ -713,9 +704,10 @@ export interface FlowPilotApi {
   /** 多商戶的單：來源商戶完成後，移植到其他商戶（每個商戶一張新的工作），回傳建立的分支 */
   port(itemId: number): Promise<string[]>;
   /** 開瀏覽器測給我看：AI 先列測試計畫給你確認，再開有頭的瀏覽器測 */
-  retest(itemId: number): Promise<void>;
+  /** mock：用假資料測（後端還沒好） */
+  retest(itemId: number, mock?: boolean): Promise<void>;
   /** 重跑自動測試（無頭）：上次沒測成時用 */
-  rerunAutotest(itemId: number): Promise<void>;
+  rerunAutotest(itemId: number, mock?: boolean): Promise<void>;
   /** 把分支 rebase 到最新的基底分支（有衝突交給 AI 解） */
   syncBase(itemId: number): Promise<void>;
   /** 單列表的標記：在工作台上（不能再選）、分支已經存在 */

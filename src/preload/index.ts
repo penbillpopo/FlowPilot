@@ -14,12 +14,6 @@ const api: FlowPilotApi = {
   latestRun: () => ipcRenderer.invoke('run:latest'),
   openExternal: (url) => ipcRenderer.invoke('shell:openExternal', url),
   revealI18n: (id) => ipcRenderer.invoke('i18n:reveal', id),
-  mocks: {
-    get: (id) => ipcRenderer.invoke('mocks:get', id),
-    save: (id, set) => ipcRenderer.invoke('mocks:save', id, set),
-    generate: (id) => ipcRenderer.invoke('mocks:generate', id),
-    open: (id) => ipcRenderer.invoke('mocks:open', id),
-  },
   setLang: (lang) => ipcRenderer.invoke('lang:set', lang),
   // 拖曳進來的檔案在電腦上的路徑（新版 Electron 不能直接從檔案拿到路徑）
   pathForFile: (file) => webUtils.getPathForFile(file),
@@ -111,8 +105,8 @@ const api: FlowPilotApi = {
   resume: (id) => ipcRenderer.invoke('item:resume', id),
   switchBack: (id) => ipcRenderer.invoke('item:switchBack', id),
   relocate: (id) => ipcRenderer.invoke('item:relocate', id),
-  retest: (id) => ipcRenderer.invoke('item:retest', id),
-  rerunAutotest: (id) => ipcRenderer.invoke('item:rerunAutotest', id),
+  retest: (id, mock) => ipcRenderer.invoke('item:retest', id, !!mock),
+  rerunAutotest: (id, mock) => ipcRenderer.invoke('item:rerunAutotest', id, !!mock),
   syncBase: (id) => ipcRenderer.invoke('item:syncBase', id),
   ticketMarks: (keys) => ipcRenderer.invoke('tickets:marks', keys),
   ticketTransitions: (key) => ipcRenderer.invoke('tickets:transitions', key),

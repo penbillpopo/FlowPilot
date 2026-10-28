@@ -78,6 +78,24 @@ function CheckPlan({ review, onChange }: { review: Review; onChange(review: Revi
             </label>
             {checks[key].reason && <span className="muted small">{checks[key].reason}</span>}
             {key === 'autotest' && !checks.autotest.need && <span className="muted small">{t('開發完不開瀏覽器，AI 照改動整理驗收表，每一條都要你測')}</span>}
+            {/* 用真實資料（後端要好了）還是假資料（後端還沒好，AI 自己產生假的 API 回應）測 */}
+            {key === 'autotest' && checks.autotest.need && (
+              <select
+                className="autotest-data"
+                value={checks.autotest.mock ? 'mock' : 'real'}
+                onChange={async (e) => {
+                  setError(null);
+                  try {
+                    onChange(await api.setReviewChecks(review.ticketKey, { ...checks, autotest: { ...checks.autotest, mock: e.target.value === 'mock' } }));
+                  } catch (err) {
+                    setError(errorText(err));
+                  }
+                }}
+              >
+                <option value="real">{t('用真實資料')}</option>
+                <option value="mock">{t('用假資料（後端還沒好）')}</option>
+              </select>
+            )}
           </li>
         ))}
       </ul>

@@ -156,5 +156,7 @@ const en: Record<string, string> = {
   '{level}單': "{level} ticket",
   '開發完自動測試（開瀏覽器跑一遍）': 'Auto test after development (runs it in a browser)',
   '開發完不開瀏覽器，AI 照改動整理驗收表，每一條都要你測': 'No browser run after development; AI writes the checklist from the changes and you test every item',
+  '用假資料（後端還沒好）': 'With mock data (backend not ready)',
+  '用真實資料': 'With real data',
 };
 export default en;

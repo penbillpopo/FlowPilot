@@ -376,7 +376,7 @@ export class Runner {
       folders: this.deps.settings().folders.map((f) => ({ ...f, itemId: occupiedBy.get(f.name) ?? null })),
       items: items.map((full) => {
         const { branchCreated: _, commitSha: __, oldThreads: ___, ...item } = full;
-        return { ...item, i18n: this.i18nProgress(full), baseBehind: this.baseBehind.get(full.id) || undefined, mockCount: this.mockCount(full.id) };
+        return { ...item, i18n: this.i18nProgress(full), baseBehind: this.baseBehind.get(full.id) || undefined };
       }),
       pendingRun: store.pendingPlannedRun(),
       streaming: Object.fromEntries(this.streaming),
@@ -744,12 +744,6 @@ export class Runner {
     return !this.deps.settings().projects[item.project]?.merchants?.length;
   }
 
-  /** 開著的假資料有幾筆（總開關關著就是 0；給畫面的按鈕顯示） */
-  private mockCount(id: number): number | undefined {
-    const set = readMocks(this.deps.dataDir, id);
-    return (set.enabled && set.rules.filter((r) => r.on).length) || undefined;
-  }
-
   /** 驗收截圖放的地方（瀏覽器測試紀錄） */
   private get shotDir(): string {
     return join(this.deps.dataDir, '瀏覽器測試紀錄');
@@ -908,7 +902,7 @@ export class Runner {
    * - 重測（你按了才做）：有頭、先列測試計畫給你確認
    * 兩者都用測試帳號自動登入；網站由 FlowPilot 在資料夾終端機啟動；環境照資料夾目前的 environment.ts。
    */
-  private async startTest(id: number, headed: boolean): Promise<void> {
+  private async startTest(id: number, headed: boolean, mock = false): Promise<void> {
     const { codex, settings: getSettings } = this.deps;
     const item = this.deps.store.getWorkItem(id)!;
     const settings = getSettings();
@@ -935,14 +929,17 @@ export class Runner {
       const requestLog = requestLogFile(this.deps.dataDir, id);
       mkdirSync(dirname(requestLog), { recursive: true });
       writeFileSync(requestLog, ''); // 每次測試從空的紀錄開始
-      // 有開假資料：告訴 AI 哪些 API 是假的；用到的驗收項目標成「假資料測的」，後端好了要重測
+      // 用真實資料還是假資料測：真實資料就關掉假資料；假資料由這次測試的 AI 自己判斷哪些 API 還沒好、自己產生和切換情境
+      const mockPath = mockFile(this.deps.dataDir, id);
       const mocks = readMocks(this.deps.dataDir, id);
-      const mocked = mocks.enabled ? mocks.rules.filter((r) => r.on) : [];
-      const mockLines = mocked.length
+      writeMocks(this.deps.dataDir, id, { ...mocks, enabled: mock });
+      const mockLines = mock
         ? [
-            '- 假資料：後端還沒好，下面這些 API 由 FlowPilot 在測試瀏覽器裡回假的內容（請求紀錄裡會標「假資料」）：',
-            ...mocked.map((r) => `  - ${r.method || '任何方法'} ${r.path}：${r.note || '（沒有說明）'}`),
-            '  用到這些 API 的驗收項目：照實測、照實寫 result，但一定要加 "mocked": true、needYou 寫 true，note 註明「用假資料測的，後端好了要重測」。畫面上右下角的「FlowPilot 假資料模式」標籤是 FlowPilot 加的，不是程式的問題。',
+            '- 這次用假資料測（後端還沒好）：',
+            '  - 開始測之前，先看需求分析和這條分支上前端呼叫 API 的程式，判斷哪些 API 後端還沒做好，照前端預期的格式（含外層的 code、data、message）寫假資料。',
+            `  - 假資料寫在 ${mockPath}（路徑有空白要加引號），JSON 格式：{"enabled":true,"rules":[{"id":"1","method":"GET","path":"/api/v1/…","status":200,"body":"回應的 JSON 字串","note":"哪支 API、什麼情境","on":true}]}。path 只寫網址路徑（從 / 開始，不含網域和查詢參數，變動的部分用 *）。已經有的 rules 先看過，能用就沿用。`,
+            '  - 測試瀏覽器每個請求都會重讀這個檔案，改了馬上生效：要測空資料、錯誤這些情境，就改 rules（換 body、status，或用 on 切換）再重新整理頁面。登入、選單這些已經有的 API 不要假。',
+            '  - 用到假資料的驗收項目：照實測、照實寫 result，但一定要加 "mocked": true、needYou 寫 true，note 註明「用假資料測的，後端好了要重測」。畫面右下角的「FlowPilot 假資料模式」標籤是 FlowPilot 加的，不是程式的問題。',
           ]
         : [];
       const common = [
@@ -1026,15 +1023,15 @@ export class Runner {
   }
 
   /** 開瀏覽器測給我看（你按了才做） */
-  async retest(id: number) {
+  async retest(id: number, mock = false) {
     this.assertIdle(id, t('重測'));
-    await this.startTest(id, true);
+    await this.startTest(id, true, mock);
   }
 
   /** 重跑自動測試（無頭）：上次沒測成（例如登入失敗、沒開 VPN）處理好之後用 */
-  async rerunAutotest(id: number) {
+  async rerunAutotest(id: number, mock = false) {
     this.assertIdle(id, t('重跑自動測試'));
-    await this.startTest(id, false);
+    await this.startTest(id, false, mock);
   }
 
   /** 檢查佔著資料夾的單，基底分支有沒有新提交（抓遠端只更新遠端紀錄，不動資料夾裡的檔案） */
@@ -1172,7 +1169,8 @@ export class Runner {
    */
   private async autotestOrSkip(id: number) {
     const item = this.deps.store.getWorkItem(id)!;
-    if (this.deps.store.getReview(item.ticketKey)?.review.checks?.autotest?.need !== false) return this.startTest(id, false);
+    const autotest = this.deps.store.getReview(item.ticketKey)?.review.checks?.autotest;
+    if (autotest?.need !== false) return this.startTest(id, false, !!autotest?.mock);
     this.skippedAutotest.add(id);
     this.update(id, { stage: 'manual' });
     const review = this.deps.store.getReview(item.ticketKey)?.review ?? null;

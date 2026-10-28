@@ -628,3 +628,5 @@ td.time { white-space: nowrap; }
 .mock-ready, .mock-ready-tag { color: #22c55e; }
 .mock-ready-tag { font-size: 11px; white-space: nowrap; }
 .ac-mocked { font-size: 11px; padding: 0 6px; border-radius: 8px; background: #d97706; color: #fff; white-space: nowrap; flex-shrink: 0; }
+
+.autotest-data { font-size: 12px; padding: 1px 4px; }

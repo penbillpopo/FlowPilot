@@ -185,5 +185,11 @@ const en: Record<string, string> = {
   '把這張單的分支 rebase 到最新的 {base}（沒提交的修改會先收起來、做完放回；有衝突交給 AI 解）': "Rebase this ticket's branch onto the latest {base} (uncommitted changes are stashed and restored; AI resolves any conflicts)",
   '同步': 'Sync',
   '同步基底分支': 'Sync base branch',
+  '後端還沒好時用：AI 先列測試計畫給你確認，再開瀏覽器用假資料測給你看': "For when the backend isn't ready: AI lists a test plan for you to confirm, then tests it in a browser with mock data",
+  '後端還沒好時用：AI 自己判斷哪些 API 還沒好、產生假資料來測；用到假資料的項目，後端好了要重測': "For when the backend isn't ready: AI figures out which APIs aren't ready and tests with mock data it creates; items using mocks must be retested once the backend is ready",
+  '用無頭瀏覽器再跑一次自動測試，打真的後端': 'Run the auto test again in a headless browser against the real backend',
+  '重跑自動測試（假資料）': 'Rerun auto test (mock data)',
+  '重跑自動測試（真實資料）': 'Rerun auto test (real data)',
+  '開瀏覽器測給我看（假資料）': 'Test it in a browser for me (mock data)',
 };
 export default en;

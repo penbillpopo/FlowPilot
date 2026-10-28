@@ -4,7 +4,6 @@ import { Terminal } from '@xterm/xterm';
 import '@xterm/xterm/css/xterm.css';
 import { useEffect, useRef, useState } from 'react';
 import type { AcceptanceItem, BranchCommits, Env, GitFile, TestState, WorkItem } from '../../shared/types';
-import type { MockRule, MockSet } from '../../shared/mocks';
 import { errorText } from './ChatPanel';
 import { DiffView } from './DiffView';
 import { needsYou, unexplainedFiles } from '../../shared/acceptance';
@@ -317,7 +316,6 @@ export function FolderTerminalPanel({ item, onSiteUrl }: { item: WorkItem; onSit
   const [error, setError] = useState<string | null>(null);
   const [exited, setExited] = useState(false);
   const [showTerminal, setShowTerminal] = useState(false);
-  const [mockOpen, setMockOpen] = useState(false);
   // 按了「啟動」到網站起來之前：顯示啟動中、經過幾秒、終端機最後一行（不然看起來像沒反應）
   const [starting, setStarting] = useState<number | null>(null);
   const [lastLine, setLastLine] = useState('');
@@ -429,15 +427,10 @@ export function FolderTerminalPanel({ item, onSiteUrl }: { item: WorkItem; onSit
             {starting !== null ? t('啟動中…') : t('啟動')}
           </button>
         )}
-        {/* 假資料：後端還沒好時用，全部功能收在這一個按鈕裡 */}
-        <button className={`mock-toggle ${mockOpen ? 'on' : ''}`} title={t('後端還沒好時，讓指定的 API 回假資料（不改程式碼，只在 FlowPilot 開的瀏覽器裡生效）')} onClick={() => setMockOpen(!mockOpen)}>
-          {t('假資料')}
-          {item.mockCount ? <span className="tab-count">{item.mockCount}</span> : null}
-        </button>
         {/* 終端機是開發者的工具，平常收起來；真的需要時再打開 */}
         <button className="link small push-right" onClick={() => setShowTerminal(!showTerminal)}>{showTerminal ? t('收起終端機') : t('顯示終端機')}</button>
       </div>
-      {mockOpen && <MockPanel item={item} siteUp={!!url} />}
+
       {starting !== null && !url && (
         <div className="site-starting">
           <span className="spinner" />
@@ -706,93 +699,5 @@ function AcceptanceShot({ name }: { name: string }) {
       <img src={src} alt={t('應該長這樣')} />
       <figcaption className="muted small">{t('AI 測試時的畫面（應該長這樣）')}</figcaption>
     </figure>
-  );
-}
-
-/**
- * 假資料（後端還沒好時用）：總開關、每一筆 API 的開關與內容、請 AI 產生、用假資料打開網頁。
- * 存在 FlowPilot 的資料夾，不改專案程式碼；自動測試、開瀏覽器測給我看、「用假資料打開」的視窗都會套用。
- */
-function MockPanel({ item, siteUp }: { item: WorkItem; siteUp: boolean }) {
-  const [set, setSet] = useState<MockSet | null>(null);
-  const [editing, setEditing] = useState<string | null>(null);
-  const [busy, setBusy] = useState<string | null>(null);
-  const [error, setError] = useState<string | null>(null);
-  useEffect(() => {
-    api.mocks.get(item.id).then(setSet).catch((e) => setError(errorText(e)));
-  }, [item.id, item.mockCount]);
-  if (!set) return <div className="panel mock-panel muted small">{t('讀取中…')}</div>;
-
-  const save = (next: MockSet) => {
-    setSet(next);
-    api.mocks.save(item.id, next).catch((e) => setError(errorText(e)));
-  };
-  const update = (id: string, patch: Partial<MockRule>) => save({ ...set, rules: set.rules.map((r) => (r.id === id ? { ...r, ...patch } : r)) });
-  const run = (label: string, action: () => Promise<unknown>) => {
-    setBusy(label);
-    setError(null);
-    action().catch((e) => setError(errorText(e))).finally(() => setBusy(null));
-  };
-  const ready = new Set(set.ready ?? []);
-
-  return (
-    <div className="panel mock-panel">
-      <div className="row">
-        <label className="mock-switch">
-          <input type="checkbox" checked={set.enabled} onChange={(e) => save({ ...set, enabled: e.target.checked })} />
-          {set.enabled ? t('假資料開著') : t('假資料關著')}
-        </label>
-        <button className="push-right" disabled={!!busy} title={t('請 AI 依需求和前端程式，產生還沒有的 API 的假資料（正常、空資料、錯誤三種情境）')} onClick={() => run('generate', () => api.mocks.generate(item.id).then(setSet))}>
-          {busy === 'generate' ? t('AI 產生中…') : set.rules.length ? t('請 AI 重新產生') : t('請 AI 產生假資料')}
-        </button>
-        <button className="primary" disabled={!!busy || !siteUp || !set.enabled} title={siteUp ? t('另外開一個瀏覽器視窗打開本機網站，套用假資料，給你手動測（登入一次會記住）') : t('本機網站要先啟動')} onClick={() => run('open', () => api.mocks.open(item.id))}>
-          {t('用假資料打開網頁')}
-        </button>
-      </div>
-      {ready.size > 0 && (
-        <div className="mock-ready small">{t('後端好了：{apis}。建議關掉這幾筆假資料，用真的 API 重測。', { apis: [...ready].join(t('、')) })}</div>
-      )}
-      {set.rules.length === 0 ? (
-        <p className="muted small">{t('還沒有假資料。按「請 AI 產生假資料」，或跟 AI 說要假哪些 API。')}</p>
-      ) : (
-        <ul className="mock-list">
-          {set.rules.map((r) => (
-            <li key={r.id} className={r.on ? '' : 'off'}>
-              <div className="mock-head">
-                <input type="checkbox" checked={r.on} title={t('這一筆要不要用')} onChange={(e) => update(r.id, { on: e.target.checked })} />
-                <code className="mock-path" title={r.path}>{r.method || '*'} {r.path}</code>
-                <span className="muted small">{r.status}</span>
-                {ready.has(r.path) && <span className="mock-ready-tag">{t('後端好了')}</span>}
-                <button className="link small push-right" onClick={() => setEditing(editing === r.id ? null : r.id)}>{editing === r.id ? t('收起') : t('編輯')}</button>
-                <button className="link small danger" onClick={() => save({ ...set, rules: set.rules.filter((x) => x.id !== r.id) })}>{t('刪除')}</button>
-              </div>
-              {r.note && <div className="muted small mock-note">{r.note}</div>}
-              {editing === r.id && (
-                <div className="mock-edit">
-                  <div className="row">
-                    <input className="mock-method" value={r.method} placeholder="GET" onChange={(e) => update(r.id, { method: e.target.value.toUpperCase() })} />
-                    <input className="mock-path-input" value={r.path} placeholder="/api/v1/…" onChange={(e) => update(r.id, { path: e.target.value })} />
-                    <input className="mock-status" type="number" value={r.status} onChange={(e) => update(r.id, { status: Number(e.target.value) || 200 })} />
-                  </div>
-                  <textarea rows={8} value={r.body} spellCheck={false} onChange={(e) => update(r.id, { body: e.target.value })} />
-                </div>
-              )}
-            </li>
-          ))}
-        </ul>
-      )}
-      <button
-        className="link small"
-        onClick={() => {
-          const id = `${Date.now()}`;
-          save({ ...set, rules: [...set.rules, { id, method: 'GET', path: '/api/', status: 200, body: '{}', note: '', on: true }] });
-          setEditing(id);
-        }}
-      >
-        {t('＋ 自己加一筆')}
-      </button>
-      <p className="muted small">{t('只在 FlowPilot 開的瀏覽器裡生效（自動測試、開瀏覽器測給我看、用假資料打開的視窗），不改程式碼；你平常的 Chrome 和「看我的」不受影響。用假資料測過的項目，後端好了要用真的 API 重測。')}</p>
-      {error && <div className="error small">{error}</div>}
-    </div>
   );
 }

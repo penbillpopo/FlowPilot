@@ -7,7 +7,7 @@ import { describe, expect, it } from 'vitest';
 import type { CodexRpc, RpcMessage } from '../src/main/codex/rpc';
 import { createServer } from 'node:http';
 import { i18nWorkFile } from '../src/main/i18n-sheet';
-import { readMocks, Runner, writeMocks } from '../src/main/runner/runner';
+import { mockFile, readMocks, Runner, writeMocks } from '../src/main/runner/runner';
 import { DEFAULT_SETTINGS_YAML, parseSettings } from '../src/main/settings';
 import { Store } from '../src/main/store';
 import type { VSCode } from '../src/main/vscode';
@@ -401,17 +401,20 @@ describe('流程階段', () => {
     expect(t.get()).toMatchObject({ stage: 'manual', status: 'review', activity: '已跳過自動測試，等你測試', autotested: false });
   });
 
-  it('假資料開著：測試說明列出哪些 API 是假的，並要求用到的項目標成「假資料測的」', async () => {
+  it('計畫選了用假資料測：開發完的自動測試請 AI 自己判斷哪些 API 還沒好、寫假資料，並要求標成「假資料測的」；用真實資料重跑就關掉假資料', async () => {
     const t = setup();
-    writeMocks(join(t.root, 'data'), t.id, { enabled: true, rules: [
-      { id: '1', method: 'GET', path: '/api/v1/mission/list', status: 200, body: '{}', note: '任務列表（正常有資料）', on: true },
-      { id: '2', method: 'GET', path: '/api/v1/mission/list', status: 200, body: '{}', note: '任務列表（空資料）', on: false },
-    ] });
-    await t.complete(); // 開發完 → 自動測試
+    t.store.saveReview({ ticketKey: 'ALL-1', entries: [], prTitle: '', reason: '', summary: [], resources: [], level: '一般', codeChecked: true, issues: [], discussion: [], reviewedAt: '',
+      checks: { figma: { need: false, reason: '' }, codeReview: { need: false, reason: '' }, designCompare: { need: false, reason: '' }, autotest: { need: true, reason: '', mock: true } } }, null);
+    await t.complete(); // 開發完 → 自動測試（假資料）
     const text: string = t.lastTurn().input[1].text;
-    expect(text).toContain('GET /api/v1/mission/list：任務列表（正常有資料）');
-    expect(text).not.toContain('空資料');
+    expect(text).toContain('這次用假資料測');
+    expect(text).toContain(mockFile(join(t.root, 'data'), t.id));
     expect(text).toContain('"mocked": true');
+    expect(readMocks(join(t.root, 'data'), t.id).enabled).toBe(true);
+    await t.complete('測試結果：通過');
+    await t.runner.rerunAutotest(t.id, false);
+    expect(t.lastTurn().input[1].text).not.toContain('這次用假資料測');
+    expect(readMocks(join(t.root, 'data'), t.id).enabled).toBe(false);
   });
 
   it('假資料的 API 後端好了：真的打得到（不是 404）就記下來並提醒；還是 404 的不算', async () => {

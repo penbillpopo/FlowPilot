@@ -86,6 +86,7 @@ function flowPilotLabel(text: string): string | null {
   if (text.startsWith(zhOnly('## 整理驗收表'))) return t('整理驗收表指示');
   if (text.startsWith(zhOnly('## 換新對話'))) return t('對話太長，整理重點後換新對話（點開看交接內容）');
   if (text.startsWith(zhOnly('## 多語系 key 重複'))) return t('多語系 key 重複，請 AI 換名字');
+  if (text.startsWith(zhOnly('## 同步基底分支'))) return t('同步基底分支有衝突，請 AI 解衝突');
   if (text.startsWith(zhOnly('## 繼續改多語系'))) return t('多語系還沒做完，請 AI 繼續');
   if (text.startsWith(zhOnly('## 接上你的 Chrome'))) return t('接上你的 Chrome（Chrome 會跳出頁面讓你選分頁）');
   if (text.startsWith(zhOnly('## 看我的畫面'))) {
@@ -658,6 +659,18 @@ export function ChatPanel({ item }: { item: WorkItem }) {
                   </button>
                 )}
                 {active && item.threadId && item.folder && <button onClick={() => act(() => api.openInVSCode(item.id))}>{t('在 VS Code 查看')}</button>}
+                {active && item.threadId && item.folder && !offBranch && (
+                  <button
+                    disabled={busy || running}
+                    title={t('把這張單的分支 rebase 到最新的 {base}（沒提交的修改會先收起來、做完放回；有衝突交給 AI 解）', { base: item.baseBranch })}
+                    onClick={(e) => {
+                      e.currentTarget.closest('details')?.removeAttribute('open');
+                      act(() => api.syncBase(item.id));
+                    }}
+                  >
+                    {t('同步基底分支')}
+                  </button>
+                )}
                 {/* 測試完成後：產生分析報告（截改動前後、整理重點，存成桌面的 PDF；要幾分鐘，背景跑） */}
                 {item.testReport && !running && item.status !== 'preparing' && (
                   <button
@@ -734,6 +747,15 @@ export function ChatPanel({ item }: { item: WorkItem }) {
           {item.threadId && <Stages item={item} delivering={!!delivery?.delivering} />}
         </div>
       </div>
+      {/* 基底分支有新提交：只提醒，你按「同步」才 rebase */}
+      {!!item.baseBehind && !offBranch && (
+        <div className="base-behind small">
+          <span>{t('{base} 有 {count} 個新提交', { base: item.baseBranch, count: item.baseBehind })}</span>
+          <button className="link small" disabled={busy || running} title={running ? t('AI 執行中，等它停下來再同步') : t('把這張單的分支 rebase 到最新的 {base}（沒提交的修改會先收起來、做完放回；有衝突交給 AI 解）', { base: item.baseBranch })} onClick={() => act(() => api.syncBase(item.id))}>
+            {t('同步')}
+          </button>
+        </div>
+      )}
       {offBranch && git && (
         <div className="error branch-off">
           {t('資料夾 {folder} 現在在 {current}，不是這張單的分支 {branch}。', { folder: String(item.folder), current: git.branch || t('（不在任何分支）'), branch: item.branch })}

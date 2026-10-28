@@ -230,5 +230,16 @@ const en: Record<string, string> = {
   '已完成（{count} 項沒測就完成）': 'Done ({count} item(s) finished untested)',
   '已跳過自動測試，等你測試': 'Auto test skipped, ready for you to test',
   '已跳過自動測試：AI 整理驗收表中': 'Auto test skipped: AI is writing the checklist',
+  '同步基底分支': 'Sync base branch',
+  '這張單已經讓出資料夾，先按「繼續修」拿回資料夾再同步': 'This ticket gave up its folder; press "Keep fixing" to get it back before syncing',
+  '資料夾不在這張單的分支上，先切回分支再同步': "The folder isn't on this ticket's branch; switch back before syncing",
+  '上一次 rebase 還沒做完，請 AI 先把衝突解完': "The previous rebase isn't finished; have AI resolve the conflicts first",
+  '同步基底分支：抓最新的 {base}': 'Syncing base branch: fetching the latest {base}',
+  '{base} 沒有新的提交，已經是最新的': '{base} has no new commits; already up to date',
+  '同步基底分支失敗：{error}': 'Base sync failed: {error}',
+  '同步基底分支有衝突，請 AI 解衝突': 'Base sync hit conflicts; asked AI to resolve them',
+  '已 rebase 到最新的 {base}（{count} 個新提交）': 'Rebased onto the latest {base} ({count} new commit(s))',
+  '；這條分支推送過，要強制推送才會更新遠端': '; this branch was pushed before, so it needs a force push to update the remote',
+  '；建議重跑自動測試': '; consider rerunning the auto test',
 };
 export default en;

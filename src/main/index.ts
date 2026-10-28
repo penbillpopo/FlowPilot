@@ -770,6 +770,7 @@ function registerIpc() {
   ipcMain.handle('item:retry', (_event, id: number) => runner.retry(id));
   ipcMain.handle('item:retest', (_event, id: number) => runner.retest(id));
   ipcMain.handle('item:rerunAutotest', (_event, id: number) => runner.rerunAutotest(id));
+  ipcMain.handle('item:syncBase', (_event, id: number) => runner.syncBase(id));
   ipcMain.handle('test:closeBrowsers', () => closeTestBrowsers());
   ipcMain.handle('test:trialLogin', (_event, id: number) => trialLogin(id));
   ipcMain.handle('test:setManualDone', (_event, id: number, index: number, done: boolean) => runner.setManualDone(id, index, done));

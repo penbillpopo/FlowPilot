@@ -387,6 +387,8 @@ export interface WorkItem {
   members: TicketRef[];
   /** 改多語系的進度（沒在改就沒有） */
   i18n?: I18nProgress | null;
+  /** 基底分支比這張單的分支多了幾個新提交（每 10 分鐘檢查；有才會有） */
+  baseBehind?: number;
   /** 自動測試的結果（AI 回覆最後一行的「測試結果：…」；沒開始成也算沒測成） */
   autotestResult: TestResult | null;
   /** 最近一次瀏覽器測試的報告：預期結果對照、要你手動測的清單（勾選狀態會保留） */
@@ -701,6 +703,8 @@ export interface FlowPilotApi {
   retest(itemId: number): Promise<void>;
   /** 重跑自動測試（無頭）：上次沒測成時用 */
   rerunAutotest(itemId: number): Promise<void>;
+  /** 把分支 rebase 到最新的基底分支（有衝突交給 AI 解） */
+  syncBase(itemId: number): Promise<void>;
   /** 單列表的標記：在工作台上（不能再選）、分支已經存在 */
   ticketMarks(keys: string[]): Promise<Record<string, TicketMark>>;
   /** 這張單現在可以切到哪些 Jira 狀態 */

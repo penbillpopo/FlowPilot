@@ -105,6 +105,7 @@ const api: FlowPilotApi = {
   relocate: (id) => ipcRenderer.invoke('item:relocate', id),
   retest: (id) => ipcRenderer.invoke('item:retest', id),
   rerunAutotest: (id) => ipcRenderer.invoke('item:rerunAutotest', id),
+  syncBase: (id) => ipcRenderer.invoke('item:syncBase', id),
   ticketMarks: (keys) => ipcRenderer.invoke('tickets:marks', keys),
   ticketTransitions: (key) => ipcRenderer.invoke('tickets:transitions', key),
   transitionTicket: (key, id) => ipcRenderer.invoke('tickets:transition', key, id),

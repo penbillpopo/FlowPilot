@@ -1,7 +1,7 @@
 // Git 改動面板（像 VS Code 的「原始碼控制」）：變更／暫存的變更、差異、暫存、取消暫存、捨棄、提交、推送。
 import { t } from '../shared/i18n';
 import { execFile } from 'node:child_process';
-import { mkdtempSync, rmSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join, resolve, sep } from 'node:path';
 import type { BranchCommits, CommitResult, GitFile, GitIdentity, GitState } from '../shared/types';
@@ -44,7 +44,9 @@ async function git(cwd: string, args: string[]) {
 }
 
 export async function gitState(cwd: string, baseBranch?: string): Promise<GitState> {
-  const branch = await currentBranch(cwd);
+  // rebase 到一半（例如同步基底分支有衝突、AI 正在解）時 git 暫時不在分支上：當成還在原本那條分支，畫面才不會誤報「不在這張單的分支」
+  const rebasing = ['rebase-merge', 'rebase-apply'].map((d) => join(cwd, '.git', d, 'head-name')).find((f) => existsSync(f));
+  const branch = (await currentBranch(cwd)) || (rebasing ? readFileSync(rebasing, 'utf8').trim().replace(/^refs\/heads\//, '') : '');
   const { staged, unstaged } = parseStatus(await git(cwd, ['status', '--porcelain=v1', '-z', '--untracked-files=all']));
   const hasRemote = branch ? await remoteBranchExists(cwd, branch) : false;
   let unpushed: number | null = null;

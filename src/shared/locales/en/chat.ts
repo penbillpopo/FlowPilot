@@ -179,5 +179,11 @@ const en: Record<string, string> = {
   '分析報告：{step}（要幾分鐘，好了會通知你）': 'Analysis report: {step} (takes a few minutes; you will be notified)',
   '整理這張單要做什麼、改動前後、測試時的截圖、重點和驗收結果，存成桌面的 PDF（大約一兩分鐘）': 'Summarize what this ticket does, before/after, screenshots from testing, key points and test results as a PDF on your Desktop (about a minute or two)',
   '分析報告：{step}（大約一兩分鐘，好了會通知你）': 'Analysis report: {step} (about a minute or two; you will be notified)',
+  '同步基底分支有衝突，請 AI 解衝突': 'Base sync hit conflicts; asked AI to resolve them',
+  '{base} 有 {count} 個新提交': '{base} has {count} new commit(s)',
+  'AI 執行中，等它停下來再同步': 'AI is running; sync after it stops',
+  '把這張單的分支 rebase 到最新的 {base}（沒提交的修改會先收起來、做完放回；有衝突交給 AI 解）': "Rebase this ticket's branch onto the latest {base} (uncommitted changes are stashed and restored; AI resolves any conflicts)",
+  '同步': 'Sync',
+  '同步基底分支': 'Sync base branch',
 };
 export default en;

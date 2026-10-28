@@ -326,6 +326,9 @@ export class Runner {
     setInterval(() => {
       if (this.deps.store.listWorkItems().some((i) => i.status === 'queued')) void this.schedule();
     }, 60_000);
+    // 每 10 分鐘看一次基底分支有沒有新提交（只提醒，要你按「同步」才 rebase）
+    setTimeout(() => void this.checkBaseUpdates(), 30_000);
+    setInterval(() => void this.checkBaseUpdates(), 10 * 60_000);
     deps.codex.setDisconnectHandler(() => {
       deps.log('跟 Codex 常駐服務的連線中斷，5 秒後重新連線');
       setTimeout(() => this.resubscribe().catch((e) => deps.log(`重新連線失敗：${e.message}`)), 5000);
@@ -342,7 +345,7 @@ export class Runner {
       folders: this.deps.settings().folders.map((f) => ({ ...f, itemId: occupiedBy.get(f.name) ?? null })),
       items: items.map((full) => {
         const { branchCreated: _, commitSha: __, oldThreads: ___, ...item } = full;
-        return { ...item, i18n: this.i18nProgress(full) };
+        return { ...item, i18n: this.i18nProgress(full), baseBehind: this.baseBehind.get(full.id) || undefined };
       }),
       pendingRun: store.pendingPlannedRun(),
       streaming: Object.fromEntries(this.streaming),
@@ -393,6 +396,8 @@ export class Runner {
   private handingOff = new Set<number>();
   /** 你選了不跑自動測試的單：整理完驗收表時狀態寫「已跳過自動測試」 */
   private skippedAutotest = new Set<number>();
+  /** 基底分支比這張單多幾個新提交（檢查時記下，同步後清掉） */
+  private baseBehind = new Map<number, number>();
   /** 改多語系做到一半的單：自動叫 AI 繼續、請它換 key 名字的次數 */
   /** 你叫過它改多語系的單（工作檔還沒有內容時，用來分辨 AI 寫的進度是不是真的在做這件事） */
   private i18nRequested = new Set<number>();
@@ -976,6 +981,82 @@ export class Runner {
   async rerunAutotest(id: number) {
     this.assertIdle(id, t('重跑自動測試'));
     await this.startTest(id, false);
+  }
+
+  /** 檢查佔著資料夾的單，基底分支有沒有新提交（抓遠端只更新遠端紀錄，不動資料夾裡的檔案） */
+  async checkBaseUpdates() {
+    let changed = false;
+    for (const item of this.deps.store.listWorkItems()) {
+      if (!item.folder || !['running', 'waiting', 'review', 'blocked'].includes(item.status)) {
+        changed = this.baseBehind.delete(item.id) || changed;
+        continue;
+      }
+      try {
+        const cwd = this.folderPath(item.folder);
+        await fetchOrigin(cwd);
+        if ((await currentBranch(cwd)) !== item.branch) continue;
+        const behind = Number((await runGit(cwd, ['rev-list', '--count', `HEAD..origin/${item.baseBranch}`])).stdout.trim() || 0);
+        if ((this.baseBehind.get(item.id) ?? 0) !== behind) {
+          behind ? this.baseBehind.set(item.id, behind) : this.baseBehind.delete(item.id);
+          changed = true;
+        }
+      } catch (error) {
+        this.deps.log(`${item.ticketKey}：檢查基底分支失敗：${(error as Error).message}`);
+      }
+    }
+    if (changed) this.deps.onChange();
+  }
+
+  /**
+   * 同步基底分支：抓最新的遠端，順便把本機的基底分支更新成最新，再把這張單的分支 rebase 上去（沒提交的修改先收起來、做完放回）。
+   * 由 FlowPilot 直接做；有衝突才交給 AI 解（解完繼續 rebase）。已經推送過的分支，之後要強制推送才會更新遠端（照平常的推送流程，會先問你）。
+   */
+  async syncBase(id: number) {
+    this.assertIdle(id, t('同步基底分支'));
+    const item = this.deps.store.getWorkItem(id)!;
+    if (!item.folder) throw new Error(t('這張單已經讓出資料夾，先按「繼續修」拿回資料夾再同步'));
+    const cwd = this.folderPath(item.folder);
+    if ((await currentBranch(cwd)) !== item.branch) throw new Error(t('資料夾不在這張單的分支上，先切回分支再同步'));
+    if (existsSync(join(cwd, '.git', 'rebase-merge')) || existsSync(join(cwd, '.git', 'rebase-apply'))) throw new Error(t('上一次 rebase 還沒做完，請 AI 先把衝突解完'));
+    this.update(id, { activity: t('同步基底分支：抓最新的 {base}', { base: item.baseBranch }) });
+    await fetchOrigin(cwd);
+    // 本機的基底分支也更新成最新（只快轉，不切換分支；本機有自己的提交就不動它）
+    await runGit(cwd, ['fetch', 'origin', `${item.baseBranch}:${item.baseBranch}`]).catch(() => null);
+    const behind = Number((await runGit(cwd, ['rev-list', '--count', `HEAD..origin/${item.baseBranch}`])).stdout.trim() || 0);
+    if (!behind) {
+      this.baseBehind.delete(id);
+      this.update(id, { activity: t('{base} 沒有新的提交，已經是最新的', { base: item.baseBranch }) });
+      return;
+    }
+    const pushed = await remoteBranchExists(cwd, item.branch).catch(() => false);
+    const result = await runGit(cwd, ['-c', 'core.editor=true', 'rebase', '--autostash', `origin/${item.baseBranch}`], 120_000);
+    const inProgress = existsSync(join(cwd, '.git', 'rebase-merge')) || existsSync(join(cwd, '.git', 'rebase-apply'));
+    this.baseBehind.delete(id);
+    if (result.code !== 0 && !inProgress) {
+      this.update(id, { activity: t('同步基底分支失敗：{error}', { error: result.stderr.trim().split('\n').slice(-2).join(' ') }) });
+      return;
+    }
+    if (result.code !== 0) {
+      // 有衝突：交給 AI 照兩邊的意圖合併，解完繼續 rebase
+      await this.reply(
+        id,
+        [
+          '## 同步基底分支：解衝突',
+          `FlowPilot 正在把分支 rebase 到最新的 origin/${item.baseBranch}（基底有 ${behind} 個新提交），遇到衝突停住了。`,
+          '請解衝突：用 git status 看哪些檔案衝突，照兩邊的意圖合併好，git add 之後用 GIT_EDITOR=true git rebase --continue 繼續，直到 rebase 完成；不要 git rebase --abort、不要推送。',
+          '在回覆裡說明每個衝突怎麼解的。解不了就停下來，告訴我是哪些檔案、卡在哪。',
+        ].join('\n'),
+        [],
+        { asFix: false, noReportNote: true, activity: t('同步基底分支有衝突，請 AI 解衝突') },
+      );
+      return;
+    }
+    this.update(id, {
+      activity:
+        t('已 rebase 到最新的 {base}（{count} 個新提交）', { base: item.baseBranch, count: behind }) +
+        (pushed ? t('；這條分支推送過，要強制推送才會更新遠端') : '') +
+        (item.testReport ? t('；建議重跑自動測試') : ''),
+    });
   }
 
   private assertIdle(id: number, what: string) {
@@ -1723,8 +1804,12 @@ export class Runner {
   /** 資料夾不在這張單的分支上（例如你在 VS Code 切走了）：叫 AI 做事、完成這張單之前都要擋下來，免得改到別條分支 */
   private assertOnBranch(item: StoredWorkItem) {
     if (!item.folder) return;
-    const here = headBranch(this.folderPath(item.folder));
+    const cwd = this.folderPath(item.folder);
+    const here = headBranch(cwd);
     if (here === null) return; // 讀不到：看不出來，不擋
+    // rebase 到一半（例如同步基底分支有衝突）時 git 會暫時離開分支：正在 rebase 的是這張單的分支就不擋，讓 AI 解衝突
+    const rebasing = ['rebase-merge', 'rebase-apply'].map((d) => join(cwd, '.git', d, 'head-name')).find((f) => existsSync(f));
+    if (rebasing && readFileSync(rebasing, 'utf8').trim() === `refs/heads/${item.branch}`) return;
     if (here !== item.branch) {
       throw new Error(t('資料夾 {folder} 現在在 {current}，不是這張單的分支 {branch}；先切回來才能繼續', { folder: item.folder, current: here || t('（不在任何分支）'), branch: item.branch }));
     }

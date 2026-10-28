@@ -607,3 +607,6 @@ td.time { white-space: nowrap; }
 .ac-dev > summary { cursor: pointer; font-size: 12px; color: var(--muted); }
 .ac-ai-tested { margin: 8px 0; }
 .ac-ai-tested > summary { cursor: pointer; font-size: 12px; color: var(--muted); padding: 4px 0; }
+
+/* 基底分支有新提交的提醒（標題下面） */
+.base-behind { display: flex; align-items: center; gap: 8px; margin: 0 16px 6px; padding: 4px 10px; border: 1px solid #e0a030; border-radius: 6px; color: #e0a030; flex-wrap: wrap; }

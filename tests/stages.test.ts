@@ -417,6 +417,23 @@ describe('流程階段', () => {
     expect(readMocks(join(t.root, 'data'), t.id).enabled).toBe(false);
   });
 
+  it('開著「看我的」重跑自動測試：用你選的 Chrome 分頁測，不開測試瀏覽器、不自動登入、寫入前先問；假資料就在你的分頁攔請求', async () => {
+    const t = setup({ account: false }); // 不需要測試帳號：你的分頁已經登入好
+    t.store.updateWorkItem(t.id, { stage: 'manual', status: 'review' });
+    await t.runner.rerunAutotest(t.id, false, true);
+    const text: string = t.lastTurn().input[1].text;
+    expect(text).toContain('flowpilot_shared_browser');
+    expect(text).toContain('先停下來問我');
+    expect(text).not.toContain('自動登入');
+    expect(t.sites).toEqual([]); // 沒有另外啟動本機網站
+    expect(t.get()).toMatchObject({ stage: 'autotest', status: 'running', activity: '用你選的 Chrome 分頁測試中' });
+    await t.complete('測試結果：通過');
+    await t.runner.rerunAutotest(t.id, true, true);
+    const mocked: string = t.lastTurn().input[1].text;
+    expect(mocked).toContain('page.route');
+    expect(mocked).toContain('unrouteAll');
+  });
+
   it('假資料的 API 後端好了：真的打得到（不是 404）就記下來並提醒；還是 404 的不算', async () => {
     const server = createServer((req, res) => {
       res.statusCode = req.url === '/api/v1/ready' ? 401 : 404;

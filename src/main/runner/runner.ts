@@ -902,7 +902,8 @@ export class Runner {
    * - 重測（你按了才做）：有頭、先列測試計畫給你確認
    * 兩者都用測試帳號自動登入；網站由 FlowPilot 在資料夾終端機啟動；環境照資料夾目前的 environment.ts。
    */
-  private async startTest(id: number, headed: boolean, mock = false): Promise<void> {
+  /** shared：用你在「看我的」選的 Chrome 分頁測（你的分頁已經登入好，不另外開測試瀏覽器、不自動登入；沒有寫入防護） */
+  private async startTest(id: number, headed: boolean, mock = false, shared = false): Promise<void> {
     const { codex, settings: getSettings } = this.deps;
     const item = this.deps.store.getWorkItem(id)!;
     const settings = getSettings();
@@ -911,6 +912,7 @@ export class Runner {
     this.update(id, { stage: headed ? 'retest' : 'autotest', status: 'running', activity: t('準備瀏覽器測試：啟動本機網站'), pending: null });
     try {
       if (!item.threadId || !item.folder) throw new Error(t('這張單還沒有 AI 對話'));
+      if (shared) return await this.startSharedTest(item, mock);
       const cwd = this.folderPath(item.folder);
       const env = readEnvironment(cwd);
       if (env === null) throw new Error(t('{file} 裡找不到 SIT／UAT 的標記', { file: ENVIRONMENT_FILE }));
@@ -1029,9 +1031,46 @@ export class Runner {
   }
 
   /** 重跑自動測試（無頭）：上次沒測成（例如登入失敗、沒開 VPN）處理好之後用 */
-  async rerunAutotest(id: number, mock = false) {
+  async rerunAutotest(id: number, mock = false, shared = false) {
     this.assertIdle(id, t('重跑自動測試'));
-    await this.startTest(id, false, mock);
+    await this.startTest(id, false, mock, shared);
+  }
+
+  /**
+   * 開著「看我的」時重跑自動測試：用你在 Chrome 選給 AI 的那個分頁測（你已經登入好、選好環境）。
+   * 你的 Chrome 沒有寫入防護：會改資料的操作先問你；假資料用 Playwright 在這個分頁攔請求（只影響這個分頁，關掉或重新接上就沒了）。
+   */
+  private async startSharedTest(item: StoredWorkItem, mock: boolean) {
+    const rule = this.deps.settings().projects[item.project];
+    const review = this.deps.store.getReview(item.ticketKey)?.review ?? null;
+    const mockPath = mockFile(this.deps.dataDir, item.id);
+    writeMocks(this.deps.dataDir, item.id, { ...readMocks(this.deps.dataDir, item.id), enabled: false }); // 測試瀏覽器的假資料不用開，這次在你的分頁裡攔
+    const text = [
+      `請使用 $${rule.testSkill} 測試剛才完成的開發。以下是 FlowPilot 的安排，跟技能預設規則不同的地方以這裡為準：`,
+      '',
+      `- 我開著「看我的」：這次用我在 Chrome 選給你的那個分頁測（${SHARED_BROWSER} 這個工具，在 exec 裡用 ${toolCall(SHARED_BROWSER, 'browser_snapshot')}、${toolCall(SHARED_BROWSER, 'browser_click')} 這類名稱呼叫）。不要開測試瀏覽器（${HEADLESS_BROWSER}、${HEADED_BROWSER}），也不要另外寫 Playwright 腳本。`,
+      '- 這個分頁我已經登入好、選好環境了：不要登出、不要換帳號、不要改環境；需要換頁就在這個分頁裡點或改網址。',
+      '- 這個瀏覽器沒有寫入防護，資料會真的寫進後端：會新增、修改、刪除、送出、儲值、下注、改設定的操作，先停下來問我，我同意才做；沒問到的就列進要我手動測的項目。看畫面、查詢、切換篩選、打開彈窗這些可以直接做。',
+      '- 不用先給我確認測試計畫：列出測試案例後直接開始測。',
+      ...(mock
+        ? [
+            '- 這次用假資料測（後端還沒好）：先看需求分析和這條分支上前端呼叫 API 的程式，判斷哪些 API 還沒好，照前端預期的格式寫假資料。',
+            `  在這個分頁用 browser_run_code_unsafe 執行 page.route(…)，讓這些 API 直接回假資料（route.fulfill，記得帶 access-control-allow-origin 標頭），其他請求照常；要測空資料、錯誤這些情境就換掉 route 再重新整理。假資料的內容也存一份在 ${mockPath}（格式：{"enabled":false,"rules":[{"id":"1","method":"GET","path":"/api/…","status":200,"body":"…","note":"…","on":true}]}，enabled 維持 false），方便之後查。`,
+            '  做不到（例如這個工具沒有 browser_run_code_unsafe）就照實說，不要改用測試瀏覽器。用到假資料的驗收項目一定要加 "mocked": true、needYou 寫 true。測完用 page.unrouteAll() 拿掉攔截，不要留在我的分頁裡。',
+          ]
+        : []),
+      ...designCompareLines(review),
+      '- 失敗時先判斷原因：是前端程式的問題就直接修正，然後重測失敗的部分，最多 3 輪；不是前端的問題（後端、資料、權限、環境）就記下來，不要修。',
+      '- 不要提交、不要推送。自己做，不要開子 AI（spawn_agent）分工。',
+      ...reportLines(review, this.shotDir),
+      '- 最後一行寫「測試結果：通過」、「測試結果：部分通過（原因）」或「測試結果：沒測成（原因）」。',
+    ].join('\n');
+    await this.deps.codex.start();
+    await this.startTurn(item, [
+      { type: 'skill', name: rule.testSkill, path: await this.skillPath(rule.testSkill) },
+      { type: 'text', text, text_elements: [] },
+    ]);
+    this.update(item.id, { activity: mock ? t('用你選的 Chrome 分頁測試中（假資料）') : t('用你選的 Chrome 分頁測試中'), autotested: true });
   }
 
   /** 檢查佔著資料夾的單，基底分支有沒有新提交（抓遠端只更新遠端紀錄，不動資料夾裡的檔案） */

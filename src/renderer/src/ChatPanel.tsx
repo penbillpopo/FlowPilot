@@ -618,12 +618,12 @@ export function ChatPanel({ item }: { item: WorkItem }) {
                   <>
                     <button
                       disabled={busy}
-                      title={t('用無頭瀏覽器再跑一次自動測試，打真的後端')}
+                      title={lookMode ? t('看我的模式開著：用你在 Chrome 選的分頁測，打真的後端（寫入資料前會先問你）') : t('用無頭瀏覽器再跑一次自動測試，打真的後端')}
                       onClick={(e) => {
                         e.currentTarget.closest('details')?.removeAttribute('open');
                         act(async () => {
                           stick.current = true;
-                          await api.rerunAutotest(item.id, false);
+                          await api.rerunAutotest(item.id, false, lookMode);
                         });
                       }}
                     >
@@ -631,12 +631,12 @@ export function ChatPanel({ item }: { item: WorkItem }) {
                     </button>
                     <button
                       disabled={busy}
-                      title={t('後端還沒好時用：AI 自己判斷哪些 API 還沒好、產生假資料來測；用到假資料的項目，後端好了要重測')}
+                      title={lookMode ? t('看我的模式開著：用你在 Chrome 選的分頁、假資料測（只攔這個分頁的請求，測完會拿掉）') : t('後端還沒好時用：AI 自己判斷哪些 API 還沒好、產生假資料來測；用到假資料的項目，後端好了要重測')}
                       onClick={(e) => {
                         e.currentTarget.closest('details')?.removeAttribute('open');
                         act(async () => {
                           stick.current = true;
-                          await api.rerunAutotest(item.id, true);
+                          await api.rerunAutotest(item.id, true, lookMode);
                         });
                       }}
                     >

@@ -707,7 +707,8 @@ export interface FlowPilotApi {
   /** mock：用假資料測（後端還沒好） */
   retest(itemId: number, mock?: boolean): Promise<void>;
   /** 重跑自動測試（無頭）：上次沒測成時用 */
-  rerunAutotest(itemId: number, mock?: boolean): Promise<void>;
+  /** shared：開著「看我的」時，用你選的 Chrome 分頁測 */
+  rerunAutotest(itemId: number, mock?: boolean, shared?: boolean): Promise<void>;
   /** 把分支 rebase 到最新的基底分支（有衝突交給 AI 解） */
   syncBase(itemId: number): Promise<void>;
   /** 單列表的標記：在工作台上（不能再選）、分支已經存在 */

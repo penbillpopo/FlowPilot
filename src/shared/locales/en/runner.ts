@@ -243,5 +243,7 @@ const en: Record<string, string> = {
   '；建議重跑自動測試': '; consider rerunning the auto test',
   '{apis} 已經有真的 API，建議關掉假資料、用真的重測': '{apis} now has a real API; turn off the mocks and retest with the real one',
   '{ticket}：後端好了': '{ticket}: backend ready',
+  '用你選的 Chrome 分頁測試中（假資料）': 'Testing in your chosen Chrome tab (mock data)',
+  '用你選的 Chrome 分頁測試中': 'Testing in your chosen Chrome tab',
 };
 export default en;

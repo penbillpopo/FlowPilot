@@ -191,5 +191,7 @@ const en: Record<string, string> = {
   '重跑自動測試（假資料）': 'Rerun auto test (mock data)',
   '重跑自動測試（真實資料）': 'Rerun auto test (real data)',
   '開瀏覽器測給我看（假資料）': 'Test it in a browser for me (mock data)',
+  '看我的模式開著：用你在 Chrome 選的分頁測，打真的後端（寫入資料前會先問你）': 'Look-at-mine mode is on: tests in the Chrome tab you picked, against the real backend (asks you before writing data)',
+  '看我的模式開著：用你在 Chrome 選的分頁、假資料測（只攔這個分頁的請求，測完會拿掉）': 'Look-at-mine mode is on: tests in the Chrome tab you picked with mock data (intercepts only that tab, removed afterwards)',
 };
 export default en;

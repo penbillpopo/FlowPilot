@@ -177,5 +177,7 @@ const en: Record<string, string> = {
   '報告產生中…': 'Generating report…',
   '產生分析報告': 'Generate analysis report',
   '分析報告：{step}（要幾分鐘，好了會通知你）': 'Analysis report: {step} (takes a few minutes; you will be notified)',
+  '整理這張單要做什麼、改動前後、測試時的截圖、重點和驗收結果，存成桌面的 PDF（大約一兩分鐘）': 'Summarize what this ticket does, before/after, screenshots from testing, key points and test results as a PDF on your Desktop (about a minute or two)',
+  '分析報告：{step}（大約一兩分鐘，好了會通知你）': 'Analysis report: {step} (about a minute or two; you will be notified)',
 };
 export default en;

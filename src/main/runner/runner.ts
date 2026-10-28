@@ -1,7 +1,7 @@
 // 執行器：把確認好的計畫變成工作項目，分配資料夾、建立並切換分支、啟動 Codex 執行技能，
 // 並追蹤每段對話的進度、提問與同意請求。
 import { execFile } from 'node:child_process';
-import { existsSync, mkdirSync, readFileSync, renameSync, rmSync, statSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, readdirSync, readFileSync, renameSync, rmSync, statSync, writeFileSync } from 'node:fs';
 import { basename, dirname, join } from 'node:path';
 import type { BoardState, BranchInfo, ChatEvent, Env, PortSource, RemoveResult, Review, TestReport, TestResult, PendingRequest, SkillInfo, TestState, TicketPlan, WorkStage, WorkStatus, I18nProgress } from '../../shared/types';
 import { toEntry } from '../chat';
@@ -199,7 +199,7 @@ const STAGE_DONE: Partial<Record<WorkStage, string>> = {
  * 要 AI 在最後附上的驗收表：以需求為主軸，每一條寫改了什麼、為什麼、改在哪、會影響哪裡、怎麼測，加上測試結果。
  * 由開發的 AI 寫（它最清楚為什麼這樣改）；FlowPilot 再拿實際改到的檔案核對有沒有漏講。
  */
-export function reportLines(review: Review | null): string[] {
+export function reportLines(review: Review | null, shotDir = ''): string[] {
   const acceptance = review?.acceptance ?? [];
   return [
     acceptance.length
@@ -209,7 +209,7 @@ export function reportLines(review: Review | null): string[] {
     '  - text：照抄 Jira「預期結果 / Acceptance Criteria」的原文，一條就是一個項目，不要改寫、不要拆細、不要自己換說法。Jira 沒寫預期結果時，才由你從需求整理幾條，並加 "fromAi": true。',
     '  - open、act、expect：給我測的三行步驟，每行一句白話、不寫程式名詞（元件、API、狀態值都不要）：open 打開哪一頁（哪個商戶、要不要先登入）、act 做什麼操作、expect 應該看到什麼。',
     '  - page：要測的頁面路徑，要能直接打開（例如 /order/list）；路由有參數就填一個實際存在、你測過的網址，找不到就寫空字串。',
-    '  - shot：這一條你在瀏覽器測過、畫面正確時，用 browser_take_screenshot 截一張圖（filename 填 ac-<單號>-<no>.png），這裡只填檔名；沒截就省略。這張圖會給我當「應該長這樣」的參考。',
+    `  - shot：這一條你在瀏覽器測過時，用 browser_take_screenshot 截一張畫面（filename 一定要填完整路徑 ${shotDir ? `${shotDir}/` : ''}ac-<單號>-<no>.png，不要存到專案資料夾），這裡只填檔名；沒截就省略。這張圖會給我當「應該長這樣」的參考，也會放進分析報告，所以每一條測過的都要截。`,
     '  - needYou：只有你真的沒辦法自己確認的才是 true（例如要真實寫入、要另一個系統配合、要看操作手感、你沒測到）；你在瀏覽器確實測過、有截圖或證據的是 false。要我親手測的盡量精簡，通常不超過 5 條。',
     '  - result、note：你的測試結果（通過、沒過或沒測）和一句證據。',
     '  - change、why、files、impact：給開發參考的資訊（我測試時不看）：change 改了什麼、why 依據哪一段、files 改到的檔案路徑、impact 也會影響到的頁面（改到共用的元件、服務、樣式時，一定要實際搜尋有哪些地方用到；沒有就寫空字串）。',
@@ -227,7 +227,7 @@ export function reportLines(review: Review | null): string[] {
  * 只寫這次有變的條目，其他的 FlowPilot 沿用上一版：以前要它每次重寫完整的表，
  * 合成 15 張的單光重寫就要寫好幾千字，問一句簡單的話也要等三分多鐘（實際量過）。
  */
-function acceptanceUpdateNote(review: Review | null): string {
+function acceptanceUpdateNote(review: Review | null, shotDir = ''): string {
   return [
     '',
     '',
@@ -243,7 +243,7 @@ function acceptanceUpdateNote(review: Review | null): string {
     '  {"update":true,"acceptance":[{"no":3,"text":"Jira 預期結果原文","open":"…","act":"…","expect":"…","page":"/…","needYou":false,"result":"通過","note":"看到…","shot":"ac-ALL-1-3.png","change":"…","why":"…","files":["src/…"],"impact":"…"}],"manualPassed":["其他手動項目的原文"],"otherChanges":[],"attention":[],"manual":[]}',
     '  ```',
     '- 各欄位怎麼寫，跟之前一樣：',
-    ...reportLines(review).slice(2, -3),
+    ...reportLines(review, shotDir).slice(2, -3),
   ].join('\n');
 }
 
@@ -702,6 +702,29 @@ export class Runner {
     return skill.path;
   }
 
+  /** 驗收截圖放的地方（瀏覽器測試紀錄） */
+  private get shotDir(): string {
+    return join(this.deps.dataDir, '瀏覽器測試紀錄');
+  }
+
+  /**
+   * 把 AI 存到專案資料夾裡的驗收截圖（ac-*.png）搬到瀏覽器測試紀錄：
+   * 共用瀏覽器截圖時，沒給完整路徑會存到專案資料夾（實際發生過），FlowPilot 找不到，還可能被一起提交
+   */
+  private sweepShots(item: StoredWorkItem) {
+    if (!item.folder) return;
+    const cwd = this.folderPath(item.folder);
+    try {
+      for (const name of readdirSync(cwd)) {
+        if (!/^ac-[\w.\-]+\.png$/i.test(name)) continue;
+        mkdirSync(this.shotDir, { recursive: true });
+        renameSync(join(cwd, name), join(this.shotDir, name));
+      }
+    } catch (error) {
+      this.deps.log(`${item.ticketKey}：搬驗收截圖失敗：${(error as Error).message}`);
+    }
+  }
+
   /**
    * 換一個全新的共用瀏覽器：結束 FlowPilot 開的所有共用瀏覽器工具，再請 Codex 重新載入（只重開結束掉的，別的工具不受影響）。
    * 為什麼：Chrome 的 Playwright 擴充功能一次只接一個。換新對話、或別張單用過之後，舊的那個還佔著 Chrome，
@@ -879,7 +902,7 @@ export class Runner {
         '- 失敗時先判斷原因：是前端程式的問題就直接修正，然後重測失敗的部分，最多 3 輪；不是前端的問題（後端、資料、權限、環境）就記下來，不要修。API 回 404 通常是後端還沒部署這支 API，不是前端的錯。',
         '- 不要提交、不要推送。自己做，不要開子 AI（spawn_agent）分工。',
         ...designCompareLines(this.deps.store.getReview(item.ticketKey)?.review ?? null),
-        ...reportLines(this.deps.store.getReview(item.ticketKey)?.review ?? null),
+        ...reportLines(this.deps.store.getReview(item.ticketKey)?.review ?? null, this.shotDir),
         '- 回覆的最後一行一定要照這個格式寫結果（FlowPilot 會讀這一行）：「測試結果：通過」、「測試結果：部分通過（原因）」或「測試結果：沒測成（原因）」。主要功能一個都沒測到（例如登入失敗、網站打不開）就是「沒測成」；有測到但有些項目沒測或沒過是「部分通過」。',
       ];
       const text = headed
@@ -993,7 +1016,7 @@ export class Runner {
       '## 整理驗收表',
       '',
       '這張單我選了不跑自動測試。請整理驗收表給我手動測試用：不要開瀏覽器測試、不要改程式碼。用 git diff 對照基底分支，確認每個改到的檔案都有說明。每一條的 result 都寫「沒測」、needYou 都寫 true。',
-      ...reportLines(review),
+      ...reportLines(review, this.shotDir),
     ].join('\n');
     await this.reply(id, text, [], { asFix: false, activity: t('已跳過自動測試：AI 整理驗收表中') });
   }
@@ -1005,7 +1028,7 @@ export class Runner {
       '## 整理驗收表',
       '',
       '請整理這張單的驗收表給我手動測試用，不用重新測試、不要改程式碼。用 git diff 對照基底分支，確認每個改到的檔案都有說明。沒測過的 result 寫「沒測」、needYou 寫 true。',
-      ...reportLines(review),
+      ...reportLines(review, this.shotDir),
     ].join('\n');
     await this.reply(id, text, [], { asFix: false, activity: t('AI 整理驗收表中') });
   }
@@ -1157,6 +1180,7 @@ export class Runner {
       case 'turn/completed': {
         this.turns.delete(threadId);
         this.streaming.delete(item.id);
+        this.sweepShots(item);
         // 換新對話後讀交接的那一輪：回到換之前的狀態，不走一般的流程
         const warmup = this.warmups.get(threadId);
         if (warmup) {
@@ -1524,7 +1548,7 @@ export class Runner {
     }
     // 等你測試時要求修改：附上請 AI 一併更新驗收表的說明
     const asFix = !this.turns.get(item.threadId!) && item.stage === 'manual' && options.asFix !== false;
-    let note = asFix && text.trim() && !options.noReportNote ? acceptanceUpdateNote(this.deps.store.getReview(item.ticketKey)?.review ?? null) : '';
+    let note = asFix && text.trim() && !options.noReportNote ? acceptanceUpdateNote(this.deps.store.getReview(item.ticketKey)?.review ?? null, this.shotDir) : '';
     // 這段對話在這次啟動後第一次收到你的話：告訴它有共用瀏覽器可以用（新功能之前就開工的單，開工指示裡沒寫）
     if (text.trim() && !this.sharedBrowserTold.has(item.threadId!)) {
       this.sharedBrowserTold.add(item.threadId!);

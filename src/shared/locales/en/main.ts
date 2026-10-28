@@ -168,5 +168,8 @@ const en: Record<string, string> = {
   '技術附錄': 'Technical appendix',
   '檔案': 'File',
   '做什麼': 'Purpose',
+  '測試時沒有截到畫面（截圖會在 AI 瀏覽器測試時自動截）': 'No screens were captured during testing (screenshots are taken automatically when AI tests in the browser)',
+  '測試時的畫面（改動後）': 'Screen from testing (after the change)',
+  '改動說明': 'Changes',
 };
 export default en;

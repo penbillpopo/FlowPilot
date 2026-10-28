@@ -659,10 +659,10 @@ export function ChatPanel({ item }: { item: WorkItem }) {
                 )}
                 {active && item.threadId && item.folder && <button onClick={() => act(() => api.openInVSCode(item.id))}>{t('在 VS Code 查看')}</button>}
                 {/* 測試完成後：產生分析報告（截改動前後、整理重點，存成桌面的 PDF；要幾分鐘，背景跑） */}
-                {item.testReport && item.folder && !running && item.status !== 'preparing' && (
+                {item.testReport && !running && item.status !== 'preparing' && (
                   <button
                     disabled={!!reportProgress}
-                    title={t('整理這張單要做什麼、改動前後的截圖、重點和驗收結果，存成桌面的 PDF（要幾分鐘，會暫時重啟本機網站）')}
+                    title={t('整理這張單要做什麼、改動前後、測試時的截圖、重點和驗收結果，存成桌面的 PDF（大約一兩分鐘）')}
                     onClick={(e) => {
                       e.currentTarget.closest('details')?.removeAttribute('open');
                       setReportProgress(t('準備中'));
@@ -801,7 +801,7 @@ export function ChatPanel({ item }: { item: WorkItem }) {
       </div>
 
       {notice && <div className="notice-ok">{notice}</div>}
-      {reportProgress && <div className="notice-ok"><span className="spinner" /> {t('分析報告：{step}（要幾分鐘，好了會通知你）', { step: reportProgress })}</div>}
+      {reportProgress && <div className="notice-ok"><span className="spinner" /> {t('分析報告：{step}（大約一兩分鐘，好了會通知你）', { step: reportProgress })}</div>}
       {error && <div className="error">{error}</div>}
 
       {canSend && (

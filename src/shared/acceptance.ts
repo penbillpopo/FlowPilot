@@ -7,7 +7,8 @@ export const ACCEPTANCE_NOTE = zhOnly('［FlowPilot 附註］');
 
 /** 驗收表裡要你親自看的條目：AI 說要你測的，加上沒通過、沒測的 */
 export function needsYou(a: AcceptanceItem): boolean {
-  return a.needYou || a.result !== zhOnly('通過');
+  // 用假資料測的：後端好了要用真的 API 重測，一律還要你測
+  return a.needYou || a.result !== zhOnly('通過') || !!a.mocked;
 }
 
 /** 還欠幾項測試：要你測、還沒勾「我測過了」的，加上沒勾的其他手動項目 */

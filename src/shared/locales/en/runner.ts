@@ -241,5 +241,7 @@ const en: Record<string, string> = {
   '已 rebase 到最新的 {base}（{count} 個新提交）': 'Rebased onto the latest {base} ({count} new commit(s))',
   '；這條分支推送過，要強制推送才會更新遠端': '; this branch was pushed before, so it needs a force push to update the remote',
   '；建議重跑自動測試': '; consider rerunning the auto test',
+  '{apis} 已經有真的 API，建議關掉假資料、用真的重測': '{apis} now has a real API; turn off the mocks and retest with the real one',
+  '{ticket}：後端好了': '{ticket}: backend ready',
 };
 export default en;

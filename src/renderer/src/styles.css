@@ -530,7 +530,8 @@ tbody tr.planning input { cursor: pointer; }
 .attach-thumb { position: relative; width: 72px; height: 54px; border-radius: 6px; overflow: hidden; border: 1px solid var(--line); background: var(--code-bg); }
 .attach-thumb img { width: 100%; height: 100%; object-fit: cover; display: block; }
 .attach-thumb button { position: absolute; top: 2px; right: 2px; width: 18px; height: 18px; padding: 0; border-radius: 50%; background: rgba(0, 0, 0, 0.65) !important; color: #fff !important; font-size: 12px; line-height: 18px; text-align: center; }
-.composer.dragging, .discuss-box.dragging { outline: 2px dashed var(--accent); outline-offset: 2px; border-radius: 8px; }
+/* 拖曳檔案進來：只讓輸入框本身變亮（實線＋淡淡的光），不畫外框（外框會被上面的對話區蓋到，看起來像跑版） */
+.composer.dragging textarea, .discuss-box.dragging textarea { border-color: var(--accent) !important; box-shadow: 0 0 0 2px color-mix(in srgb, var(--accent) 30%, transparent), inset 0 0 18px color-mix(in srgb, var(--accent) 18%, transparent) !important; }
 .discuss-box { align-items: flex-end; }
 .attach-button { white-space: nowrap; }
 .ac-summary .ac-export { margin-left: auto; }
@@ -610,3 +611,20 @@ td.time { white-space: nowrap; }
 
 /* 基底分支有新提交的提醒（標題下面） */
 .base-behind { display: flex; align-items: center; gap: 8px; margin: 0 16px 6px; padding: 4px 10px; border: 1px solid #e0a030; border-radius: 6px; color: #e0a030; flex-wrap: wrap; }
+
+/* 假資料（後端還沒好時用） */
+.mock-toggle.on { border-color: #d97706; color: #f59e0b; }
+.mock-panel { margin-top: 8px; display: flex; flex-direction: column; gap: 8px; border: 1px solid #d97706; }
+.mock-switch { display: inline-flex; align-items: center; gap: 6px; font-weight: 600; }
+.mock-list { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 6px; }
+.mock-list li { border: 1px solid var(--line); border-radius: 6px; padding: 6px 8px; }
+.mock-list li.off { opacity: .55; }
+.mock-head { display: flex; align-items: center; gap: 8px; min-width: 0; }
+.mock-path { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.mock-note { margin-top: 2px; }
+.mock-edit { margin-top: 6px; display: flex; flex-direction: column; gap: 6px; }
+.mock-edit textarea { width: 100%; font-family: ui-monospace, Menlo, monospace; font-size: 12px; }
+.mock-method { width: 72px; } .mock-status { width: 72px; } .mock-path-input { flex: 1; min-width: 0; }
+.mock-ready, .mock-ready-tag { color: #22c55e; }
+.mock-ready-tag { font-size: 11px; white-space: nowrap; }
+.ac-mocked { font-size: 11px; padding: 0 6px; border-radius: 8px; background: #d97706; color: #fff; white-space: nowrap; flex-shrink: 0; }

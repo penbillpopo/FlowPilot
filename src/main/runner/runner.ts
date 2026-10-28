@@ -11,6 +11,7 @@ import { configFile, resolveAccount, writeAccountFile } from '../testaccounts';
 import type { CodexRpc, RpcMessage } from '../codex/rpc';
 import { askStructured, listSkills, runStructured } from '../codex/structured';
 import { getLang, t } from '../../shared/i18n';
+import { EMPTY_MOCKS, type MockSet } from '../../shared/mocks';
 import { userBrowserToolsOff } from '../codex/user-tools';
 import {
   aheadBehind,
@@ -94,6 +95,25 @@ const SHARED_BROWSER = 'flowpilot_shared_browser';
  *   截圖紀錄放在 FlowPilot 的資料夾，不會弄髒專案；你原本的 playwright 在這些對話裡關掉，AI 才不會用錯。
  */
 /** 這張單的測試瀏覽器把擋下、放行的請求記在這裡（每次測試開始時清空） */
+/** 這張單的假資料（寫入防護用請求紀錄的路徑推出這個位置，兩邊要一致） */
+export function mockFile(dataDir: string, itemId: number): string {
+  return join(dataDir, '假資料', `${itemId}.json`);
+}
+
+export function readMocks(dataDir: string, itemId: number): MockSet {
+  try {
+    const set = JSON.parse(readFileSync(mockFile(dataDir, itemId), 'utf8'));
+    return { enabled: !!set.enabled, rules: Array.isArray(set.rules) ? set.rules : [], ready: Array.isArray(set.ready) ? set.ready : [] };
+  } catch {
+    return { ...EMPTY_MOCKS };
+  }
+}
+
+export function writeMocks(dataDir: string, itemId: number, set: MockSet) {
+  mkdirSync(join(dataDir, '假資料'), { recursive: true });
+  writeFileSync(mockFile(dataDir, itemId), JSON.stringify(set, null, 2));
+}
+
 export function requestLogFile(dataDir: string, itemId: number): string {
   return join(dataDir, '測試請求', `${itemId}.jsonl`);
 }
@@ -335,9 +355,11 @@ export class Runner {
     setInterval(() => {
       if (this.deps.store.listWorkItems().some((i) => i.status === 'queued')) void this.schedule();
     }, 60_000);
-    // 每 10 分鐘看一次基底分支有沒有新提交（只提醒，要你按「同步」才 rebase）
+    // 每 10 分鐘看一次基底分支有沒有新提交（只提醒，要你按「同步」才 rebase），也看假資料的 API 後端好了沒
     setTimeout(() => void this.checkBaseUpdates(), 30_000);
     setInterval(() => void this.checkBaseUpdates(), 10 * 60_000);
+    setTimeout(() => void this.checkMockBackends(), 45_000);
+    setInterval(() => void this.checkMockBackends(), 10 * 60_000);
     deps.codex.setDisconnectHandler(() => {
       deps.log('跟 Codex 常駐服務的連線中斷，5 秒後重新連線');
       setTimeout(() => this.resubscribe().catch((e) => deps.log(`重新連線失敗：${e.message}`)), 5000);
@@ -354,7 +376,7 @@ export class Runner {
       folders: this.deps.settings().folders.map((f) => ({ ...f, itemId: occupiedBy.get(f.name) ?? null })),
       items: items.map((full) => {
         const { branchCreated: _, commitSha: __, oldThreads: ___, ...item } = full;
-        return { ...item, i18n: this.i18nProgress(full), baseBehind: this.baseBehind.get(full.id) || undefined };
+        return { ...item, i18n: this.i18nProgress(full), baseBehind: this.baseBehind.get(full.id) || undefined, mockCount: this.mockCount(full.id) };
       }),
       pendingRun: store.pendingPlannedRun(),
       streaming: Object.fromEntries(this.streaming),
@@ -722,6 +744,12 @@ export class Runner {
     return !this.deps.settings().projects[item.project]?.merchants?.length;
   }
 
+  /** 開著的假資料有幾筆（總開關關著就是 0；給畫面的按鈕顯示） */
+  private mockCount(id: number): number | undefined {
+    const set = readMocks(this.deps.dataDir, id);
+    return (set.enabled && set.rules.filter((r) => r.on).length) || undefined;
+  }
+
   /** 驗收截圖放的地方（瀏覽器測試紀錄） */
   private get shotDir(): string {
     return join(this.deps.dataDir, '瀏覽器測試紀錄');
@@ -907,7 +935,18 @@ export class Runner {
       const requestLog = requestLogFile(this.deps.dataDir, id);
       mkdirSync(dirname(requestLog), { recursive: true });
       writeFileSync(requestLog, ''); // 每次測試從空的紀錄開始
+      // 有開假資料：告訴 AI 哪些 API 是假的；用到的驗收項目標成「假資料測的」，後端好了要重測
+      const mocks = readMocks(this.deps.dataDir, id);
+      const mocked = mocks.enabled ? mocks.rules.filter((r) => r.on) : [];
+      const mockLines = mocked.length
+        ? [
+            '- 假資料：後端還沒好，下面這些 API 由 FlowPilot 在測試瀏覽器裡回假的內容（請求紀錄裡會標「假資料」）：',
+            ...mocked.map((r) => `  - ${r.method || '任何方法'} ${r.path}：${r.note || '（沒有說明）'}`),
+            '  用到這些 API 的驗收項目：照實測、照實寫 result，但一定要加 "mocked": true、needYou 寫 true，note 註明「用假資料測的，後端好了要重測」。畫面上右下角的「FlowPilot 假資料模式」標籤是 FlowPilot 加的，不是程式的問題。',
+          ]
+        : [];
       const common = [
+        ...mockLines,
         `- 寫入防護：這個測試瀏覽器會擋下所有會新增、修改、刪除資料的請求（PUT、PATCH、DELETE，以及網址看起來會改資料的 POST），不會送到後端，並回一個假的成功（success: true）。登入和查詢會正常放行。`,
         `  每個被擋下或放行的請求（含送出的內容）都記在 ${requestLog}，一行一筆 JSON。按下儲存、送出之後，用終端機讀這個檔案（例如 cat），逐欄對照預期的 payload（欄位、值、不該送的欄位、null）。`,
         '  寫入防護是照網址猜的，可能猜錯：如果某個被擋下的請求其實是查詢或登入步驟（例如被擋之後畫面變空、資料不見、被登出），在結果的「要你注意」裡寫出那個網址，FlowPilot 會修正規則。',
@@ -1072,6 +1111,35 @@ export class Runner {
         (pushed ? t('；這條分支推送過，要強制推送才會更新遠端') : '') +
         (item.testReport ? t('；建議重跑自動測試') : ''),
     });
+  }
+
+  /**
+   * 假資料的 API 後端好了沒：直接打真的後端，回「找不到」（404）就是還沒好，其他狀態（包括要登入的 401）代表路徑已經存在。
+   * 新好的記下來並通知你：拿掉假資料、用真的 API 重測。路徑有 * 的看不出實際網址，不檢查。
+   */
+  async checkMockBackends() {
+    let changed = false;
+    for (const item of this.deps.store.listWorkItems()) {
+      if (!item.folder || FINISHED.includes(item.status)) continue;
+      const set = readMocks(this.deps.dataDir, item.id);
+      if (!set.enabled || !set.rules.some((r) => r.on)) continue;
+      const apiUrl = readApiUrl(this.folderPath(item.folder));
+      if (!apiUrl) continue;
+      const origin = new URL(apiUrl).origin;
+      const ready = new Set(set.ready ?? []);
+      const fresh: string[] = [];
+      for (const rule of set.rules.filter((r) => r.on && !r.path.includes('*') && !ready.has(r.path))) {
+        try {
+          const response = await fetch(origin + rule.path, { method: rule.method || 'GET', signal: AbortSignal.timeout(10_000) });
+          if (response.status !== 404) fresh.push(rule.path);
+        } catch {}
+      }
+      if (!fresh.length) continue;
+      writeMocks(this.deps.dataDir, item.id, { ...set, ready: [...ready, ...fresh] });
+      this.notify(item.id, t('{ticket}：後端好了', { ticket: item.ticketKey }), t('{apis} 已經有真的 API，建議關掉假資料、用真的重測', { apis: fresh.join(t('、')) }));
+      changed = true;
+    }
+    if (changed) this.deps.onChange();
   }
 
   private assertIdle(id: number, what: string) {

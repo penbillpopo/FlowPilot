@@ -1,5 +1,5 @@
 // 把主程序的功能交給畫面使用（window.flowpilot）
-import { contextBridge, ipcRenderer } from 'electron';
+import { contextBridge, ipcRenderer, webUtils } from 'electron';
 import type { FlowPilotApi } from '../shared/types';
 
 const api: FlowPilotApi = {
@@ -14,7 +14,15 @@ const api: FlowPilotApi = {
   latestRun: () => ipcRenderer.invoke('run:latest'),
   openExternal: (url) => ipcRenderer.invoke('shell:openExternal', url),
   revealI18n: (id) => ipcRenderer.invoke('i18n:reveal', id),
+  mocks: {
+    get: (id) => ipcRenderer.invoke('mocks:get', id),
+    save: (id, set) => ipcRenderer.invoke('mocks:save', id, set),
+    generate: (id) => ipcRenderer.invoke('mocks:generate', id),
+    open: (id) => ipcRenderer.invoke('mocks:open', id),
+  },
   setLang: (lang) => ipcRenderer.invoke('lang:set', lang),
+  // 拖曳進來的檔案在電腦上的路徑（新版 Electron 不能直接從檔案拿到路徑）
+  pathForFile: (file) => webUtils.getPathForFile(file),
   resetSharedBrowser: () => ipcRenderer.invoke('sharedBrowser:reset'),
   openSettingsFile: () => ipcRenderer.invoke('settings:open'),
   planOptions: () => ipcRenderer.invoke('plan:options'),

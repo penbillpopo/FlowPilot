@@ -77,6 +77,7 @@ export function parseTestReport(message: string, previous: TestReport | null = n
         ...(text(a?.act) ? { act: text(a?.act) } : {}),
         ...(text(a?.expect) ? { expect: text(a?.expect) } : {}),
         ...(/^[\w.\-]+\.(png|jpe?g)$/i.test(text(a?.shot)) ? { shot: text(a?.shot) } : {}),
+        ...(a?.mocked === true ? { mocked: true } : {}),
         needYou: a?.needYou === true,
       };
       const old = before.get(item.no);

@@ -18,11 +18,14 @@ import { applyDiscussion, buildCodeCheckPrompt, buildDiscussionPrompt, buildFigm
 import { deriveBranches, planProblem } from './planner/rules';
 import { loadHistory } from './chat';
 import { generateReport } from './report';
+import { reviewBrief } from './planner/review';
 import { getLang, type Lang, setLang, t, zhOnly } from '../shared/i18n';
 import { FolderTerminals } from './folderterminals';
 import { branchCommits, commitAll, commitDiff, commitFiles, commitStaged, discard, fileDiff, gitState, pushBranch, stage, unstage } from './gitpanel';
 import { diffSnapshots, updateMessage } from './requirements';
-import { HANDOFF_PROMPT_TITLE, HEADLESS_BROWSER_NAME, Runner, threadConfig } from './runner/runner';
+import { HANDOFF_PROMPT_TITLE, HEADLESS_BROWSER_NAME, readMocks, Runner, threadConfig, writeMocks } from './runner/runner';
+import { openMockWindow } from './mock-window';
+import type { MockRule, MockSet } from '../shared/mocks';
 import { VSCode } from './vscode';
 import { loadSettings } from './settings';
 import { Store } from './store';
@@ -349,6 +352,57 @@ function closeTestBrowsers(): number {
  * 試登一次：開一段獨立的臨時對話（不弄亂這張單的開發對話），用無頭瀏覽器照帳號檔登入看看。
  * 瀏覽器一樣套上寫入防護。
  */
+/**
+ * 請 AI 依需求和前端程式產生假資料：每支還沒有的 API 一筆「正常有資料」，另外準備空資料、錯誤的情境（預設關著，要測再打開）。
+ * 唯讀：只讀程式碼，不改檔案。
+ */
+async function generateMocks(itemId: number): Promise<MockSet> {
+  const item = store.getWorkItem(itemId);
+  if (!item) throw new Error(t('找不到這張單'));
+  const review = store.getReview(item.ticketKey)?.review ?? null;
+  const { result } = await runStructured<{ rules: Omit<MockRule, 'id'>[] }>(codex, {
+    cwd: projectFolder(item),
+    timeoutMs: 300_000,
+    keepLanguage: true,
+    schema: {
+      type: 'object',
+      additionalProperties: false,
+      required: ['rules'],
+      properties: {
+        rules: {
+          type: 'array',
+          items: {
+            type: 'object',
+            additionalProperties: false,
+            required: ['method', 'path', 'status', 'body', 'note', 'on'],
+            properties: { method: { type: 'string' }, path: { type: 'string' }, status: { type: 'number' }, body: { type: 'string' }, note: { type: 'string' }, on: { type: 'boolean' } },
+          },
+        },
+      },
+    },
+    prompt: zhOnly(
+      [
+        `${item.ticketKey} 的後端還沒好，我要先用假資料測前端。請產生假的 API 回應（只讀程式碼，不改任何檔案）。`,
+        item.folder ? `看這張單的分支 ${item.branch} 上前端怎麼呼叫這些 API、用什麼資料格式（介面、model、service），假資料要跟前端預期的格式完全一樣。` : '',
+        '- 每支前端會呼叫、後端還沒做好的 API 一筆「正常有資料」的情境（on 填 true），資料要合理、夠多筆才看得出排版（列表 3～5 筆）。',
+        '- 另外各準備「空資料」「錯誤」的情境（on 填 false，要測時再打開）。',
+        '- method：GET、POST…；path：網址路徑（從 / 開始，不含網域和查詢參數；有變動的部分用 *，例如 /api/v1/mission/*）。',
+        '- body：回應的完整 JSON 字串，照專案現有 API 的外層格式（例如 code、data、message）；status：HTTP 狀態碼。',
+        '- note：用繁體中文一句話：這是哪支 API、什麼情境。',
+        '- 已經有、能正常用的 API（登入、選單這些）不要假。',
+        '',
+        '## 需求分析（含後端 API 規格）',
+        reviewBrief(review) || `${item.ticketKey} ${item.ticketSummary}`,
+      ].filter(Boolean).join('\n'),
+    ),
+  });
+  const set: MockSet = { enabled: true, rules: (result.rules ?? []).map((r, i) => ({ ...r, id: `${Date.now()}-${i}`, method: r.method.toUpperCase() })), ready: [] };
+  writeMocks(dataDir, itemId, set);
+  runner.notifyChanged();
+  log(`${item.ticketKey}：AI 產生了 ${set.rules.length} 筆假資料`);
+  return set;
+}
+
 async function trialLogin(itemId: number): Promise<{ ok: boolean; reason: string }> {
   const { url, env, accountFile, username, hosts } = await runner.prepareTrialLogin(itemId);
   const browser = threadConfig(dataDir, writeGuardPath(), itemId, hosts).mcp_servers[HEADLESS_BROWSER_NAME];
@@ -552,6 +606,21 @@ try {
 
 function registerIpc() {
   ipcMain.handle('sharedBrowser:reset', () => runner.resetSharedBrowser());
+  // 假資料：存在 FlowPilot 的資料夾，只在 FlowPilot 開的瀏覽器裡生效（不改專案程式碼）
+  ipcMain.handle('mocks:get', (_event, id: number) => readMocks(dataDir, id));
+  ipcMain.handle('mocks:save', (_event, id: number, set: MockSet) => {
+    writeMocks(dataDir, id, set);
+    runner.notifyChanged();
+  });
+  ipcMain.handle('mocks:generate', (_event, id: number) => generateMocks(id));
+  ipcMain.handle('mocks:open', async (_event, id: number) => {
+    const item = store.getWorkItem(id);
+    if (!item?.folder) throw new Error(t('這張單還沒有分配資料夾'));
+    const settings = loadSettings(settingsFile);
+    const folder = settings.folders.find((f) => f.name === item.folder)!;
+    const url = await folderTerminals.ensureSite(folder.name, folder.path, startCommand(settings.projects[folder.project]?.startCommand, folder.port), folder.port ?? 4200);
+    await openMockWindow(url, item.ticketKey, () => readMocks(dataDir, id));
+  });
   ipcMain.handle('lang:set', (_event, lang: Lang) => {
     setLang(lang);
     mkdirSync(dataDir, { recursive: true });

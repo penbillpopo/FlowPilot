@@ -1,4 +1,5 @@
 // 附圖：「截圖」（跟 ⌘⇧4 一樣拖範圍，截完可以畫線、打字）、「附圖」按鈕選檔、拖曳進來（有沒有按 Shift 都可以）、直接貼上。存到本機後給 AI 看，輸入框上方顯示縮圖、可以拿掉。
+// 拖曳進來的不是圖片（例如 .md 文件）：把檔案的完整路徑交給 onPaths，插進輸入框讓 AI 自己去讀。
 import { useRef, useState } from 'react';
 import { ScreenshotEditor } from './ScreenshotEditor';
 import { t } from '../../shared/i18n';
@@ -21,7 +22,13 @@ export interface ImageAttach {
   pickButton: React.ReactNode;
 }
 
-export function useImageAttach(): ImageAttach {
+/** 拖曳進來的檔案路徑插進輸入框：加引號（路徑可能有空白），接在原本的字後面 */
+export function appendPaths(prev: string, paths: string[]): string {
+  const quoted = paths.map((p) => `'${p}'`).join(' ');
+  return prev.trim() ? `${prev.replace(/\s+$/, '')} ${quoted}` : quoted;
+}
+
+export function useImageAttach(options: { onPaths?: (paths: string[]) => void } = {}): ImageAttach {
   const [images, setImages] = useState<{ path: string; preview: string }[]>([]);
   const [dragging, setDragging] = useState(false);
   /** 截好、正在編輯的圖 */
@@ -72,7 +79,10 @@ export function useImageAttach(): ImageAttach {
         if (!hasFiles(e)) return;
         e.preventDefault();
         setDragging(false);
-        void add([...e.dataTransfer.files]);
+        const files = [...e.dataTransfer.files];
+        void add(files.filter((f) => f.type.startsWith('image/')));
+        const paths = files.filter((f) => !f.type.startsWith('image/')).map((f) => api.pathForFile(f)).filter(Boolean);
+        if (paths.length) options.onPaths?.(paths);
       },
     },
     pickButton: (

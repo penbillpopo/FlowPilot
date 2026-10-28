@@ -5,8 +5,9 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { describe, expect, it } from 'vitest';
 import type { CodexRpc, RpcMessage } from '../src/main/codex/rpc';
+import { createServer } from 'node:http';
 import { i18nWorkFile } from '../src/main/i18n-sheet';
-import { Runner } from '../src/main/runner/runner';
+import { readMocks, Runner, writeMocks } from '../src/main/runner/runner';
 import { DEFAULT_SETTINGS_YAML, parseSettings } from '../src/main/settings';
 import { Store } from '../src/main/store';
 import type { VSCode } from '../src/main/vscode';
@@ -398,6 +399,39 @@ describe('流程階段', () => {
     expect(t.get()).toMatchObject({ stage: 'manual', status: 'running', autotested: false });
     await t.complete('驗收表整理好了');
     expect(t.get()).toMatchObject({ stage: 'manual', status: 'review', activity: '已跳過自動測試，等你測試', autotested: false });
+  });
+
+  it('假資料開著：測試說明列出哪些 API 是假的，並要求用到的項目標成「假資料測的」', async () => {
+    const t = setup();
+    writeMocks(join(t.root, 'data'), t.id, { enabled: true, rules: [
+      { id: '1', method: 'GET', path: '/api/v1/mission/list', status: 200, body: '{}', note: '任務列表（正常有資料）', on: true },
+      { id: '2', method: 'GET', path: '/api/v1/mission/list', status: 200, body: '{}', note: '任務列表（空資料）', on: false },
+    ] });
+    await t.complete(); // 開發完 → 自動測試
+    const text: string = t.lastTurn().input[1].text;
+    expect(text).toContain('GET /api/v1/mission/list：任務列表（正常有資料）');
+    expect(text).not.toContain('空資料');
+    expect(text).toContain('"mocked": true');
+  });
+
+  it('假資料的 API 後端好了：真的打得到（不是 404）就記下來並提醒；還是 404 的不算', async () => {
+    const server = createServer((req, res) => {
+      res.statusCode = req.url === '/api/v1/ready' ? 401 : 404;
+      res.end();
+    });
+    await new Promise<void>((r) => server.listen(0, r));
+    const port = (server.address() as { port: number }).port;
+    const t = setup();
+    writeFileSync(join(t.folder, 'src/environments/environment.ts'), ENV.replace("'http://sit/api'", `'http://127.0.0.1:${port}/api'`));
+    writeMocks(join(t.root, 'data'), t.id, { enabled: true, rules: [
+      { id: '1', method: 'GET', path: '/api/v1/ready', status: 200, body: '{}', note: '', on: true },
+      { id: '2', method: 'GET', path: '/api/v1/not-yet', status: 200, body: '{}', note: '', on: true },
+      { id: '3', method: 'GET', path: '/api/v1/list/*', status: 200, body: '{}', note: '', on: true },
+    ] });
+    t.store.updateWorkItem(t.id, { stage: 'manual', status: 'review' });
+    await t.runner.checkMockBackends();
+    server.close();
+    expect(readMocks(join(t.root, 'data'), t.id).ready).toEqual(['/api/v1/ready']);
   });
 
   it('檢查計畫要自我審查：開發完先審查，審查完才自動測試', async () => {

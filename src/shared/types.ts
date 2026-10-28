@@ -293,6 +293,8 @@ export interface AcceptanceItem {
   expect?: string;
   /** AI 測試時這一條的截圖（存在瀏覽器測試紀錄資料夾的檔名），「應該長這樣」 */
   shot?: string;
+  /** 用假資料測的（後端還沒好）：後端好了要用真的 API 重測，不能直接算通過 */
+  mocked?: boolean;
   /** AI 的測試結果 */
   result: '通過' | '沒過' | '沒測';
   /** 證據或原因 */
@@ -387,6 +389,8 @@ export interface WorkItem {
   members: TicketRef[];
   /** 改多語系的進度（沒在改就沒有） */
   i18n?: I18nProgress | null;
+  /** 開著的假資料有幾筆（總開關關著就沒有） */
+  mockCount?: number;
   /** 基底分支比這張單的分支多了幾個新提交（每 10 分鐘檢查；有才會有） */
   baseBehind?: number;
   /** 自動測試的結果（AI 回覆最後一行的「測試結果：…」；沒開始成也算沒測成） */
@@ -598,10 +602,19 @@ export interface FlowPilotApi {
   openExternal(url: string): Promise<void>;
   /** 在 Finder 顯示這張單產生的多語系檔 */
   revealI18n(id: number): Promise<void>;
+  /** 假資料（後端還沒好時用）：讀、存、請 AI 依需求產生、用假資料打開網頁 */
+  mocks: {
+    get(itemId: number): Promise<import('./mocks').MockSet>;
+    save(itemId: number, set: import('./mocks').MockSet): Promise<void>;
+    generate(itemId: number): Promise<import('./mocks').MockSet>;
+    open(itemId: number): Promise<void>;
+  };
   /** 換一個全新的共用瀏覽器（按「看我的」時用，Chrome 才會再跳出選分頁的頁面） */
   resetSharedBrowser(): Promise<void>;
   /** 介面語言（後端的狀態、錯誤、通知也跟著換） */
   setLang(lang: 'zh' | 'en'): Promise<void>;
+  /** 拖曳進來的檔案在電腦上的完整路徑（拿不到是空字串） */
+  pathForFile(file: File): string;
   openSettingsFile(): Promise<void>;
   /** 計畫表需要的設定（專案、商戶） */
   planOptions(): Promise<PlanOptions>;

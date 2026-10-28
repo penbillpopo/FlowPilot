@@ -4,7 +4,7 @@ import type { BranchInfo, ChatEntry, ChatEvent, I18nProgress, WorkItem, WorkStag
 import { t, zhOnly } from '../../shared/i18n';
 import { DiffView } from './DiffView';
 import { commitPrefs, deliveryOf, gitChanged, useGitState } from './delivery';
-import { useImageAttach } from './ImageAttach';
+import { appendPaths, useImageAttach } from './ImageAttach';
 import { Markdown } from './Markdown';
 import { pendingChecks } from './SidePanels';
 import { statusLabel, term } from './skin';
@@ -314,7 +314,7 @@ export function ChatPanel({ item }: { item: WorkItem }) {
   const [entries, setEntries] = useState<ChatEntry[]>([]);
   const [loading, setLoading] = useState(false);
   const [text, setText] = useState('');
-  const attach = useImageAttach();
+  const attach = useImageAttach({ onPaths: (paths) => setText((prev) => appendPaths(prev, paths)) });
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [removing, setRemoving] = useState(false);

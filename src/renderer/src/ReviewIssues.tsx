@@ -1,7 +1,7 @@
 // 計畫表裡的審閱：AI 找出的問題，你可以回答、照建議、標成不是問題；也可以跟 AI 討論這張單。
 import { useState } from 'react';
 import type { Review, ReviewIssue } from '../../shared/types';
-import { useImageAttach } from './ImageAttach';
+import { appendPaths, useImageAttach } from './ImageAttach';
 import { Markdown } from './Markdown';
 import { inChinese, t, zhOnly } from '../../shared/i18n';
 
@@ -107,7 +107,7 @@ function IssueCard({ issue, ticketKey, onChange }: { issue: ReviewIssue; ticketK
 
 export function ReviewIssues({ review, onChange }: { review: Review; onChange(review: Review): void }) {
   const [text, setText] = useState('');
-  const attach = useImageAttach();
+  const attach = useImageAttach({ onPaths: (paths) => setText((prev) => appendPaths(prev, paths)) });
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const open = review.issues.filter((i) => i.status === 'open').length;

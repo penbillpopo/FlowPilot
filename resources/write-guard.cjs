@@ -50,12 +50,78 @@ function shouldRecord(url) {
   }
 }
 
+/**
+ * 假資料：FlowPilot 存在「假資料/<單的編號>.json」（從請求紀錄的路徑推出來，所以每個請求都重讀，改了馬上生效）。
+ * 比對規則跟 src/shared/mocks.ts 一樣（這個檔案是給 Playwright 直接執行的，不能 import TypeScript）
+ */
+function readMocks() {
+  const log = process.env.FLOWPILOT_REQUEST_LOG;
+  if (!log) return null;
+  const path = require('path');
+  const file = path.join(path.dirname(path.dirname(log)), '假資料', path.basename(log).replace(/\.jsonl$/, '.json'));
+  try {
+    return JSON.parse(fs.readFileSync(file, 'utf8'));
+  } catch {
+    return null;
+  }
+}
+
+function pathMatches(pattern, pathname) {
+  const re = new RegExp('^' + String(pattern).trim().split('*').map((p) => p.replace(/[.+?^${}()|[\]\\]/g, '\\$&')).join('.*') + '/?$', 'i');
+  return re.test(pathname);
+}
+
+function findMock(set, method, url) {
+  if (!set || !set.enabled) return null;
+  let pathname = '';
+  try {
+    pathname = new URL(url).pathname;
+  } catch {
+    return null;
+  }
+  return (set.rules || []).find((r) => r.on && (!r.method || r.method.toUpperCase() === method.toUpperCase()) && pathMatches(r.path, pathname)) || null;
+}
+
+module.exports.findMock = findMock;
 module.exports.decide = decide;
 module.exports.shouldRecord = shouldRecord;
 module.exports.default = async ({ page }) => {
+  // 有開假資料：畫面角落標「假資料模式」，避免看錯
+  if (readMocks()?.enabled) {
+    await page.addInitScript(() => {
+      const show = () => {
+        if (document.getElementById('flowpilot-mock-badge')) return;
+        const el = document.createElement('div');
+        el.id = 'flowpilot-mock-badge';
+        el.textContent = 'FlowPilot 假資料模式';
+        el.style.cssText = 'position:fixed;right:8px;bottom:8px;z-index:2147483647;background:#d97706;color:#fff;font:600 12px sans-serif;padding:4px 10px;border-radius:12px;pointer-events:none;opacity:.9';
+        document.documentElement.appendChild(el);
+      };
+      if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', show);
+      else show();
+    });
+  }
   await page.route('**/*', async (route) => {
     const request = route.request();
     const method = request.method();
+    // 假資料優先：對到的 API 直接回準備好的內容，不送到後端
+    const mocks = readMocks();
+    const headers = request.headers();
+    // 跨網域：假資料要帶允許的標頭；預檢（OPTIONS）也直接回好，不送到還沒有這支 API 的後端
+    const cors = {
+      'access-control-allow-origin': headers.origin || '*',
+      'access-control-allow-credentials': 'true',
+      'access-control-allow-headers': headers['access-control-request-headers'] || '*',
+      'access-control-allow-methods': 'GET, POST, PUT, PATCH, DELETE, OPTIONS',
+    };
+    if (method === 'OPTIONS' && findMock(mocks, headers['access-control-request-method'] || 'GET', request.url())) {
+      return route.fulfill({ status: 204, headers: cors });
+    }
+    const mock = findMock(mocks, method, request.url());
+    if (mock) {
+      recordEntry({ action: '假資料（沒有送到後端）', method, url: request.url() });
+      return route.fulfill({ status: Number(mock.status) || 200, contentType: 'application/json', headers: cors, body: mock.body || '{}' });
+    }
     const action = decide(method, request.url());
     if (action === 'pass') return route.continue();
     const record = shouldRecord(request.url()) ? recordEntry : () => {};

@@ -22,9 +22,9 @@ const isRedundantActivity = (activity: string) => REDUNDANT_ACTIVITIES.some((a) 
 /** 流程：審閱 ✓ → 開發 → 自動測試 → 等你測試（修改、重測都算在等你測試這一步）→ 交付（提交過之後：推送、完成） */
 // i18n-keys：顯示時才翻
 const STEPS = ['審閱', '開發', '自動測試', '等你測試', '交付'];
-const STEP_OF: Record<WorkStage, number> = { develop: 1, selfcheck: 1, autotest: 2, manual: 3, fix: 3, retest: 3 };
+const STEP_OF: Record<WorkStage, number> = { develop: 1, selfcheck: 1, speccheck: 1, autotest: 2, manual: 3, fix: 3, retest: 3 };
 // i18n-keys：顯示時才翻
-const RUNNING_NOTE: Record<WorkStage, string> = { develop: 'AI 開發中', selfcheck: 'AI 自我審查中', autotest: 'AI 測試中', manual: 'AI 處理中', fix: 'AI 修改中', retest: 'AI 重測中' };
+const RUNNING_NOTE: Record<WorkStage, string> = { develop: 'AI 開發中', selfcheck: 'AI 自我審查中', speccheck: 'AI 比對規格中', autotest: 'AI 測試中', manual: 'AI 處理中', fix: 'AI 修改中', retest: 'AI 重測中' };
 
 /** 目前這一步在等什麼（合併原本的狀態標籤）；空字串代表不用多說明 */
 function stepNote(item: WorkItem): string {
@@ -83,6 +83,7 @@ function flowPilotLabel(text: string): string | null {
   }
   if (text.startsWith(zhOnly('## 更新需求'))) return t('更新需求');
   if (text.startsWith(zhOnly('## 自我審查'))) return t('自我審查指示');
+  if (text.startsWith(zhOnly('## 規格比對'))) return t('規格比對找到做錯的地方，請 AI 確認、修正');
   if (text.startsWith(zhOnly('## 整理驗收表'))) return t('整理驗收表指示');
   if (text.startsWith(zhOnly('## 換新對話'))) return t('對話太長，整理重點後換新對話（點開看交接內容）');
   if (text.startsWith(zhOnly('## 多語系 key 重複'))) return t('多語系 key 重複，請 AI 換名字');
@@ -230,7 +231,7 @@ function Entry({ entry }: { entry: ChatEntry }) {
       return (
         <div className="msg assistant">
           {/* 驗收表的 JSON 畫在右邊「驗收」，對話裡只留一句 */}
-          <Markdown text={entry.text.replace(/```flowpilot-test[\s\S]*?(```|$)/g, t('_（驗收表已更新，看右邊「驗收」）_')).replace(/^.*多語系進度[：:].*$/gm, '').trimEnd()} />
+          <Markdown text={entry.text.replace(/```flowpilot-test[\s\S]*?(```|$)/g, t('_（驗收表已更新，看右邊「驗收」）_')).replace(/```flowpilot-spec[\s\S]*?(```|$)/g, t('_（規格比對的處理結果已記下，看右邊「驗收」）_')).replace(/^.*多語系進度[：:].*$/gm, '').trimEnd()} />
         </div>
       );
     case 'reasoning':
@@ -687,6 +688,22 @@ export function ChatPanel({ item }: { item: WorkItem }) {
                     }}
                   >
                     {t('更新需求')}
+                  </button>
+                )}
+                {/* 走規格流程的單：改過之後再拿規格比對一次（做錯的交給 AI 修，修完回到等你測試） */}
+                {canRetest && item.specCheck && (
+                  <button
+                    disabled={busy}
+                    title={t('請沒看過開發過程的 AI 再拿開工前的規格比對一次目前的改動；做錯的交給 AI 修')}
+                    onClick={(e) => {
+                      e.currentTarget.closest('details')?.removeAttribute('open');
+                      act(async () => {
+                        stick.current = true;
+                        await api.rerunSpecCheck(item.id);
+                      });
+                    }}
+                  >
+                    {t('再比對一次規格')}
                   </button>
                 )}
                 {active && item.threadId && item.folder && <button onClick={() => act(() => api.openInVSCode(item.id))}>{t('在 VS Code 查看')}</button>}

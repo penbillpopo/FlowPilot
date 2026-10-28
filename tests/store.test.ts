@@ -128,7 +128,7 @@ describe('發過的 PR', () => {
     const db = (old as unknown as { db: { exec(sql: string): void; prepare(sql: string): { get(): unknown } } }).db;
     const version = (db.prepare('PRAGMA user_version').get() as { user_version: number }).user_version;
     // 退回到加 prs 欄位之前（之後的升級也一起退掉）
-    db.exec(`UPDATE work_items SET pr_url = 'https://x/pullrequest/9', prs = NULL; PRAGMA user_version = ${version - 5}; ALTER TABLE work_items DROP COLUMN old_threads; ALTER TABLE plan_drafts DROP COLUMN extras_json; ALTER TABLE work_items DROP COLUMN members; ALTER TABLE work_items DROP COLUMN port_of; ALTER TABLE work_items DROP COLUMN prs;`);
+    db.exec(`UPDATE work_items SET pr_url = 'https://x/pullrequest/9', prs = NULL; PRAGMA user_version = ${version - 6}; ALTER TABLE work_items DROP COLUMN spec_check; ALTER TABLE work_items DROP COLUMN old_threads; ALTER TABLE plan_drafts DROP COLUMN extras_json; ALTER TABLE work_items DROP COLUMN members; ALTER TABLE work_items DROP COLUMN port_of; ALTER TABLE work_items DROP COLUMN prs;`);
     old.close();
     const store = new Store(file);
     expect(store.getWorkItem(item.id)!.prs).toEqual([{ id: 0, url: 'https://x/pullrequest/9', target: '', title: '' }]);

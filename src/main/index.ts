@@ -10,6 +10,7 @@ import { openInChrome } from './shared-browser';
 import { confluencePageId, loadConfluence } from './confluence';
 import { AzureRepo, defaultPrTitle, prDescription, prIdFromUrl } from './azure';
 import type { Env, JiraTicket, PrOptions, PrRecord, SupplementItem, WorkItem, Judgement, PlanOptions, Review, ReviewChecks, ReviewIssue, TicketMark, TicketPlan, TicketSnapshot } from '../shared/types';
+import { wantsSpec } from '../shared/types';
 import { CodexRpc } from './codex/rpc';
 import { listSkills, runStructured } from './codex/structured';
 import { checkExisting, localBranchExists, remoteBranchExists, runGit } from './git';
@@ -18,6 +19,7 @@ import { applyDiscussion, buildCodeCheckPrompt, buildDiscussionPrompt, buildFigm
 import { deriveBranches, planProblem } from './planner/rules';
 import { loadHistory } from './chat';
 import { generateReport } from './report';
+import { generateSpec } from './planner/spec';
 import { reviewBrief } from './planner/review';
 import { getLang, type Lang, setLang, t, zhOnly } from '../shared/i18n';
 import { FolderTerminals } from './folderterminals';
@@ -266,11 +268,46 @@ async function runReview(ticket: JiraTicket): Promise<Review> {
   review.snapshot = [...subs.map((x) => x.snapshot), ...mains.map((m) => m.snapshot)];
   if (supplements.length) review.supplements = supplements;
   if (supplementImages.length) review.supplementImages = supplementImages;
-  // 「開發完自動測試」是你決定的：重新審閱時保留你的選擇
-  const keptAutotest = store.getReview(ticket.key)?.review.checks?.autotest;
-  if (keptAutotest && review.checks) review.checks = { ...review.checks, autotest: keptAutotest };
+  // 「開發完自動測試」「規格流程」你改過的：重新審閱時保留你的選擇
+  const kept = store.getReview(ticket.key)?.review.checks;
+  if (kept?.autotest && review.checks) review.checks = { ...review.checks, autotest: kept.autotest };
+  if (kept?.spec && review.checks) review.checks = { ...review.checks, spec: kept.spec };
   store.saveReview(review, threadId);
+  // 複雜的單（或你勾了規格流程）：接著在背景寫規格、審查
+  if (wantsSpec(review)) void ensureSpec(review.ticketKey);
   return review;
+}
+
+// ---- 規格流程（開工前寫規格、沒看過的 AI 審查） ----
+
+/** 正在跑的規格流程：單號 → 根據哪一次審閱、做完的時候 */
+const specJobs = new Map<string, { reviewedAt: string; job: Promise<void> }>();
+
+/** 讀最新的審閱結果改一部分再存回（規格流程跑很久，中間你可能回答了問題，不能整份蓋掉） */
+function updateReview(ticketKey: string, change: (review: Review) => Review | null): Review | null {
+  const saved = store.getReview(ticketKey);
+  if (!saved) return null;
+  const next = change(saved.review);
+  if (next) store.saveReview(next, saved.threadId);
+  return next;
+}
+
+/**
+ * 這張單要走規格流程、而且還沒有這次審閱的規格：開始寫（已經在寫就等同一個）。
+ * 寫好、失敗或不用寫都會結束；開工時等它，規格才會交給開發的 AI。
+ */
+function ensureSpec(ticketKey: string, force = false): Promise<void> {
+  const review = store.getReview(ticketKey)?.review;
+  if (paused || !review || !wantsSpec(review)) return Promise.resolve();
+  const running = specJobs.get(ticketKey);
+  if (running && running.reviewedAt === review.reviewedAt) return running.job;
+  const current = review.spec?.reviewedAt === review.reviewedAt;
+  if (!force && current && review.spec?.status !== 'running') return Promise.resolve(); // 寫好了或失敗了（失敗要你按重試）
+  const job = generateSpec({ codex, settings: () => loadSettings(settingsFile), cwd: dataDir, updateReview, log }, ticketKey).finally(() => {
+    if (specJobs.get(ticketKey)?.job === job) specJobs.delete(ticketKey);
+  });
+  specJobs.set(ticketKey, { reviewedAt: review.reviewedAt, job });
+  return job;
 }
 
 // ---- 需求變更 ----
@@ -638,13 +675,25 @@ function registerIpc() {
     };
   });
   ipcMain.handle('skills:list', () => listSkills(codex, loadSettings(settingsFile).folders[0]?.path ?? dataDir));
-  ipcMain.handle('review:run', (_event, ticket: JiraTicket, force: boolean) => reviewTicket(ticket, force));
+  ipcMain.handle('review:run', async (_event, ticket: JiraTicket, force: boolean) => {
+    const review = await reviewTicket(ticket, force);
+    // 規格寫到一半 FlowPilot 重新啟動過：接著重寫（計畫表打開時會一直問進度）
+    if (!force && review.spec?.status === 'running' && !specJobs.has(ticket.key)) void ensureSpec(ticket.key, true);
+    return review;
+  });
   ipcMain.handle('review:setChecks', (_event, ticketKey: string, checks: ReviewChecks) => {
     const saved = store.getReview(ticketKey);
     if (!saved) throw new Error(t('{key} 還沒有審閱', { key: ticketKey }));
     const review = { ...saved.review, checks };
     store.saveReview(review, saved.threadId);
-    return review;
+    // 打開規格流程：還沒寫過就開始寫
+    if (wantsSpec(review)) void ensureSpec(ticketKey);
+    return store.getReview(ticketKey)!.review;
+  });
+  ipcMain.handle('review:retrySpec', (_event, ticketKey: string) => {
+    if (!store.getReview(ticketKey)) throw new Error(t('{key} 還沒有審閱', { key: ticketKey }));
+    void ensureSpec(ticketKey, true);
+    return store.getReview(ticketKey)!.review;
   });
   ipcMain.handle('review:updateIssue', (_event, ticketKey: string, issueId: string, patch: { status: ReviewIssue['status']; answer?: string }) => updateIssue(ticketKey, issueId, patch));
   ipcMain.handle('review:discuss', (_event, ticketKey: string, text: string, images: string[] = []) => discussReview(ticketKey, text, images));
@@ -776,6 +825,8 @@ function registerIpc() {
   ipcMain.handle('test:trialLogin', (_event, id: number) => trialLogin(id));
   ipcMain.handle('test:setManualDone', (_event, id: number, index: number, done: boolean) => runner.setManualDone(id, index, done));
   ipcMain.handle('test:setChecked', (_event, id: number, no: number, checked: boolean) => runner.setChecked(id, no, checked));
+  ipcMain.handle('test:setSpecSeen', (_event, id: number, no: number, seen: boolean) => runner.setSpecSeen(id, no, seen));
+  ipcMain.handle('item:rerunSpecCheck', (_event, id: number) => runner.rerunSpecCheck(id));
   ipcMain.handle('test:requestAcceptance', (_event, id: number) => runner.requestAcceptance(id));
   ipcMain.handle('test:changedFiles', (_event, id: number) => runner.changedFiles(id));
   // 驗收表匯出成 CSV：選存放位置（預設「下載」），存好在 Finder 標出來；取消就回傳 null
@@ -875,6 +926,7 @@ app.whenReady().then(() => {
     onChange: boardChanged,
     onStream: streamChanged,
     onChat: chatChanged,
+    ensureSpec: (ticketKey) => ensureSpec(ticketKey),
     log,
   });
   registerIpc();

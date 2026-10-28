@@ -131,8 +131,9 @@ function baseBranchHint(rule: Settings['projects'][string]): string {
 }
 
 /** 一般、複雜的單 AI 第一輪沒看程式碼時，追加的這一輪：指定到判斷出的專案、商戶的基底分支大略看 */
-export function buildCodeCheckPrompt(entries: PlanEntry[], settings: Settings): string | null {
-  const lines = entries
+/** 判斷出的專案在哪個資料夾、要用 git 讀哪些遠端基底分支（一個專案一行） */
+export function codeLocations(entries: PlanEntry[], settings: Settings): string[] {
+  return entries
     .map((e) => {
       const folder = settings.folders.find((f) => f.project === e.project);
       const rule = settings.projects[e.project];
@@ -142,7 +143,11 @@ export function buildCodeCheckPrompt(entries: PlanEntry[], settings: Settings): 
         : `origin/${rule.baseBranch}`;
       return `- ${e.project}：${folder.path}（用 git 讀這些分支，不要看工作目錄：${bases}）`;
     })
-    .filter(Boolean);
+    .filter((line): line is string => !!line);
+}
+
+export function buildCodeCheckPrompt(entries: PlanEntry[], settings: Settings): string | null {
+  const lines = codeLocations(entries, settings);
   if (!lines.length) return null;
   return [
     '這張單不是小單，請「大略」看一下程式碼，然後回傳完整的審閱結果（同樣的格式；有看程式碼 codeChecked 才填 true）：',

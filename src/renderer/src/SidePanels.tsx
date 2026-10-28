@@ -3,7 +3,8 @@ import { FitAddon } from '@xterm/addon-fit';
 import { Terminal } from '@xterm/xterm';
 import '@xterm/xterm/css/xterm.css';
 import { useEffect, useRef, useState } from 'react';
-import type { AcceptanceItem, BranchCommits, Env, GitFile, TestState, WorkItem } from '../../shared/types';
+import type { AcceptanceItem, BranchCommits, Env, GitFile, SpecCheckItem, TestState, WorkItem } from '../../shared/types';
+import { specItemsForYou } from '../../shared/types';
 import { errorText } from './ChatPanel';
 import { DiffView } from './DiffView';
 import { needsYou, unexplainedFiles } from '../../shared/acceptance';
@@ -12,11 +13,79 @@ import { t, zhOnly } from '../../shared/i18n';
 
 const api = window.flowpilot;
 
-/** 需要你測的條目還沒勾「我測過了」的數量，加上沒勾的其他手動項目（分頁上的數字） */
+/** 需要你測的條目還沒勾「我測過了」的數量，加上沒勾的其他手動項目、規格比對還要你看的（分頁上的數字） */
 export function pendingChecks(item: WorkItem): number {
   const report = item.testReport;
-  if (!report) return 0;
-  return report.acceptance.filter((a) => needsYou(a) && !a.checked).length + report.manual.filter((m) => !m.done).length;
+  const spec = specItemsForYou(item.specCheck).length;
+  if (!report) return spec;
+  return report.acceptance.filter((a) => needsYou(a) && !a.checked).length + report.manual.filter((m) => !m.done).length + spec;
+}
+
+// i18n-keys：顯示時才翻
+const SPEC_SEVERITY: Record<SpecCheckItem['severity'], string> = { high: '嚴重', medium: '中', low: '輕微' };
+
+/**
+ * 規格比對：沒看過開發過程的 AI 拿開工前的規格比對改動。
+ * 做錯的交給開發的 AI 修；它不改的（附理由）、不確定誰對的（可能是規格寫錯）要你看過、勾「我看過了」。
+ */
+function SpecCheckBlock({ item, run }: { item: WorkItem; run(action: () => Promise<unknown>): void }) {
+  const check = item.specCheck;
+  if (!check) return null;
+  if (check.status === 'running') return <div className="spec-check muted small">⏳ {t('沒看過開發過程的 AI 比對規格和改動中…')}</div>;
+  if (check.status === 'failed') return <div className="spec-check muted small">{t('規格比對沒有完成：{error}', { error: check.error ?? '' })}</div>;
+  const forYou = specItemsForYou(check);
+  const fixed = check.items.filter((i) => i.status === 'fixed');
+  const rest = check.items.filter((i) => i.status !== 'fixed' && !forYou.includes(i));
+  const row = (i: SpecCheckItem, mine: boolean) => (
+    <li key={i.no} className={`spec-item ${mine ? 'mine' : 'quiet'}`}>
+      <div className="spec-item-head">
+        <span className={`spec-tag ${i.kind}`}>{i.kind === 'wrong' ? (i.status === 'fixed' ? t('已修正') : i.status === 'kept' ? t('AI 認為不用改') : t('做錯了')) : t('不確定誰對')}</span>
+        <span className={`spec-sev ${i.severity}`}>{t(SPEC_SEVERITY[i.severity])}</span>
+        <span>{i.text}</span>
+      </div>
+      {i.reply && <p className="small"><span className="ac-label">{i.status === 'kept' ? t('AI 的理由') : t('AI 改了')}</span>{i.reply}</p>}
+      {i.kind === 'unsure' && <p className="muted small">{t('程式跟規格不一樣，但規格那段沒有根據，可能是規格寫錯：照單子想一下哪個對，不對就跟 AI 說。')}</p>}
+      {i.evidence && (
+        <details className="ac-dev">
+          <summary>{t('證據')}</summary>
+          <p className="small">{i.evidence}</p>
+        </details>
+      )}
+      {mine && (
+        <div className="ac-actions">
+          <label>
+            <input type="checkbox" checked={!!i.seen} onChange={(e) => run(() => api.test.setSpecSeen(item.id, i.no, e.target.checked))} />
+            {t('我看過了')}
+          </label>
+          <button className="link small" onClick={() => askAI(t('規格比對第 {no} 條（{text}）：', { no: i.no, text: i.text }))}>{t('跟 AI 說')}</button>
+        </div>
+      )}
+      {!mine && i.seen && (
+        <div className="ac-actions">
+          <label className="muted small">
+            <input type="checkbox" checked onChange={() => run(() => api.test.setSpecSeen(item.id, i.no, false))} />
+            {t('我看過了')}
+          </label>
+        </div>
+      )}
+    </li>
+  );
+  return (
+    <div className="spec-check">
+      <div className="plan-block-title">{t('規格比對')}</div>
+      <p className="muted small">
+        {check.items.length ? t('找到 {count} 條，{left} 條要你看（做錯的會先交給 AI 修）', { count: check.items.length, left: forYou.length }) : t('改動跟規格一致')}
+        {check.verdict && <> {check.verdict}</>}
+      </p>
+      {forYou.length > 0 && <ul className="ac-list">{forYou.map((i) => row(i, true))}</ul>}
+      {(fixed.length > 0 || rest.length > 0) && (
+        <details className="ac-ai-tested">
+          <summary>{t('已處理的（{count}）', { count: fixed.length + rest.length })}</summary>
+          <ul className="ac-list">{[...fixed, ...rest].map((i) => row(i, false))}</ul>
+        </details>
+      )}
+    </div>
+  );
 }
 
 const askAI = (text: string) => window.dispatchEvent(new CustomEvent('flowpilot:ask-ai', { detail: text }));
@@ -44,6 +113,7 @@ export function AcceptancePanel({ item }: { item: WorkItem }) {
   if (!report) {
     return (
       <div className="panel">
+        <SpecCheckBlock item={item} run={run} />
         <p className="muted small">{t('AI 做完開發、測試完之後，這裡會列出驗收表：每一條需求改了什麼、為什麼、改在哪、會影響哪裡、你要怎麼測。')}</p>
         {idle && item.stage === 'manual' && (
           <button onClick={() => run(() => api.test.requestAcceptance(item.id))} title={t('不重新測試，請 AI 照目前的改動整理驗收表')}>{t('請 AI 整理驗收表')}</button>
@@ -146,6 +216,8 @@ export function AcceptancePanel({ item }: { item: WorkItem }) {
           </ul>
         </div>
       )}
+
+      <SpecCheckBlock item={item} run={run} />
 
       {/* 要你測的排前面，做成三行步驟的卡片；AI 已經測過的收起來，要看再展開 */}
       <ul className="ac-list">

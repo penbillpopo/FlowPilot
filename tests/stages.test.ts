@@ -467,6 +467,98 @@ describe('流程階段', () => {
     expect(t.sites).toEqual(['PlatformAdmin']);
   });
 
+  /** 回答 FlowPilot 另外開的唯讀對話（規格比對）：等它問，再照格式回答 */
+  async function answerStructured(t: ReturnType<typeof setup>, result: unknown) {
+    let ask: { params: any } | undefined;
+    for (let i = 0; i < 100 && !ask; i++) {
+      ask = t.requests.find((r) => r.method === 'turn/start' && r.params.outputSchema && !r.params.answered);
+      if (!ask) await new Promise((r) => setTimeout(r, 10));
+    }
+    ask!.params.answered = true;
+    const threadId = ask!.params.threadId;
+    t.emit({ method: 'item/completed', params: { threadId, item: { type: 'agentMessage', text: JSON.stringify(result) } } });
+    t.emit({ method: 'turn/completed', params: { threadId, turn: { status: 'completed' } } });
+    await new Promise((r) => setTimeout(r, 80));
+    return ask!.params.input[0].text as string;
+  }
+
+  const specReview = { ticketKey: 'ALL-1', entries: [], prTitle: '', reason: '', summary: [], resources: [], level: '複雜' as const, codeChecked: true, discussion: [], reviewedAt: 'r1',
+    issues: [{ id: 'q', type: '需求不明確' as const, importance: '重要' as const, title: '被拒絕的要不要顯示？', detail: '', quote: '', from: 'ALL-1', suggestion: '不顯示', status: 'answered' as const, answer: '不要', fromSpec: true }],
+    checks: { figma: { need: false, reason: '' }, codeReview: { need: false, reason: '' }, designCompare: { need: false, reason: '' } },
+    spec: { status: 'done' as const, step: '', markdown: '# 規格\n只顯示狀態 S 的 POA', findings: [], failedReviewers: 0, reviewedAt: 'r1', at: '' } };
+
+  it('走規格流程的單：開發完先由沒看過的 AI 比對規格；做錯的交回開發的 AI 修，修完才自動測試', async () => {
+    const t = setup();
+    t.store.saveReview(specReview, null);
+    await t.complete(); // 開發完
+    expect(t.get()).toMatchObject({ stage: 'speccheck', status: 'running' });
+    expect(t.sites).toEqual([]);
+    const prompt = await answerStructured(t, { items: [
+      { kind: 'wrong', severity: 'high', text: '待審的 POA 也會顯示', evidence: '規格「做法」；authentication.ts:81' },
+      { kind: 'unsure', severity: 'low', text: '規格寫的 poaProcessLog 程式裡找不到', evidence: '' },
+    ], verdict: '驗收第 1 條會失敗' });
+    // 比對的對話看得到規格和你的回答
+    expect(prompt).toContain('只顯示狀態 S 的 POA');
+    expect(prompt).toContain('被拒絕的要不要顯示？ → 不要');
+    expect(prompt).toContain('git diff origin/version/0.0.1...HEAD');
+    // 做錯的那條交回開發的對話；不確定誰對的不交
+    const fix: string = t.lastTurn().input[0].text;
+    expect(t.lastTurn().threadId).toBe('th');
+    expect(fix).toContain('## 規格比對');
+    expect(fix).toContain('1. 待審的 POA 也會顯示');
+    expect(fix).not.toContain('poaProcessLog');
+    expect(t.get()).toMatchObject({ stage: 'speccheck', status: 'running', specCheck: { status: 'done', verdict: '驗收第 1 條會失敗' } });
+
+    await t.complete('改好了\n```flowpilot-spec\n[{"no":1,"status":"fixed","note":"加上狀態判斷"}]\n```');
+    expect(t.get().specCheck?.items.map((i) => i.status)).toEqual(['fixed', 'open']);
+    expect(t.get().stage).toBe('autotest');
+    expect(t.sites).toEqual(['PlatformAdmin']);
+
+    t.runner.setSpecSeen(t.id, 2, true);
+    expect(t.get().specCheck?.items[1].seen).toBe(true);
+  });
+
+  it('規格比對沒找到做錯的：直接自動測試；比對失敗也照常往下，不擋流程', async () => {
+    const t = setup();
+    t.store.saveReview(specReview, null);
+    await t.complete();
+    await answerStructured(t, { items: [], verdict: '都做到了' });
+    expect(t.get().stage).toBe('autotest');
+
+    const u = setup();
+    u.store.saveReview(specReview, null);
+    await u.complete();
+    const ask = await (async () => {
+      for (let i = 0; i < 100; i++) {
+        const r = u.requests.find((x) => x.method === 'turn/start' && x.params.outputSchema);
+        if (r) return r;
+        await new Promise((r) => setTimeout(r, 10));
+      }
+    })();
+    u.emit({ method: 'turn/completed', params: { threadId: ask!.params.threadId, turn: { status: 'failed', error: { message: '逾時' } } } });
+    await new Promise((r) => setTimeout(r, 80));
+    expect(u.get()).toMatchObject({ stage: 'autotest', specCheck: { status: 'failed' } });
+  });
+
+  it('沒有規格（不是複雜的單、或規格沒寫成）：開發完照舊直接自動測試', async () => {
+    const t = setup();
+    t.store.saveReview({ ...specReview, spec: { ...specReview.spec, status: 'failed' as const } }, null);
+    await t.complete();
+    expect(t.get().stage).toBe('autotest');
+  });
+
+  it('再比對一次規格：做錯的修完回到等你測試，不會再自動測試', async () => {
+    const t = setup();
+    t.store.saveReview(specReview, null);
+    t.store.updateWorkItem(t.id, { stage: 'manual', status: 'review' });
+    await t.runner.rerunSpecCheck(t.id);
+    await answerStructured(t, { items: [{ kind: 'wrong', severity: 'medium', text: '空資料沒處理', evidence: '' }], verdict: '' });
+    await t.complete('```flowpilot-spec\n[{"no":1,"status":"kept","note":"後端保證有資料"}]\n```');
+    expect(t.get()).toMatchObject({ stage: 'manual', status: 'review', activity: '規格比對完，等你測試' });
+    expect(t.get().specCheck?.items[0]).toMatchObject({ status: 'kept', reply: '後端保證有資料' });
+    expect(t.sites).toEqual([]);
+  });
+
   it('檢查計畫要比對設計稿、單上有 Figma：測試指示加上比對要求；不需要就不加', async () => {
     const t = setup();
     const figma = { kind: 'figma' as const, title: 'Banner', url: 'https://www.figma.com/design/abc/Banner?node-id=1-2', from: 'ALL-1' };

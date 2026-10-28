@@ -193,5 +193,11 @@ const en: Record<string, string> = {
   '開瀏覽器測給我看（假資料）': 'Test it in a browser for me (mock data)',
   '看我的模式開著：用你在 Chrome 選的分頁測，打真的後端（寫入資料前會先問你）': 'Look-at-mine mode is on: tests in the Chrome tab you picked, against the real backend (asks you before writing data)',
   '看我的模式開著：用你在 Chrome 選的分頁、假資料測（只攔這個分頁的請求，測完會拿掉）': 'Look-at-mine mode is on: tests in the Chrome tab you picked with mock data (intercepts only that tab, removed afterwards)',
+  // 規格流程（開工前寫規格、沒看過的 AI 審查，做完再比對）
+  'AI 比對規格中': 'AI checking against the spec',
+  '規格比對找到做錯的地方，請 AI 確認、修正': 'The spec check found mistakes; asked AI to confirm and fix them',
+  '_（規格比對的處理結果已記下，看右邊「驗收」）_': '_(Spec check results recorded; see "Acceptance" on the right)_',
+  '請沒看過開發過程的 AI 再拿開工前的規格比對一次目前的改動；做錯的交給 AI 修': 'Ask an AI that has not seen the development to check the current changes against the spec again; mistakes go back to the AI to fix',
+  '再比對一次規格': 'Check against the spec again',
 };
 export default en;

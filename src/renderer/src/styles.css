@@ -630,3 +630,27 @@ td.time { white-space: nowrap; }
 .ac-mocked { font-size: 11px; padding: 0 6px; border-radius: 8px; background: #d97706; color: #fff; white-space: nowrap; flex-shrink: 0; }
 
 .autotest-data { font-size: 12px; padding: 1px 4px; }
+
+/* 規格（開工前寫規格、沒看過的 AI 審查；做完拿規格比對改動） */
+.issue-from-spec { font-size: 11px; padding: 0 6px; border-radius: 8px; border: 1px solid var(--accent); color: var(--accent); white-space: nowrap; }
+.spec-block .row { display: flex; gap: 12px; }
+.spec-block > p { margin: 2px 0 4px; }
+.spec-findings { margin-top: 4px; font-size: 13px; }
+.spec-findings > summary { cursor: pointer; font-size: 12px; color: var(--muted); }
+.spec-findings ul { margin: 4px 0 0; padding: 0; list-style: none; display: flex; flex-direction: column; gap: 6px; }
+.spec-findings li { border-left: 2px solid var(--line); padding-left: 8px; overflow-wrap: anywhere; }
+.spec-decision { font-size: 11px; padding: 0 6px; border-radius: 8px; margin-right: 6px; background: var(--hover); }
+.spec-decision.fix { color: var(--review); }
+.spec-decision.ask { color: var(--waiting); font-weight: 700; }
+.spec-markdown { margin-top: 6px; border: 1px solid var(--line); border-radius: 6px; padding: 8px 12px; font-size: 13px; overflow-wrap: anywhere; }
+.spec-check { margin: 4px 0 10px; }
+.spec-check > p { margin: 2px 0 6px; }
+.spec-item { border: 1px solid var(--line); border-radius: 6px; padding: 6px 8px; font-size: 13px; overflow-wrap: anywhere; }
+.spec-item.mine { border-color: var(--waiting); }
+.spec-item.quiet { opacity: 0.8; }
+.spec-item-head { display: flex; gap: 6px; align-items: baseline; flex-wrap: wrap; }
+.spec-tag { font-size: 11px; padding: 0 6px; border-radius: 8px; white-space: nowrap; flex-shrink: 0; background: var(--hover); }
+.spec-tag.wrong { color: var(--blocked); }
+.spec-tag.unsure { color: var(--waiting); }
+.spec-sev { font-size: 11px; color: var(--muted); white-space: nowrap; flex-shrink: 0; }
+.spec-sev.high { color: var(--blocked); font-weight: 700; }

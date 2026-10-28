@@ -1,4 +1,5 @@
 // 主程序與畫面共用的資料型別
+import { zhOnly } from './i18n';
 
 /** Jira 上一張指派給我的單（大多是 [FE] 子任務） */
 export interface JiraTicket {
@@ -143,6 +144,67 @@ export interface ReviewIssue {
   answer?: string;
   /** 在討論裡由 AI 處理的（釐清了、或判斷不是問題），不是你按的 */
   byDiscussion?: boolean;
+  /** 規格審查時問你的（寫規格的 AI 處理審查意見後，只有產品上要你決定的才會變成問題） */
+  fromSpec?: boolean;
+}
+
+// ---- 規格（Elephant-Goldfish Model）：開工前寫成規格、由沒看過的 AI 審查，做完再拿規格比對改動 ----
+
+/** 一條審查意見，和寫規格的 AI 怎麼處理 */
+export interface SpecFinding {
+  /** 哪個審查角色提的（zoomOut、designCritic、readiness、codebase） */
+  role: string;
+  severity: 'Blocker' | 'Major' | 'Nit';
+  text: string;
+  /** fix：照改；contest：反駁（附證據）；ask：變成問你的問題 */
+  decision: 'fix' | 'contest' | 'ask';
+  note: string;
+}
+
+export interface Spec {
+  status: 'running' | 'done' | 'failed';
+  /** 做到哪一步（給人看） */
+  step: string;
+  /** 處理過審查意見的規格（Markdown） */
+  markdown: string;
+  findings: SpecFinding[];
+  /** 有幾個審查角色沒有完成（逾時、出錯） */
+  failedReviewers: number;
+  error?: string;
+  /** 根據哪一次審閱寫的（重新審閱後，舊的規格作廢） */
+  reviewedAt: string;
+  at: string;
+}
+
+/** 做完後拿規格比對改動找到的一條 */
+export interface SpecCheckItem {
+  no: number;
+  /** wrong：違反規格裡有根據的部分（做錯了）；unsure：不一致，但規格那段沒有根據，可能是規格寫錯 */
+  kind: 'wrong' | 'unsure';
+  severity: 'high' | 'medium' | 'low';
+  /** 給不看程式碼的人看的一句話 */
+  text: string;
+  /** 規格哪一段、改動的檔案與行 */
+  evidence: string;
+  /** 交給開發的 AI 之後：open 還沒處理、fixed 修好了、kept 它認為不用改（reply 是理由） */
+  status: 'open' | 'fixed' | 'kept';
+  reply?: string;
+  /** 你看過了（它不改、或不確定誰對的，要你看過） */
+  seen?: boolean;
+}
+
+export interface SpecCheck {
+  status: 'running' | 'done' | 'failed';
+  items: SpecCheckItem[];
+  /** 一句話總結：照目前的改動，規格的驗收項目能不能全部通過 */
+  verdict: string;
+  error?: string;
+  at: string;
+}
+
+/** 比對規格找到的、還要你看的：它不改的做錯項目、不確定誰對的，你還沒看過 */
+export function specItemsForYou(check: SpecCheck | null | undefined): SpecCheckItem[] {
+  return (check?.items ?? []).filter((i) => !i.seen && i.status !== 'fixed' && (i.kind === 'unsure' || i.status === 'kept' || i.status === 'open'));
 }
 
 // ---- 需求變更 ----
@@ -188,6 +250,14 @@ export interface ReviewChecks {
   designCompare: CheckDecision;
   /** 開發完要不要跑自動測試（只由你決定，AI 不會改；沒有這個欄位就是要跑）；mock 是用假資料測（後端還沒好） */
   autotest?: CheckDecision & { mock?: boolean };
+  /** 開工前寫規格、由沒看過的 AI 審查，做完再拿規格比對改動（沒有這個欄位：複雜的單才做） */
+  spec?: CheckDecision;
+}
+
+/** 這張單要不要走規格流程：你在檢查計畫勾的為準，沒勾過就看是不是複雜的單 */
+export function wantsSpec(review: Pick<Review, 'level' | 'checks'> | null | undefined): boolean {
+  if (!review) return false;
+  return review.checks?.spec ? review.checks.spec.need : review.level === zhOnly('複雜');
 }
 
 export interface Review extends Judgement {
@@ -220,6 +290,8 @@ export interface Review extends Judgement {
   apis?: string[];
   /** 預計執行內容（要改哪些地方、怎麼改） */
   steps?: string[];
+  /** 規格（要走規格流程的單才有） */
+  spec?: Spec;
 }
 
 export interface SkillInfo {
@@ -254,12 +326,13 @@ export type WorkLane = 'waiting' | 'conversation' | 'development' | 'done';
  * 這張單走到流程的哪一步：
  * - develop：AI 開發中
  * - selfcheck：AI 自我審查程式碼（檢查計畫要做時，開發完接著做）
+ * - speccheck：沒看過開發過程的 AI 拿規格比對改動，做錯的交回開發的 AI 修（走規格流程的單）
  * - autotest：AI 用無頭瀏覽器自動測試（開發完自動接著做）
  * - manual：等你手動測試；你在對話裡要求修改，或按「開瀏覽器測給我看」
  * - fix：AI 照你的要求修改中
  * - retest：AI 開瀏覽器重測給你看
  */
-export type WorkStage = 'develop' | 'selfcheck' | 'autotest' | 'manual' | 'fix' | 'retest';
+export type WorkStage = 'develop' | 'selfcheck' | 'speccheck' | 'autotest' | 'manual' | 'fix' | 'retest';
 
 export type Env = 'sit' | 'uat';
 
@@ -395,6 +468,8 @@ export interface WorkItem {
   autotestResult: TestResult | null;
   /** 最近一次瀏覽器測試的報告：預期結果對照、要你手動測的清單（勾選狀態會保留） */
   testReport: TestReport | null;
+  /** 做完後拿規格比對改動的結果（走規格流程的單才有） */
+  specCheck: SpecCheck | null;
   updatedAt: string;
 }
 
@@ -612,8 +687,12 @@ export interface FlowPilotApi {
   listSkills(): Promise<SkillInfo[]>;
   /** 審閱一張單（已經審過就直接回傳上次的結果；force 為 true 時重新審閱） */
   reviewTicket(ticket: JiraTicket, force?: boolean): Promise<Review>;
-  /** 改檢查計畫（要不要對照 Figma、自我審查、比對設計稿） */
+  /** 改檢查計畫（要不要對照 Figma、自我審查、比對設計稿）；打開規格流程時會開始寫規格 */
   setReviewChecks(ticketKey: string, checks: ReviewChecks): Promise<Review>;
+  /** 重新寫規格、重新審查（上次失敗、或你想重來） */
+  retrySpec(ticketKey: string): Promise<Review>;
+  /** 再比對一次規格和目前的改動（做錯的交給 AI 修，修完回到等你測試） */
+  rerunSpecCheck(itemId: number): Promise<void>;
   /** 處理一個問題：回答、照建議、不是問題、重新打開 */
   updateIssue(ticketKey: string, issueId: string, patch: { status: ReviewIssue['status']; answer?: string }): Promise<Review>;
   /** 跟 AI 討論這張單，AI 會一併更新問題清單 */
@@ -736,6 +815,8 @@ export interface FlowPilotApi {
     setManualDone(itemId: number, index: number, done: boolean): Promise<void>;
     /** 驗收表的一條勾選「我測過了」 */
     setChecked(itemId: number, no: number, checked: boolean): Promise<void>;
+    /** 規格比對的一條勾選「我看過了」 */
+    setSpecSeen(itemId: number, no: number, seen: boolean): Promise<void>;
     /** 請 AI 整理驗收表（不重新測試） */
     requestAcceptance(itemId: number): Promise<void>;
     /** 這張單從基底分支到現在改到的檔案（含還沒提交的），用來核對驗收表有沒有漏講 */

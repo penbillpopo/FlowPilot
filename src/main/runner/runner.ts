@@ -4,9 +4,11 @@ import { execFile } from 'node:child_process';
 import { existsSync, mkdirSync, readdirSync, readFileSync, renameSync, rmSync, statSync, writeFileSync } from 'node:fs';
 import { basename, dirname, join } from 'node:path';
 import type { BoardState, BranchInfo, ChatEvent, Env, PortSource, RemoveResult, Review, TestReport, TestResult, PendingRequest, SkillInfo, TestState, TicketPlan, WorkStage, WorkStatus, I18nProgress } from '../../shared/types';
+import { wantsSpec } from '../../shared/types';
 import { toEntry } from '../chat';
 import { apiHosts, ENVIRONMENT_FILE, readApiUrl, readEnvironment, setEnvironment } from '../environment';
 import { reviewBrief } from '../planner/review';
+import { applySpecReplies, buildSpecFixPrompt, checkAgainstSpec, specBrief } from '../planner/spec';
 import { configFile, resolveAccount, writeAccountFile } from '../testaccounts';
 import type { CodexRpc, RpcMessage } from '../codex/rpc';
 import { askStructured, listSkills, runStructured } from '../codex/structured';
@@ -62,7 +64,12 @@ export interface RunnerDeps {
   stopSite?: (folder: string) => void;
   /** 連不連得到這個網址（瀏覽器測試前先確認後端，沒開 VPN 時馬上知道）；不給就用真的連線 */
   canReach?: (url: string) => Promise<boolean>;
+  /** 這張單要走規格流程、還沒寫好就開始寫，寫完（或失敗、不用寫）才結束；開工前等它 */
+  ensureSpec?: (ticketKey: string) => Promise<void>;
 }
+
+/** 開工時最多等規格流程多久（寫規格、四個角色審查、處理意見，平常 5～10 分鐘） */
+const SPEC_WAIT_MS = 30 * 60_000;
 
 /** 有任何回應就算連得到（後端回 404、401 也是連上了）；5 秒沒回應或連線失敗就是連不到 */
 /** 移植用的技能：照來源分支的改動，在目標商戶的架構裡重新實作 */
@@ -222,6 +229,7 @@ const STAGE_DONE: Partial<Record<WorkStage, string>> = {
   fix: '改好了，等你測試',
   retest: '重測完成，等你確認',
   manual: '需求比對完了，等你測試',
+  speccheck: '規格比對完，等你測試',
 };
 
 /**
@@ -428,6 +436,10 @@ export class Runner {
   private handingOff = new Set<number>();
   /** 你選了不跑自動測試的單：整理完驗收表時狀態寫「已跳過自動測試」 */
   private skippedAutotest = new Set<number>();
+  /** 規格比對完（做錯的修完）之後接著做什麼：開發完的是自動測試，你按「再比對一次」的是回到等你測試 */
+  private specNext = new Map<number, 'autotest' | 'manual'>();
+  /** 正在比對規格的單（比對是另一段唯讀對話，開發的對話這時沒有在跑） */
+  private specChecking = new Set<number>();
   /** 基底分支比這張單多幾個新提交（檢查時記下，同步後清掉） */
   private baseBehind = new Map<number, number>();
   /** 改多語系做到一半的單：自動叫 AI 繼續、請它換 key 名字的次數 */
@@ -805,6 +817,12 @@ export class Runner {
     const item = this.deps.store.getWorkItem(id)!;
     if (item.status === 'removed' || item.status === 'stopped') return; // 準備途中你移除或停止了
     const cwd = this.folderPath(item.folder!);
+    // 走規格流程的單：等規格寫好、審查完，才交給開發的 AI（移植的照來源分支做，不用等）
+    if (!item.portOf && this.deps.ensureSpec && wantsSpec(this.deps.store.getReview(item.ticketKey)?.review)) {
+      this.update(id, { activity: t('等規格審查完成（寫規格、沒看過的 AI 審查，大約 10 分鐘）') });
+      await Promise.race([this.deps.ensureSpec(item.ticketKey), new Promise((r) => setTimeout(r, SPEC_WAIT_MS))]);
+      if (['removed', 'stopped'].includes(this.deps.store.getWorkItem(id)!.status)) return;
+    }
     await codex.start();
     this.update(id, { activity: t('啟動 Codex') });
     // 一律開新的對話：單離開工作台就不留紀錄，不接回以前的對話（舊對話裡的舊指示會干擾）
@@ -819,7 +837,8 @@ export class Runner {
         `請先看過現有的差異（git diff origin/${item.baseBranch}...HEAD 與 git status），了解做到哪裡，再接著完成剩下的部分；不要重做已經完成的內容，也不要丟掉未提交的修改。FlowPilot 已經切換好分支，不要切換分支。`
       : `- FlowPilot 已經在這個資料夾建立並切換到分支 ${item.branch}（從 origin/${item.baseBranch} 開出）。請直接在目前分支開發，不要切換分支。`;
     const skill = item.portOf ? PORT_SKILL : this.deps.settings().projects[item.project]?.devSkill ?? item.skill;
-    const brief = reviewBrief(this.deps.store.getReview(item.ticketKey)?.review ?? null);
+    const review = this.deps.store.getReview(item.ticketKey)?.review ?? null;
+    const brief = reviewBrief(review) + (item.portOf ? '' : specBrief(review));
     const rebaseLine = !state.rebase
       ? ''
       : state.rebase.conflict
@@ -1019,9 +1038,70 @@ export class Runner {
       await this.deps.codex.start();
       await this.startTurn(item, [{ type: 'text', text, text_elements: [] }]);
     } catch (error) {
-      this.deps.log(`${item.ticketKey} 自我審查開始不了，直接進自動測試：${(error as Error).message}`);
-      await this.startTest(id, false);
+      this.deps.log(`${item.ticketKey} 自我審查開始不了，直接往下：${(error as Error).message}`);
+      await this.specCheckOrTest(id);
     }
+  }
+
+  /** 開發完（自我審查完）：走規格流程、規格也寫好了就先比對規格，否則直接自動測試 */
+  private async specCheckOrTest(id: number) {
+    const item = this.deps.store.getWorkItem(id)!;
+    const review = this.deps.store.getReview(item.ticketKey)?.review;
+    if (item.portOf || !wantsSpec(review) || review?.spec?.status !== 'done' || !review.spec.markdown) return this.autotestOrSkip(id);
+    await this.startSpecCheck(id, 'autotest');
+  }
+
+  /**
+   * 比對規格：開一段全新的唯讀對話（沒看過開發過程），拿開工前的規格比對改動。
+   * 做錯的交回開發的 AI 確認、修正；不確定誰對的列給你看。比對不了就照常往下，不擋流程。
+   */
+  private async startSpecCheck(id: number, next: 'autotest' | 'manual') {
+    const item = this.deps.store.getWorkItem(id)!;
+    const review = this.deps.store.getReview(item.ticketKey)?.review;
+    this.specNext.set(id, next);
+    this.specChecking.add(id);
+    this.update(id, { stage: 'speccheck', status: 'running', activity: t('沒看過開發過程的 AI 比對規格和改動中'), pending: null, specCheck: { status: 'running', items: [], verdict: '', at: new Date().toISOString() } });
+    try {
+      if (!item.folder || !review?.spec?.markdown) throw new Error(t('這張單沒有規格'));
+      const check = await checkAgainstSpec(this.deps.codex, this.folderPath(item.folder), review, item.baseBranch, ENVIRONMENT_FILE).finally(() => this.specChecking.delete(id));
+      if (['removed', 'stopped'].includes(this.deps.store.getWorkItem(id)!.status)) return;
+      this.update(id, { specCheck: check });
+      const wrong = check.items.filter((i) => i.kind === 'wrong');
+      if (!wrong.length) return await this.afterSpecCheck(id);
+      await this.reply(id, buildSpecFixPrompt(wrong, ENVIRONMENT_FILE), [], { asFix: false, noReportNote: true, activity: t('規格比對找到 {count} 個做錯的地方，交給 AI 確認、修正', { count: wrong.length }) });
+    } catch (error) {
+      this.specChecking.delete(id);
+      if (['removed', 'stopped'].includes(this.deps.store.getWorkItem(id)!.status)) return;
+      this.deps.log(`${item.ticketKey} 規格比對失敗，照常往下：${(error as Error).message}`);
+      this.update(id, { specCheck: { status: 'failed', items: [], verdict: '', error: (error as Error).message, at: new Date().toISOString() } });
+      await this.afterSpecCheck(id);
+    }
+  }
+
+  /** 規格比對（和修正）做完：開發完的接著自動測試；你按「再比對一次」的回到等你測試 */
+  private async afterSpecCheck(id: number) {
+    const next = this.specNext.get(id) ?? 'autotest';
+    this.specNext.delete(id);
+    if (next === 'autotest') return this.autotestOrSkip(id);
+    const item = this.deps.store.getWorkItem(id)!;
+    const activity = t(STAGE_DONE.speccheck!);
+    this.update(id, { stage: 'manual', status: 'review', activity, pending: null });
+    this.notify(id, t('{ticket} {activity}', { ticket: item.ticketKey, activity }), item.specCheck?.verdict ?? '');
+  }
+
+  /** 再比對一次規格和目前的改動（你按了才做） */
+  async rerunSpecCheck(id: number) {
+    this.assertIdle(id, t('比對規格'));
+    const item = this.deps.store.getWorkItem(id)!;
+    if (!this.deps.store.getReview(item.ticketKey)?.review.spec?.markdown) throw new Error(t('這張單沒有規格'));
+    void this.startSpecCheck(id, 'manual'); // 比對要好幾分鐘，在背景跑（狀態看卡片）
+  }
+
+  /** 規格比對的一條勾選「我看過了」 */
+  setSpecSeen(id: number, no: number, seen: boolean) {
+    const item = this.deps.store.getWorkItem(id)!;
+    if (!item.specCheck) return;
+    this.update(id, { specCheck: { ...item.specCheck, items: item.specCheck.items.map((i) => (i.no === no ? { ...i, seen } : i)) } });
   }
 
   /** 開瀏覽器測給我看（你按了才做） */
@@ -1421,9 +1501,16 @@ export class Runner {
           // 開發完：檢查計畫要自我審查就先審查，否則直接做無頭測試
           // 移植的不做自我審查：來源商戶開發時已經審過，移植只是照著改（自動測試照樣跑）
           if (!latest.portOf && this.deps.store.getReview(latest.ticketKey)?.review.checks?.codeReview.need) void this.startSelfCheck(item.id);
-          else void this.autotestOrSkip(item.id);
+          else void this.specCheckOrTest(item.id);
         } else if (latest.stage === 'selfcheck') {
-          void this.autotestOrSkip(item.id);
+          void this.specCheckOrTest(item.id);
+        } else if (latest.stage === 'speccheck' && this.specChecking.has(item.id)) {
+          // 比對還在跑的時候你跟它說了話：這一輪做完先停著，等比對結果出來再往下
+          this.update(item.id, { status: 'running', activity: t('沒看過開發過程的 AI 比對規格和改動中'), pending: null });
+        } else if (latest.stage === 'speccheck') {
+          // 做錯的交給它修完了：記下每一條修了沒、不改的理由，再往下
+          if (latest.specCheck) this.update(item.id, { specCheck: applySpecReplies(latest.specCheck, latest.lastMessage) });
+          void this.afterSpecCheck(item.id);
         } else {
           const stageDone = STAGE_DONE[latest.stage];
           let activity = this.skippedAutotest.delete(item.id) ? t('已跳過自動測試，等你測試') : stageDone ? t(stageDone) : t('等你測試');
@@ -1458,7 +1545,8 @@ export class Runner {
 
   /** 換新對話時給新對話的開發規則（開工指示裡長期有效的部分） */
   private handoffRules(item: StoredWorkItem): string {
-    const brief = reviewBrief(this.deps.store.getReview(item.ticketKey)?.review ?? null);
+    const review = this.deps.store.getReview(item.ticketKey)?.review ?? null;
+    const brief = reviewBrief(review) + (item.portOf ? '' : specBrief(review));
     const tickets = item.members.length
       ? [`- 這是 ${item.members.length} 張 Jira 合成的一個任務（同一條分支、最後一個 PR）：`, ...item.members.map((m) => `  - ${m.key}（${m.summary}）：${m.url}`)]
       : [`- 這張單：${item.ticketKey}（${item.ticketSummary}），主單 ${item.mainKey}：${item.mainUrl}`];

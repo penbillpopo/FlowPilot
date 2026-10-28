@@ -245,5 +245,14 @@ const en: Record<string, string> = {
   '{ticket}：後端好了': '{ticket}: backend ready',
   '用你選的 Chrome 分頁測試中（假資料）': 'Testing in your chosen Chrome tab (mock data)',
   '用你選的 Chrome 分頁測試中': 'Testing in your chosen Chrome tab',
+  // 規格流程（開工前寫規格、沒看過的 AI 審查，做完再比對）
+  'AI 沒有寫出規格': 'AI did not write a spec',
+  '四個審查角色都沒有完成': 'None of the four reviewers finished',
+  '規格比對完，等你測試': 'Spec check done, waiting for your testing',
+  '等規格審查完成（寫規格、沒看過的 AI 審查，大約 10 分鐘）': 'Waiting for the spec review (writing the spec, review by AIs that have not seen the ticket, about 10 minutes)',
+  '沒看過開發過程的 AI 比對規格和改動中': 'An AI that has not seen the development is checking the changes against the spec',
+  '這張單沒有規格': 'This ticket has no spec',
+  '規格比對找到 {count} 個做錯的地方，交給 AI 確認、修正': 'The spec check found {count} mistakes; asked AI to confirm and fix them',
+  '比對規格': 'check against the spec',
 };
 export default en;

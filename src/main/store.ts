@@ -2,7 +2,7 @@
 // 每次狀態改變先寫進來，重新啟動才接得回去。
 import { t } from '../shared/i18n';
 import { DatabaseSync } from 'node:sqlite';
-import type { AcceptanceItem, JiraTicket, PlanDraft, PortSource, PrRecord, SupplementItem, TicketRef, Judgement, PendingRequest, Review, RunSummary, TestReport, TestResult, TicketPlan, WorkItem, WorkLane, WorkStage, WorkStatus } from '../shared/types';
+import type { AcceptanceItem, JiraTicket, PlanDraft, PortSource, PrRecord, SupplementItem, TicketRef, Judgement, PendingRequest, Review, RunSummary, SpecCheck, TestReport, TestResult, TicketPlan, WorkItem, WorkLane, WorkStage, WorkStatus } from '../shared/types';
 import type { PastDecision } from './planner/judge';
 
 // 依序執行的資料庫結構變更；只能往後加，不能改前面的
@@ -103,6 +103,8 @@ const MIGRATIONS: string[] = [
   `ALTER TABLE plan_drafts ADD COLUMN extras_json TEXT;`,
   // 對話太長時換新對話：換掉的舊對話（對話框照樣顯示它們的紀錄）
   `ALTER TABLE work_items ADD COLUMN old_threads TEXT;`,
+  // 做完後拿規格比對改動的結果（走規格流程的單）
+  `ALTER TABLE work_items ADD COLUMN spec_check TEXT;`,
 ];
 
 /** 還佔著資料夾的狀態 */
@@ -111,7 +113,7 @@ export const OCCUPYING: WorkStatus[] = ['preparing', 'running', 'waiting', 'revi
 /** 已經結束的狀態 */
 export const FINISHED: WorkStatus[] = ['failed', 'stopped', 'removed', 'committed'];
 
-type NewWorkItem = Omit<WorkItem, 'id' | 'folder' | 'lane' | 'status' | 'activity' | 'threadId' | 'lastMessage' | 'pending' | 'stage' | 'autotested' | 'autotestResult' | 'testReport' | 'updatedAt' | 'prs' | 'portOf' | 'members'> & { portOf?: PortSource | null; members?: TicketRef[] };
+type NewWorkItem = Omit<WorkItem, 'id' | 'folder' | 'lane' | 'status' | 'activity' | 'threadId' | 'lastMessage' | 'pending' | 'stage' | 'autotested' | 'autotestResult' | 'testReport' | 'specCheck' | 'updatedAt' | 'prs' | 'portOf' | 'members'> & { portOf?: PortSource | null; members?: TicketRef[] };
 
 interface WorkItemRow {
   id: number;
@@ -146,6 +148,7 @@ interface WorkItemRow {
   autotested: number;
   autotest_result: string | null;
   test_report: string | null;
+  spec_check: string | null;
   test_username: string | null;
   test_password: string | null;
   updated_at: string;
@@ -178,6 +181,7 @@ function toWorkItem(row: WorkItemRow): WorkItem & { branchCreated: boolean; comm
     autotested: !!row.autotested,
     autotestResult: row.autotest_result ? (JSON.parse(row.autotest_result) as TestResult) : null,
     testReport: row.test_report ? normalizeReport(JSON.parse(row.test_report)) : null,
+    specCheck: row.spec_check ? (JSON.parse(row.spec_check) as SpecCheck) : null,
     updatedAt: row.updated_at,
     branchCreated: !!row.branch_created,
     commitSha: row.commit_sha,
@@ -342,7 +346,7 @@ export class Store {
 
   updateWorkItem(
     id: number,
-    patch: Partial<Pick<StoredWorkItem, keyof typeof PATCH_COLUMNS>> & { pending?: PendingRequest | null; autotestResult?: TestResult | null; testReport?: TestReport | null; prs?: PrRecord[]; oldThreads?: string[] },
+    patch: Partial<Pick<StoredWorkItem, keyof typeof PATCH_COLUMNS>> & { pending?: PendingRequest | null; autotestResult?: TestResult | null; testReport?: TestReport | null; specCheck?: SpecCheck | null; prs?: PrRecord[]; oldThreads?: string[] },
     now = new Date(),
   ): StoredWorkItem {
     const sets: string[] = ['updated_at = ?'];
@@ -365,6 +369,10 @@ export class Store {
     if ('testReport' in patch) {
       sets.push('test_report = ?');
       values.push(patch.testReport ? JSON.stringify(patch.testReport) : null);
+    }
+    if ('specCheck' in patch) {
+      sets.push('spec_check = ?');
+      values.push(patch.specCheck ? JSON.stringify(patch.specCheck) : null);
     }
     if ('autotestResult' in patch) {
       sets.push('autotest_result = ?');

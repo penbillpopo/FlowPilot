@@ -76,6 +76,7 @@ function IssueCard({ issue, ticketKey, onChange }: { issue: ReviewIssue; ticketK
       <div className="issue-head">
         <span className={`issue-tag ${issue.importance === zhOnly('重要') ? 'important' : ''}`}>{t(IMPORTANCE_TEXT[issue.importance] ?? issue.importance)}</span>
         <span className="issue-type">{TYPE_TEXT[issue.type] ? t(TYPE_TEXT[issue.type]) : issue.type}</span>
+        {issue.fromSpec && <span className="issue-from-spec" title={t('規格審查時，寫規格的 AI 處理完審查意見，只剩這題要你決定')}>{t('規格審查')}</span>}
         <strong>{issue.title}</strong>
         {done && <span className="issue-status">{t(STATUS_TEXT[issue.status])}</span>}
       </div>

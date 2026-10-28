@@ -1,6 +1,8 @@
 // 第二階段畫面：計畫表。AI 先判斷每張單的專案與商戶，你可以改；檢查分支是否已建立後確認。
 import { useEffect, useMemo, useRef, useState } from 'react';
-import type { JiraTicket, PlanBranch, PlanDraft, PlanEntry, PlanOptions, Review, ReviewChecks, SupplementItem, TicketPlan } from '../../shared/types';
+import type { JiraTicket, PlanBranch, PlanDraft, PlanEntry, PlanOptions, Review, ReviewChecks, SpecFinding, SupplementItem, TicketPlan } from '../../shared/types';
+import { wantsSpec } from '../../shared/types';
+import { Markdown } from './Markdown';
 import { ReviewIssues } from './ReviewIssues';
 import { getLang, sideName, t, zhOnly } from '../../shared/i18n';
 
@@ -46,6 +48,7 @@ const ROLE_LABEL: Record<PlanBranch['role'], string> = { single: '開發', sourc
 // i18n-keys：顯示時才翻
 const CHECK_LABEL: Record<keyof ReviewChecks, string> = {
   figma: '審閱時對照 Figma 設計稿',
+  spec: '開工前寫規格、由沒看過的 AI 審查，做完再拿規格比對',
   codeReview: '開發完 AI 先自我審查程式碼',
   designCompare: '測試時截圖跟設計稿比對',
   autotest: '開發完自動測試（開瀏覽器跑一遍）',
@@ -56,7 +59,8 @@ function CheckPlan({ review, onChange }: { review: Review; onChange(review: Revi
   const [error, setError] = useState<string | null>(null);
   if (!review.checks) return null; // 舊的審閱結果沒有
   // 自動測試是你決定的、AI 不會填：沒有就是要跑
-  const checks: Required<ReviewChecks> = { autotest: { need: true, reason: '' }, ...review.checks };
+  // 規格流程沒改過就看是不是複雜的單
+  const checks: Required<ReviewChecks> = { autotest: { need: true, reason: '' }, spec: { need: wantsSpec(review), reason: '' }, ...review.checks };
   async function toggle(key: keyof ReviewChecks) {
     setError(null);
     try {
@@ -77,6 +81,7 @@ function CheckPlan({ review, onChange }: { review: Review; onChange(review: Revi
               {key === 'figma' && review.figmaChecked && <span className="mark">{t('已對照')}</span>}
             </label>
             {checks[key].reason && <span className="muted small">{checks[key].reason}</span>}
+            {key === 'spec' && !review.checks?.spec && <span className="muted small">{review.level === zhOnly('複雜') ? t('複雜的單預設要做：多花大約 10 分鐘，抓出 AI 會自己默默決定的地方') : t('複雜的單才預設要做')}</span>}
             {key === 'autotest' && !checks.autotest.need && <span className="muted small">{t('開發完不開瀏覽器，AI 照改動整理驗收表，每一條都要你測')}</span>}
             {/* 用真實資料（後端要好了）還是假資料（後端還沒好，AI 自己產生假的 API 回應）測 */}
             {key === 'autotest' && checks.autotest.need && (
@@ -99,6 +104,78 @@ function CheckPlan({ review, onChange }: { review: Review; onChange(review: Revi
           </li>
         ))}
       </ul>
+      {error && <div className="error small">{error}</div>}
+    </div>
+  );
+}
+
+// i18n-keys：顯示時才翻
+const SPEC_STEP: Record<string, string> = { 寫規格: 'AI 寫規格中', 審查: '四個沒看過這張單的 AI 審查規格中', 處理意見: '寫規格的 AI 處理審查意見中' };
+// i18n-keys：顯示時才翻
+const SPEC_ROLE: Record<string, string> = { zoomOut: '看大方向', designCritic: '設計問題', readiness: '照著做會不會卡', codebase: '程式碼對不對得上' };
+// i18n-keys：顯示時才翻
+const SPEC_DECISION: Record<SpecFinding['decision'], string> = { fix: '照改', contest: '反駁', ask: '問你' };
+
+/**
+ * 規格：審閱完在背景寫成規格、四個沒看過這張單的 AI 審查、寫規格的 AI 處理意見；
+ * 要你決定的變成下面的問題。開工時會等它寫完，規格交給開發的 AI，做完再拿它比對改動。
+ */
+function SpecBlock({ ticket, review, onChange }: { ticket: JiraTicket; review: Review; onChange(review: Review): void }) {
+  const [showSpec, setShowSpec] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const spec = review.spec?.reviewedAt === review.reviewedAt ? review.spec : undefined;
+  const busy = !spec || spec.status === 'running';
+  // 寫規格在背景跑：還沒好就每 5 秒看一次進度
+  useEffect(() => {
+    if (!busy) return;
+    const timer = setInterval(() => api.reviewTicket(ticket).then(onChange).catch(() => {}), 5000);
+    return () => clearInterval(timer);
+  }, [busy, ticket.key]);
+  const retry = () => {
+    setError(null);
+    api.retrySpec(review.ticketKey).then(onChange).catch((e) => setError(errorText(e)));
+  };
+  const count = (d: SpecFinding['decision']) => spec?.findings.filter((f) => f.decision === d).length ?? 0;
+  return (
+    <div className="plan-block spec-block">
+      <div className="plan-block-title">{t('規格')}</div>
+      <p className="muted small">{t('開工前寫好、由沒看過這張單的 AI 審查；開發照它做，做完再拿它比對')}</p>
+      {busy && <p className="muted small">⏳ {spec?.step ? t(SPEC_STEP[spec.step] ?? spec.step) : t('準備寫規格')}{t('…（大約 10 分鐘；可以先確認開工，開工時會等它寫完）')}</p>}
+      {spec?.status === 'failed' && (
+        <p className="error small">
+          {t('規格流程沒有完成：{error}', { error: spec.error ?? '' })} <button className="link" onClick={retry}>{t('重試')}</button>
+        </p>
+      )}
+      {spec?.status === 'done' && (
+        <>
+          <p className="small">
+            {spec.findings.length
+              ? t('審查意見 {total} 條：照改 {fix}、反駁 {contest}、問你 {ask}（在下面的問題裡）', { total: spec.findings.length, fix: count('fix'), contest: count('contest'), ask: count('ask') })
+              : t('審查沒有提出意見')}
+            {spec.failedReviewers > 0 && <span className="muted">{t('（{count} 個審查角色沒有完成）', { count: spec.failedReviewers })}</span>}
+          </p>
+          <div className="row">
+            <button className="link" onClick={() => setShowSpec((v) => !v)}>{showSpec ? t('收起規格') : t('看規格')}</button>
+            <button className="link" onClick={retry} title={t('重新寫規格、重新審查（例如你回答了問題、或補充了需求）')}>{t('重新寫規格')}</button>
+          </div>
+          {spec.findings.length > 0 && (
+            <details className="spec-findings">
+              <summary>{t('審查意見和處理結果')}</summary>
+              <ul>
+                {spec.findings.map((f, i) => (
+                  <li key={i}>
+                    <span className={`spec-decision ${f.decision}`}>{t(SPEC_DECISION[f.decision])}</span>
+                    <span className="muted small">{t(SPEC_ROLE[f.role] ?? f.role)} · {f.severity}</span>
+                    <div>{f.text}</div>
+                    {f.note && <div className="muted small">{f.note}</div>}
+                  </li>
+                ))}
+              </ul>
+            </details>
+          )}
+          {showSpec && <div className="spec-markdown"><Markdown text={spec.markdown} /></div>}
+        </>
+      )}
       {error && <div className="error small">{error}</div>}
     </div>
   );
@@ -628,6 +705,9 @@ export function PlanView({ drafts, onChange, onBack, onConfirmed }: Props) {
                   </div>
 
                   {judgements[ticket.key] && <CheckPlan review={judgements[ticket.key]} onChange={(r) => setJudgements((prev) => ({ ...prev, [ticket.key]: r }))} />}
+                  {judgements[ticket.key] && wantsSpec(judgements[ticket.key]) && (
+                    <SpecBlock ticket={ticket} review={judgements[ticket.key]} onChange={(r) => setJudgements((prev) => ({ ...prev, [ticket.key]: r }))} />
+                  )}
 
                   <div className="plan-block">
                     <div className="plan-block-title">{t('要做什麼')}</div>

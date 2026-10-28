@@ -85,7 +85,7 @@ function setup({ account = true } = {}) {
     await new Promise((r) => setTimeout(r, 80));
   };
   const lastTurn = () => requests.filter((r) => r.method === 'turn/start').at(-1)!.params;
-  return { root, folder, store, runner, id: item.id, requests, replies, emit: (m: RpcMessage) => listener(m), sites, reached, stopped, setBackendUp: (v: boolean) => (backendUp = v), complete, lastTurn, unload: () => (loaded = false), get: () => store.getWorkItem(item.id)! };
+  return { root, folder, settings, store, runner, id: item.id, requests, replies, emit: (m: RpcMessage) => listener(m), sites, reached, stopped, setBackendUp: (v: boolean) => (backendUp = v), complete, lastTurn, unload: () => (loaded = false), get: () => store.getWorkItem(item.id)! };
 }
 
 describe('流程階段', () => {
@@ -172,6 +172,33 @@ describe('流程階段', () => {
     expect(steer.input[0].text).toContain('繼續剛才還沒做完的工作');
   });
 
+  it('驗收表一定會存：工作檔還有多語系、但這次你沒叫它改多語系，測試完附的驗收表照樣存下來，也不會叫它繼續改多語系', async () => {
+    const t = setup();
+    t.settings.projects.PlatformAdmin.merchants = [1];
+    const work = i18nWorkFile(join(t.root, 'data'), t.id);
+    mkdirSync(join(work, '..'), { recursive: true });
+    writeFileSync(work, '{"key":"seo_a","en-us":"A"}\n');
+    t.store.updateWorkItem(t.id, { stage: 'manual', status: 'review' });
+    await t.runner.reply(t.id, '幫我測第 1 條');
+    const turns = t.requests.filter((r) => r.method === 'turn/start').length;
+    await t.complete('測過了。\n```flowpilot-test\n{"acceptance":[{"no":1,"text":"A","result":"通過","needYou":false,"note":"看到了"}]}\n```\n測試結果：通過');
+    expect(t.get().testReport?.acceptance[0]).toMatchObject({ no: 1, result: '通過' });
+    expect(t.requests.filter((r) => r.method === 'turn/start').length).toBe(turns);
+  });
+
+  it('翻譯檔在專案裡的專案（沒有商戶）：多語系由 AI 自己翻好寫進去，FlowPilot 不接手', async () => {
+    const t = setup();
+    const work = i18nWorkFile(join(t.root, 'data'), t.id);
+    mkdirSync(join(work, '..'), { recursive: true });
+    writeFileSync(work, '{"key":"seo_a","en-us":"A"}\n');
+    t.store.updateWorkItem(t.id, { stage: 'manual', status: 'review' });
+    await t.runner.reply(t.id, '把這些改多語系');
+    expect(t.lastTurn().input[0].text).toContain('每一種語系檔都要加，而且要翻好');
+    const turns = t.requests.filter((r) => r.method === 'turn/start').length;
+    await t.complete('第一批改好了。\n多語系進度：未完成');
+    expect(t.requests.filter((r) => r.method === 'turn/start').length).toBe(turns);
+  });
+
   it('沒叫它改多語系，AI 卻順手寫了「多語系進度：完成」：不理它，照一般流程', async () => {
     const t = setup();
     t.store.updateWorkItem(t.id, { stage: 'manual', status: 'review' });
@@ -183,6 +210,7 @@ describe('流程階段', () => {
 
   it('改多語系沒做完：自動叫 AI 繼續；它在問問題就不叫，等你再說到多語系', async () => {
     const t = setup();
+    t.settings.projects.PlatformAdmin.merchants = [1]; // 走工作檔＋桌面 Excel 的流程（有商戶的專案）
     t.store.updateWorkItem(t.id, { stage: 'manual', status: 'review' });
     await t.runner.reply(t.id, '把這些改多語系');
     const work = i18nWorkFile(join(t.root, 'data'), t.id);
@@ -262,6 +290,7 @@ describe('流程階段', () => {
 
   it('多語系進度：AI 在做就是「正在改」，停下來就是「還沒做完」，沒在改就沒有', async () => {
     const t = setup();
+    t.settings.projects.PlatformAdmin.merchants = [1]; // 走工作檔的流程才有進度
     const progress = () => t.runner.board().items.find((i) => i.id === t.id)!.i18n;
     expect(progress()).toBeNull();
     t.store.updateWorkItem(t.id, { stage: 'manual', status: 'review' });

@@ -149,7 +149,16 @@ const SHARED_BROWSER_LINE =
   '可以幫我點、幫我填，但不要按會存檔、送出、刪除的按鈕：這個瀏覽器沒有寫入防護，資料會真的寫進 SIT／UAT，真的需要就先問我。瀏覽器測試不要用它，照測試的安排用測試瀏覽器。';
 
 /** 給開發、修改時的 AI：我說「改多語系」時怎麼做（翻譯和 Excel 由 FlowPilot 做，AI 只管改程式碼、記下 key 和英文） */
-function i18nLine(workFile: string): string {
+function i18nLine(workFile: string, local = false): string {
+  // 翻譯檔在專案裡的（例如 PlatformAdmin 的 en-US.json、zh-CN.json、ja-JP.json，沒有商戶）：AI 自己把每種語言都翻好寫進去，FlowPilot 不另外產生 Excel
+  if (local) {
+    return [
+      '- 我說「改多語系」「改成多語系」之類的時候，把我指的寫死文字改成多語系：',
+      '  - 這個專案的翻譯檔就在專案裡（找專案現有的語系 JSON，例如 en-US.json、zh-CN.json、ja-JP.json）。key 照專案現有的命名，先用 rg 確認沒用過。',
+      "  - 寫法照專案其他地方（例如 HTML 用 {{ 'key' | translate }}）；每一種語系檔都要加，而且要翻好（zh-CN 用簡體中文、ja-JP 用日文），不要先放英文等別人補。",
+      '  - 這種專案不用記工作檔、不用寫「多語系進度」那一行，一直做到全部改完。',
+    ].join('\n');
+  }
   return [
     '- 我說「改多語系」「改成多語系」之類的時候，把我指的寫死文字改成多語系（這取代之前說過的 flowpilot-i18n 做法）：',
     '  - 寫死的文字都是英文。key 照專案現有的命名（小寫、底線，參考附近和專案其他地方怎麼取），先用 rg 確認專案裡沒用過。',
@@ -355,6 +364,7 @@ export class Runner {
   /** 改多語系的進度：翻譯中、翻完的看記下的結果；工作檔還在就是 AI 還在改（或停下來了） */
   private i18nProgress(item: StoredWorkItem): I18nProgress | null {
     if (!['running', 'waiting', 'review'].includes(item.status) && !this.i18nRuns.has(item.id)) return null;
+    if (this.localI18n(item)) return null; // 翻譯檔在專案裡的專案，AI 自己翻，沒有工作檔的進度
     const run = this.i18nRuns.get(item.id);
     const workFile = i18nWorkFile(this.deps.dataDir, item.id);
     const count = readWorkFile(workFile).length;
@@ -707,6 +717,11 @@ export class Runner {
     return skill.path;
   }
 
+  /** 這個專案的翻譯檔在專案裡（沒有商戶的專案，例如 PlatformAdmin）：多語系由 AI 直接翻好寫進去，不走工作檔＋桌面 Excel */
+  private localI18n(item: { project: string }): boolean {
+    return !this.deps.settings().projects[item.project]?.merchants?.length;
+  }
+
   /** 驗收截圖放的地方（瀏覽器測試紀錄） */
   private get shotDir(): string {
     return join(this.deps.dataDir, '瀏覽器測試紀錄');
@@ -807,7 +822,7 @@ export class Runner {
       '- 最後說明：來源改了什麼、在這個商戶怎麼對應、有哪些地方跟來源不一樣（為什麼）。',
       SHARED_BROWSER_LINE,
       FIGMA_LINE,
-      i18nLine(i18nWorkFile(this.deps.dataDir, item.id)),
+      i18nLine(i18nWorkFile(this.deps.dataDir, item.id), this.localI18n(item)),
       brief,
     ] : [
       ...(item.members.length
@@ -836,7 +851,7 @@ export class Runner {
       '- 自己做，不要開子 AI（spawn_agent）分工。',
       SHARED_BROWSER_LINE,
       FIGMA_LINE,
-      i18nLine(i18nWorkFile(this.deps.dataDir, item.id)),
+      i18nLine(i18nWorkFile(this.deps.dataDir, item.id), this.localI18n(item)),
       item.targetMerchants.length ? `- 這張單之後還要移植到商戶 ${item.targetMerchants.join('、')}，那是下一階段的事，這次只做目前這個商戶。` : '',
       brief,
     ];
@@ -1273,6 +1288,14 @@ export class Runner {
         const turn = message.params.turn ?? {};
         const latest = this.deps.store.getWorkItem(item.id)!;
         let i18n: { retry: boolean; note?: string } = { retry: false };
+        // 驗收表一定先存：後面的多語系、問問題判斷有時會提早結束這段處理，以前驗收表就這樣沒存到（實際發生過）
+        if (turn.status === 'completed' && /```flowpilot-test/.test(latest.lastMessage)) {
+          const early = parseTestReport(latest.lastMessage, latest.testReport);
+          if (early) {
+            this.update(item.id, { testReport: early });
+            Object.assign(latest, { testReport: early, lastMessage: latest.lastMessage.replace(/```flowpilot-test[\s\S]*?```/g, '') });
+          }
+        }
         if (turn.status === 'failed') {
           this.update(item.id, { status: 'failed', activity: t('AI 失敗：{error}', { error: turn.error?.message ?? t('原因不明') }), pending: null });
           this.notify(item.id, t('{ticket} 失敗', { ticket: item.ticketKey }), turn.error?.message ?? '');
@@ -1345,7 +1368,7 @@ export class Runner {
       '- 自己做，不要開子 AI（spawn_agent）分工。',
       SHARED_BROWSER_LINE,
       FIGMA_LINE,
-      i18nLine(i18nWorkFile(this.deps.dataDir, item.id)),
+      i18nLine(i18nWorkFile(this.deps.dataDir, item.id), this.localI18n(item)),
       brief,
     ].filter(Boolean).join('\n');
   }
@@ -1425,8 +1448,11 @@ export class Runner {
     const workFile = i18nWorkFile(this.deps.dataDir, item.id);
     const progress = parseProgress(item.lastMessage);
     const entries = readWorkFile(workFile);
-    // 工作檔是空的、你也沒叫它改多語系：不是在做這件事（AI 只是順手寫了進度那行），不理它
-    if (!entries.length && (progress === null || !this.i18nRequested.has(item.id))) return { retry: false };
+    // 翻譯檔在專案裡的專案：AI 自己翻好寫進去，FlowPilot 不接手（以前照 PlatformWeb 的流程等著翻譯，結果一直叫它繼續，驗收表也沒存到）
+    if (this.localI18n(item)) return { retry: false };
+    // 你這次沒叫它改多語系（例如它在測試、回答問題）：就算工作檔還有內容、或它順手寫了進度那行，也不自動叫它繼續
+    if (!this.i18nRequested.has(item.id) && progress !== 'done') return { retry: false };
+    if (!entries.length && progress === null) return { retry: false };
     const state = this.i18nJobs.get(item.id) ?? { continues: 0, renames: 0 };
     this.i18nJobs.set(item.id, state);
     const stopJob = (note: string) => {
@@ -1633,7 +1659,7 @@ export class Runner {
     // 這段對話在這次啟動後第一次收到你的話：告訴它有共用瀏覽器可以用（新功能之前就開工的單，開工指示裡沒寫）
     if (text.trim() && !this.sharedBrowserTold.has(item.threadId!)) {
       this.sharedBrowserTold.add(item.threadId!);
-      note += `\n\n${ACCEPTANCE_NOTE}\n${SHARED_BROWSER_LINE}\n${FIGMA_LINE}\n${i18nLine(i18nWorkFile(this.deps.dataDir, item.id))}`;
+      note += `\n\n${ACCEPTANCE_NOTE}\n${SHARED_BROWSER_LINE}\n${FIGMA_LINE}\n${i18nLine(i18nWorkFile(this.deps.dataDir, item.id), this.localI18n(item))}`;
     }
     // 測試做到一半（例如重試、補充指示）：本機網站可能已經關了（FlowPilot 重新啟動時會跟著關），先確認有在跑
     if (['autotest', 'retest'].includes(item.stage) && item.folder) {

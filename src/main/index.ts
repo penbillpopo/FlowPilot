@@ -17,6 +17,7 @@ import { buildJql, downloadAttachment, getIssueContext, getTransitions, loadCred
 import { applyDiscussion, buildCodeCheckPrompt, buildDiscussionPrompt, buildFigmaPrompt, buildGroupReviewPrompt, buildReviewPrompt, discussionSchema, REVIEW_INSTRUCTIONS, reviewSchema, sanitizeReview } from './planner/review';
 import { deriveBranches, planProblem } from './planner/rules';
 import { loadHistory } from './chat';
+import { generateReport } from './report';
 import { getLang, type Lang, setLang, t, zhOnly } from '../shared/i18n';
 import { FolderTerminals } from './folderterminals';
 import { branchCommits, commitAll, commitDiff, commitFiles, commitStaged, discard, fileDiff, gitState, pushBranch, stage, unstage } from './gitpanel';
@@ -124,6 +125,9 @@ async function branchSource(itemId: number): Promise<{ cwd: string; ref: string;
   if (await remoteBranchExists(folders[0].path, item.branch).catch(() => false)) return { cwd: folders[0].path, ref: `origin/${item.branch}`, where: '遠端', ...at };
   throw new Error(t('找不到 {branch}：本機的資料夾和遠端都沒有', { branch: item.branch }));
 }
+
+/** 正在產生分析報告的單 */
+const reportsRunning = new Set<number>();
 
 function notify(title: string, body: string, itemId: number) {
   const notification = new Notification({ title, body });
@@ -773,6 +777,42 @@ function registerIpc() {
   ipcMain.handle('test:requestAcceptance', (_event, id: number) => runner.requestAcceptance(id));
   ipcMain.handle('test:changedFiles', (_event, id: number) => runner.changedFiles(id));
   // 驗收表匯出成 CSV：選存放位置（預設「下載」），存好在 Finder 標出來；取消就回傳 null
+  // 分析報告：測試完成後從「更多」產生，存成桌面的 PDF（要幾分鐘，進度送回畫面）
+  ipcMain.handle('report:generate', async (_event, id: number) => {
+    const item = store.getWorkItem(id);
+    if (!item?.testReport) throw new Error(t('這張單還沒有驗收表，測試完成後再產生'));
+    if (!item.folder) throw new Error(t('這張單已經讓出資料夾；要產生報告，先按「繼續修」拿回資料夾'));
+    if (['running', 'preparing'].includes(item.status)) throw new Error(t('AI 還在執行，請等它停下來再產生報告'));
+    if (reportsRunning.has(id)) throw new Error(t('這張單的報告正在產生'));
+    const settings = loadSettings(settingsFile);
+    const folder = settings.folders.find((f) => f.name === item.folder);
+    if (!folder) throw new Error(t('設定檔裡沒有 {project} 的資料夾', { project: item.project }));
+    reportsRunning.add(id);
+    const progress = (text: string) => window?.webContents.send('report:progress', id, text);
+    try {
+      const file = await generateReport(
+        {
+          codex,
+          dataDir,
+          folderTerminals,
+          folder: { name: folder.name, path: folder.path, port: folder.port ?? 4200, command: startCommand(settings.projects[folder.project]?.startCommand, folder.port) },
+          testConfigDir: settings.testConfigDir,
+          review: store.getReview(item.ticketKey)?.review ?? null,
+          browser: (hosts) => ({ name: HEADLESS_BROWSER_NAME, config: threadConfig(dataDir, writeGuardPath(), id, hosts).mcp_servers[HEADLESS_BROWSER_NAME] }),
+          log,
+          progress,
+        },
+        item,
+      );
+      log(`${item.ticketKey}：分析報告存到 ${file}`);
+      notify(t('{ticket} 分析報告好了', { ticket: item.ticketKey }), file, id);
+      shell.showItemInFolder(file);
+      return file;
+    } finally {
+      reportsRunning.delete(id);
+      progress('');
+    }
+  });
   ipcMain.handle('test:exportCsv', async (_event, id: number) => {
     const item = store.getWorkItem(id);
     if (!item?.testReport) throw new Error(t('這張單還沒有驗收表'));

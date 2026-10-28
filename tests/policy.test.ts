@@ -1,4 +1,5 @@
 import { describe, expect, it } from 'vitest';
+import { needsYou, pendingTests } from '../src/shared/acceptance';
 import { commandPolicy, looksLikeQuestion, parseTestReport, parseTestResult } from '../src/main/runner/policy';
 
 describe('指令同意規則', () => {
@@ -119,6 +120,18 @@ describe('測試報告', () => {
     expect(r.acceptance[0]).toMatchObject({ open: '打開個人資料頁', act: '點設定', expect: '看到隱身模式是開的', shot: 'ac-ALL-1-1.png', fromAi: true });
     expect(r.acceptance[1].shot).toBeUndefined();
     expect(r.acceptance[1].fromAi).toBeUndefined();
+  });
+
+  it('AI 在對話裡測過：通過又有證據的移出要你測；沒證據的通過不算；測過的手動項目標成 AI 測的', () => {
+    const item = (no: number) => ({ no, text: `第 ${no} 條`, result: '沒測', needYou: true });
+    const first = parseTestReport(block({ acceptance: [item(1), item(2), item(3)], manual: ['匯出檔案內容', '真實寫入'] }))!;
+    const next = parseTestReport(block({ update: true, acceptance: [
+      { no: 1, text: '第 1 條', result: '通過', needYou: false, note: '看到 9 筆流水' },
+      { no: 2, text: '第 2 條', result: '通過', needYou: false },
+    ], manualPassed: ['匯出檔案內容'] }), first)!;
+    expect(next.acceptance.map((a) => [a.no, needsYou(a)])).toEqual([[1, false], [2, true], [3, true]]);
+    expect(next.manual).toEqual([{ text: '匯出檔案內容', done: true, byAi: true }, { text: '真實寫入', done: false }]);
+    expect(pendingTests(next)).toBe(3);
   });
 
   it('沒有報告或格式不對就是 null', () => {

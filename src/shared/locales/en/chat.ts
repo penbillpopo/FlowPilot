@@ -171,5 +171,11 @@ const en: Record<string, string> = {
   '不補測直接完成這張單；還沒測的項目會記在驗收表上': 'Finish this ticket without the remaining tests; untested items are recorded on the checklist',
   '還有 {count} 項沒測，確定直接完成 {key}？': '{count} item(s) are still untested. Finish {key} anyway?',
   '沒測的項目會記在驗收表上，之後查得到。資料夾要乾淨（改動都提交或捨棄了）；environment.ts 會順便還原，本機網站也會停掉。': 'Untested items are recorded on the checklist so you can find them later. The folder must be clean (all changes committed or discarded); environment.ts will be restored and the local site stopped.',
+  '整理這張單要做什麼、改動前後的截圖、重點和驗收結果，存成桌面的 PDF（要幾分鐘，會暫時重啟本機網站）': 'Summarize what this ticket does, before/after screenshots, key points and test results as a PDF on your Desktop (takes a few minutes; the local site restarts briefly)',
+  '準備中': 'Preparing',
+  '分析報告存到 {file}': 'Analysis report saved to {file}',
+  '報告產生中…': 'Generating report…',
+  '產生分析報告': 'Generate analysis report',
+  '分析報告：{step}（要幾分鐘，好了會通知你）': 'Analysis report: {step} (takes a few minutes; you will be notified)',
 };
 export default en;

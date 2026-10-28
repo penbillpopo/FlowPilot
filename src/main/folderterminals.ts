@@ -118,6 +118,15 @@ export class FolderTerminals {
    * 結束 FlowPilot 時關掉所有終端機：先取消監聽再關。
    * 不然終端機在 FlowPilot 關閉途中回報「結束了」，會讓整個程式當掉（實際發生過）。
    */
+  /** 整個關掉某個終端機（連同在裡面跑的網站）；分析報告截改動前畫面時開的臨時網站用 */
+  close(folder: string) {
+    const session = this.sessions.get(folder);
+    if (!session) return;
+    for (const listener of session.listeners) listener.dispose();
+    session.pty.kill();
+    this.sessions.delete(folder);
+  }
+
   closeAll() {
     for (const session of this.sessions.values()) {
       for (const listener of session.listeners) listener.dispose();

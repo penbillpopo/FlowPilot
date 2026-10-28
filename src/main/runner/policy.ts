@@ -92,6 +92,11 @@ export function parseTestReport(message: string, previous: TestReport | null = n
     const manual = list(data.manual).map((t) => ({ text: t, done: done.has(t) }));
     if (data.update === true && previous) {
       // 只寫了有變的部分：沒寫到的條目沿用上一版（不算有變動），其他欄位接在上一版後面
+      // 從「要你測」改成 AI 測過通過的，一定要附證據（說明或截圖），不然照舊要你測：沒證據的「通過」不算數
+      for (const a of acceptance) {
+        const was = before.get(a.no);
+        if (was && (was.needYou || was.result !== '通過') && a.result === '通過' && !a.needYou && !a.note && !a.shot) a.needYou = true;
+      }
       const updated = new Map(acceptance.map((a) => [a.no, a]));
       const kept = previous.acceptance.map((a) => updated.get(a.no) ?? { ...a, changed: false });
       const added = acceptance.filter((a) => !before.has(a.no));
@@ -100,7 +105,10 @@ export function parseTestReport(message: string, previous: TestReport | null = n
         attention: unique([...previous.attention, ...list(data.attention)], (t) => t),
         acceptance: [...kept, ...added],
         otherChanges: unique([...previous.otherChanges, ...otherChanges], (c) => c.change),
-        manual: unique([...previous.manual, ...manual.filter((m) => !previous.manual.some((p) => p.text === m.text))], (m) => m.text),
+        // AI 這次測過、通過的手動項目：標成完成（AI 測的），收進「AI 測過的」
+        manual: unique([...previous.manual, ...manual.filter((m) => !previous.manual.some((p) => p.text === m.text))], (m) => m.text).map((m) =>
+          !m.done && list(data.manualPassed).some((p) => p === m.text) ? { ...m, done: true, byAi: true } : m,
+        ),
       };
     }
     return { attention: list(data.attention), acceptance, otherChanges, manual };

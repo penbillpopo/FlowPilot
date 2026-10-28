@@ -150,10 +150,15 @@ export function AcceptancePanel({ item }: { item: WorkItem }) {
       <ul className="ac-list">
         {report.acceptance.filter((a) => needsYou(a)).map((a) => renderItem(a, true))}
       </ul>
-      {report.acceptance.some((a) => !needsYou(a)) && (
+      {(report.acceptance.some((a) => !needsYou(a)) || report.manual.some((m) => m.byAi)) && (
         <details className="ac-ai-tested">
-          <summary>{t('AI 測過的（{count}）', { count: report.acceptance.filter((a) => !needsYou(a)).length })}</summary>
+          <summary>{t('AI 測過的（{count}）', { count: report.acceptance.filter((a) => !needsYou(a)).length + report.manual.filter((m) => m.byAi).length })}</summary>
           <ul className="ac-list">{report.acceptance.filter((a) => !needsYou(a)).map((a) => renderItem(a, false))}</ul>
+          {report.manual.some((m) => m.byAi) && (
+            <ul className="manual-list">
+              {report.manual.filter((m) => m.byAi).map((m) => <li key={m.text} className="muted small">✓ {m.text}</li>)}
+            </ul>
+          )}
         </details>
       )}
 
@@ -175,11 +180,11 @@ export function AcceptancePanel({ item }: { item: WorkItem }) {
         </>
       )}
 
-      {report.manual.length > 0 && (
+      {report.manual.some((m) => !m.byAi) && (
         <>
           <div className="plan-block-title">{t('其他要你手動測的')}</div>
           <ul className="manual-list">
-            {report.manual.map((m, i) => (
+            {report.manual.map((m, i) => m.byAi ? null : (
               <li key={i}>
                 <label className={m.done ? 'done' : ''}>
                   <input type="checkbox" checked={m.done} onChange={(e) => run(() => api.test.setManualDone(item.id, i, e.target.checked))} />

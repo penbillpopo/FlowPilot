@@ -318,6 +318,9 @@ export function ChatPanel({ item }: { item: WorkItem }) {
   const [error, setError] = useState<string | null>(null);
   const [removing, setRemoving] = useState(false);
   const [notice, setNotice] = useState<string | null>(null);
+  /** 分析報告的進度（產生中才有）；換單再回來也接得上 */
+  const [reportProgress, setReportProgress] = useState<string | null>(null);
+  useEffect(() => api.test.onReportProgress((id, text) => id === item.id && setReportProgress(text || null)), [item.id]);
   const scroller = useRef<HTMLDivElement>(null);
   const stick = useRef(true);
   const input = useRef<HTMLTextAreaElement>(null);
@@ -655,6 +658,24 @@ export function ChatPanel({ item }: { item: WorkItem }) {
                   </button>
                 )}
                 {active && item.threadId && item.folder && <button onClick={() => act(() => api.openInVSCode(item.id))}>{t('在 VS Code 查看')}</button>}
+                {/* 測試完成後：產生分析報告（截改動前後、整理重點，存成桌面的 PDF；要幾分鐘，背景跑） */}
+                {item.testReport && item.folder && !running && item.status !== 'preparing' && (
+                  <button
+                    disabled={!!reportProgress}
+                    title={t('整理這張單要做什麼、改動前後的截圖、重點和驗收結果，存成桌面的 PDF（要幾分鐘，會暫時重啟本機網站）')}
+                    onClick={(e) => {
+                      e.currentTarget.closest('details')?.removeAttribute('open');
+                      setReportProgress(t('準備中'));
+                      api.test
+                        .report(item.id)
+                        .then((file) => setNotice(t('分析報告存到 {file}', { file })))
+                        .catch((err) => setError(errorText(err)))
+                        .finally(() => setReportProgress(null));
+                    }}
+                  >
+                    {reportProgress ? t('報告產生中…') : t('產生分析報告')}
+                  </button>
+                )}
                 {active && !offBranch && item.status !== 'review' && !running && item.status !== 'preparing' && item.folder && (
                   <button onClick={finish} disabled={!!owed} title={owed ? t('還有 {count} 項測試沒勾，補測完才能完成', { count: owed }) : undefined}>{t('完成這張單')}</button>
                 )}
@@ -780,6 +801,7 @@ export function ChatPanel({ item }: { item: WorkItem }) {
       </div>
 
       {notice && <div className="notice-ok">{notice}</div>}
+      {reportProgress && <div className="notice-ok"><span className="spinner" /> {t('分析報告：{step}（要幾分鐘，好了會通知你）', { step: reportProgress })}</div>}
       {error && <div className="error">{error}</div>}
 
       {canSend && (

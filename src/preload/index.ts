@@ -123,6 +123,12 @@ const api: FlowPilotApi = {
     requestAcceptance: (id) => ipcRenderer.invoke('test:requestAcceptance', id),
     changedFiles: (id) => ipcRenderer.invoke('test:changedFiles', id),
     exportCsv: (id) => ipcRenderer.invoke('test:exportCsv', id),
+    report: (id) => ipcRenderer.invoke('report:generate', id),
+    onReportProgress: (listener) => {
+      const handler = (_event: unknown, id: number, text: string) => listener(id, text);
+      ipcRenderer.on('report:progress', handler);
+      return () => ipcRenderer.removeListener('report:progress', handler);
+    },
     openPage: (id, page) => ipcRenderer.invoke('test:openPage', id, page),
     shot: (name) => ipcRenderer.invoke('test:shot', name),
   },

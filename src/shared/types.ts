@@ -275,7 +275,8 @@ export interface TestReport {
   /** 跟某一條需求無關、但也改到的東西（例如共用元件、重構） */
   otherChanges: { change: string; why: string; files: string[]; impact: string }[];
   /** 其他要你手動測的項目 */
-  manual: { text: string; done: boolean }[];
+  /** byAi：AI 在瀏覽器測過、通過（不用你再測，收進「AI 測過的」） */
+  manual: { text: string; done: boolean; byAi?: boolean }[];
   /** 「直接完成（不補測）」時還有幾項沒測（有這個欄位就是沒測完就完成的） */
   finishedUntested?: number;
 }
@@ -731,6 +732,10 @@ export interface FlowPilotApi {
     changedFiles(itemId: number): Promise<string[]>;
     /** 驗收表匯出成 CSV，回傳存放位置；取消是 null */
     exportCsv(itemId: number): Promise<string | null>;
+    /** 產生分析報告（存成桌面的 PDF），回傳檔案路徑 */
+    report(itemId: number): Promise<string>;
+    /** 分析報告的進度（空字串是結束了） */
+    onReportProgress(listener: (itemId: number, text: string) => void): () => void;
     /** 在你的瀏覽器打開本機網站的某一頁（網站沒開會先啟動） */
     openPage(itemId: number, page: string): Promise<void>;
     /** 驗收截圖（瀏覽器測試紀錄資料夾裡的檔名）轉成可以顯示的圖；找不到是 null */

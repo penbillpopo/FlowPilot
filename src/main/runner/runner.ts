@@ -308,6 +308,18 @@ function testActivity(label: string, result: TestResult): string {
   }
 }
 
+/**
+ * 這個資料夾裡的這條分支有沒有東西：比基底多的提交，或正切在這條分支上、有沒提交的修改（environment.ts 不算）。
+ * 只是開過、什麼都沒做的空分支沒有（實際發生過：退役資料夾裡 10/12 留下的空分支，讓重新加回來的單一直卡住、要你去推送）。
+ * 算不出來（例如沒有基底分支）當作有，寧可擋下來問你。
+ */
+export async function branchHasWork(cwd: string, branch: string, baseBranch: string): Promise<boolean> {
+  const ahead = await runGit(cwd, ['rev-list', '--count', `origin/${baseBranch}..${branch}`]).catch(() => null);
+  if (!ahead || ahead.code !== 0 || Number(ahead.stdout.trim()) > 0) return true;
+  if ((await currentBranch(cwd).catch(() => '')) !== branch) return false;
+  return (await dirtyFiles(cwd).catch(() => ['?'])).some((file) => !isEnvironmentFile(file));
+}
+
 /** 瀏覽器測試切換 SIT／UAT 時會改的檔案 */
 function isEnvironmentFile(path: string): boolean {
   return /(^|\/)src\/environments\/environment[^/]*\.ts$/.test(path);
@@ -549,9 +561,12 @@ export class Runner {
       }
       // 退役的資料夾不再分給新的卡片
       const projectFolders = settings.folders.filter((f) => f.project === next.project && !f.retired);
-      // 分支只在退役資料夾的本機、遠端又沒有：在新資料夾開工會漏掉那些提交，先請你推送
+      // 分支只在退役資料夾的本機、遠端又沒有：在新資料夾開工會漏掉那些提交，先請你推送。
+      // 空分支（只是開過、沒有自己的提交和改動）不算：直接在新資料夾從最新的基底開
       const stranded: FolderSetting[] = [];
-      for (const f of settings.folders.filter((x) => x.project === next.project && x.retired)) if (await localBranchExists(f.path, next.branch).catch(() => false)) stranded.push(f);
+      for (const f of settings.folders.filter((x) => x.project === next.project && x.retired)) {
+        if ((await localBranchExists(f.path, next.branch).catch(() => false)) && (await branchHasWork(f.path, next.branch, next.baseBranch))) stranded.push(f);
+      }
       if (stranded.length && !(await remoteBranchExists(stranded[0].path, next.branch).catch(() => false))) {
         let usable = false;
         for (const f of projectFolders) if (await localBranchExists(f.path, next.branch).catch(() => false)) usable = true;

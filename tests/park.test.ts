@@ -5,7 +5,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { describe, expect, it } from 'vitest';
 import type { CodexRpc } from '../src/main/codex/rpc';
-import { Runner } from '../src/main/runner/runner';
+import { branchHasWork, Runner } from '../src/main/runner/runner';
 import { DEFAULT_SETTINGS_YAML, parseSettings } from '../src/main/settings';
 import { Store } from '../src/main/store';
 import type { TestReport } from '../src/shared/types';
@@ -167,6 +167,20 @@ describe('資料夾不在這張單的分支', () => {
     expect(git(mine, 'log', '-1', '--format=%s')).toBe('work'); // 沒推送的提交也帶過來了
     expect(git(t.folder, 'branch', '--show-current')).toBe('ban/fix-ui');
     expect(git(t.folder, 'status', '--porcelain')).toBe('M a.ts');
+  });
+
+  it('退役資料夾裡的同名分支：空的不算（直接開新的），有提交或沒提交的修改才算', async () => {
+    const t = setup();
+    git(t.folder, 'fetch', '-q', 'origin');
+    expect(await branchHasWork(t.folder, 'ban/ALL-1', 'version/0.0.1')).toBe(true); // 有自己的提交
+    git(t.folder, 'branch', 'ban/ALL-2', 'origin/version/0.0.1');
+    expect(await branchHasWork(t.folder, 'ban/ALL-2', 'version/0.0.1')).toBe(false); // 只是開過的空分支
+    git(t.folder, 'switch', '-q', 'ban/ALL-2');
+    writeFileSync(join(t.folder, 'src/environments/environment.ts'), "/** SIT */\n// apiUrl: 'sit',\n/** UAT */\napiUrl: 'uat',\n");
+    expect(await branchHasWork(t.folder, 'ban/ALL-2', 'version/0.0.1')).toBe(false); // 只有切環境的改動不算
+    writeFileSync(join(t.folder, 'b.ts'), 'new\n');
+    expect(await branchHasWork(t.folder, 'ban/ALL-2', 'version/0.0.1')).toBe(true); // 切在上面、有沒提交的新檔案
+    expect(await branchHasWork(t.folder, 'ban/ALL-2', 'no-such-base')).toBe(true); // 算不出來：擋下來
   });
 
   it('繼續修不會拿退役的資料夾', async () => {

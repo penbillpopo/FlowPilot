@@ -32,6 +32,38 @@ describe('Git 改動面板', () => {
     });
   });
 
+  it('提交了、外層卻回報失敗：當成成功（實際發生過：lint 全部通過、也提交了，畫面卻顯示錯誤）；檢查真的沒過、或逾時沒提交就照樣報錯', async () => {
+    const dir = repo();
+    const shell = process.env.SHELL;
+    // 模擬「指令做完了，外層的終端機卻回報失敗」
+    const fake = join(dir, '..', 'fake-shell.sh');
+    writeFileSync(fake, '#!/bin/sh\n/bin/sh -c "$3"\necho "All files pass linting."\nexit 1\n');
+    chmodSync(fake, 0o755);
+    try {
+      process.env.SHELL = fake;
+      writeFileSync(join(dir, 'a.ts'), 'x\n');
+      git(dir, 'add', 'a.ts');
+      const { sha } = await commitStaged(dir, 'feat(ALL-1) reported failed');
+      expect(git(dir, 'log', '-1', '--format=%s')).toBe('feat(ALL-1) reported failed\n');
+      expect(sha).toBe(git(dir, 'rev-parse', '--short', 'HEAD').trim());
+    } finally {
+      process.env.SHELL = shell;
+    }
+
+    // 提交前檢查真的沒過：照樣報錯，也沒有提交
+    const hook = join(dir, '.git', 'hooks', 'pre-commit');
+    writeFileSync(hook, '#!/bin/sh\necho "lint failed"\nexit 1\n');
+    chmodSync(hook, 0o755);
+    writeFileSync(join(dir, 'a.ts'), 'bad\n');
+    git(dir, 'add', 'a.ts');
+    await expect(commitStaged(dir, 'feat(ALL-1) bad')).rejects.toThrow('lint failed');
+    expect(git(dir, 'log', '-1', '--format=%s')).toBe('feat(ALL-1) reported failed\n');
+
+    // 逾時、也沒提交：說清楚是逾時
+    writeFileSync(hook, '#!/bin/sh\nsleep 3\n');
+    await expect(commitStaged(dir, 'feat(ALL-1) timeout', undefined, 500)).rejects.toThrow('還沒做完');
+  }, 30_000);
+
   it('暫存、取消暫存、看差異、捨棄、提交、推送', async () => {
     const dir = repo();
     writeFileSync(join(dir, 'a.ts'), 'a2\n');

@@ -182,7 +182,10 @@ export function loginShell(cwd: string, command: string, timeoutMs: number): Pro
     delete env.ELECTRON_RUN_AS_NODE;
     execFile(process.env.SHELL || '/bin/zsh', ['-l', '-c', command], { cwd, timeout: timeoutMs, env, maxBuffer: 20 * 1024 * 1024 }, (error, stdout, stderr) => {
       const output = `${stdout}${stderr}`.trim();
-      if (error) reject(new Error(output.split('\n').slice(-6).join('\n') || error.message));
+      const tail = output.split('\n').slice(-6).join('\n');
+      // 超過時間被停掉：說清楚是逾時（以前直接把最後幾行輸出當錯誤，看起來像「全部通過」也是錯）
+      if (error && (error as { killed?: boolean }).killed) reject(new Error(t('超過 {min} 分鐘還沒做完，FlowPilot 不等了', { min: Math.round(timeoutMs / 60_000) }) + (tail ? `\n${tail}` : '')));
+      else if (error) reject(new Error(tail || error.message));
       else resolvePromise(output);
     });
   });
@@ -191,8 +194,11 @@ export function loginShell(cwd: string, command: string, timeoutMs: number): Pro
 /** 提交暫存的變更，回傳提交編號 */
 const shellQuote = (text: string) => `'${text.replace(/'/g, `'\\''`)}'`;
 
-/** 提交暫存的變更；指定身分時只用在這一次，不改資料夾的設定 */
-export async function commitStaged(cwd: string, message: string, identity?: GitIdentity): Promise<CommitResult> {
+/**
+ * 提交暫存的變更；指定身分時只用在這一次，不改資料夾的設定。
+ * 專案的提交前檢查（ng lint --fix 檢查整個專案）在電腦很忙時可能要十幾分鐘，最多等 30 分鐘。
+ */
+export async function commitStaged(cwd: string, message: string, identity?: GitIdentity, timeoutMs = 30 * 60_000): Promise<CommitResult> {
   if (!message.trim()) throw new Error(t('請輸入提交訊息'));
   const before = await gitState(cwd);
   if (before.staged.length === 0) throw new Error(t('沒有暫存的變更可以提交'));
@@ -200,9 +206,14 @@ export async function commitStaged(cwd: string, message: string, identity?: GitI
   const dir = mkdtempSync(join(tmpdir(), 'flowpilot-commit-'));
   const file = join(dir, 'message.txt');
   writeFileSync(file, `${message.trim()}\n`);
+  const headBefore = (await runGit(cwd, ['rev-parse', 'HEAD'])).stdout.trim();
   try {
     const who = identity ? `-c user.name=${shellQuote(identity.name)} -c user.email=${shellQuote(identity.email)} ` : '';
-    await loginShell(cwd, `git ${who}commit -F '${file}'`, 10 * 60_000);
+    await loginShell(cwd, `git ${who}commit -F '${file}'`, timeoutMs);
+  } catch (error) {
+    // 回報失敗，但其實提交了（實際發生過：等提交前檢查等到逾時，外層停掉了，git 自己跑完照樣提交，畫面卻顯示錯誤）：當成成功
+    const headAfter = (await runGit(cwd, ['rev-parse', 'HEAD'])).stdout.trim();
+    if (!headAfter || headAfter === headBefore) throw error;
   } finally {
     rmSync(dir, { recursive: true, force: true });
   }

@@ -172,5 +172,6 @@ const en: Record<string, string> = {
   '測試時的畫面（改動後）': 'Screen from testing (after the change)',
   '改動說明': 'Changes',
   '{title}（假資料模式）': '{title} (mock data mode)',
+  '超過 {min} 分鐘還沒做完，FlowPilot 不等了': 'Still not done after {min} minutes; FlowPilot stopped waiting',
 };
 export default en;

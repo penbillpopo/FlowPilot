@@ -432,7 +432,7 @@ header .actions button { white-space: nowrap; }
 .ac-沒測 .ac-mark { color: var(--muted); }
 /* 驗收表 */
 .acceptance-panel { display: flex; flex-direction: column; gap: 8px; }
-.ac-summary { display: flex; gap: 8px; align-items: baseline; }
+.ac-summary { display: flex; gap: 8px; align-items: baseline; flex-wrap: wrap; }
 .ac-attention { border: 1px solid var(--warn); border-radius: 6px; padding: 6px 8px; font-size: 13px; }
 .ac-attention ul { margin: 4px 0 0; padding-left: 18px; display: flex; flex-direction: column; gap: 3px; }
 .ac-attention li.bad { color: var(--blocked); }
@@ -533,7 +533,7 @@ tbody tr.planning input { cursor: pointer; }
 .composer.dragging textarea, .discuss-box.dragging textarea { border-color: var(--accent) !important; box-shadow: 0 0 0 2px color-mix(in srgb, var(--accent) 30%, transparent), inset 0 0 18px color-mix(in srgb, var(--accent) 18%, transparent) !important; }
 .discuss-box { align-items: flex-end; }
 .attach-button { white-space: nowrap; }
-.ac-summary .ac-export { margin-left: auto; }
+.ac-top-actions { display: flex; gap: 6px; flex-wrap: wrap; margin-bottom: 8px; }
 /* 待補測：已交付、還有測試沒勾 */
 .status.parked { color: var(--warn); font-weight: 600; }
 li.ticket.status-parked { border-left-color: var(--warn); }

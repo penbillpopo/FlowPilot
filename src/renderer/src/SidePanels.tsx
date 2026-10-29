@@ -192,10 +192,20 @@ export function AcceptancePanel({ item }: { item: WorkItem }) {
 
   return (
     <div className="panel acceptance-panel">
+      {/* 常用的兩個動作放最上面一排 */}
+      <div className="ac-top-actions">
+        <button
+          disabled={!(idle && item.stage === 'manual')}
+          onClick={() => run(() => api.test.requestAcceptance(item.id))}
+          title={idle && item.stage === 'manual' ? t('不重新測試，請 AI 照目前的改動重新整理驗收表') : t('AI 停下來、等你測試的時候才能整理')}
+        >
+          {t('請 AI 重新整理驗收表')}
+        </button>
+        <button title={t('匯出成 CSV（Excel 打得開）')} onClick={() => run(() => api.test.exportCsv(item.id))}>{t('匯出 CSV')}</button>
+      </div>
       <div className="ac-summary">
         <strong>{left ? t('要你測 {left} 條', { left }) : forYou.length ? t('要你測的都測過了') : t('都由 AI 測過了')}</strong>
         <span className="muted small">{t('共 {count} 條', { count: report.acceptance.length })}</span>
-        <button className="link small ac-export" title={t('匯出成 CSV（Excel 打得開）')} onClick={() => run(() => api.test.exportCsv(item.id))}>{t('匯出 CSV')}</button>
       </div>
       {!!report.finishedUntested && <div className="ac-untested small">{t('⚠️ 這張單是直接完成的：當時還有 {count} 項沒測', { count: report.finishedUntested })}</div>}
 
@@ -264,11 +274,6 @@ export function AcceptancePanel({ item }: { item: WorkItem }) {
             ))}
           </ul>
         </>
-      )}
-      {idle && item.stage === 'manual' && (
-        <button className="link small" onClick={() => run(() => api.test.requestAcceptance(item.id))} title={t('不重新測試，請 AI 照目前的改動重新整理驗收表')}>
-          {t('請 AI 重新整理驗收表')}
-        </button>
       )}
       {error && <div className="error small">{error}</div>}
     </div>
@@ -341,13 +346,6 @@ export function TestPanel({ item }: { item: WorkItem }) {
       {state && (!state.account || !state.account.hasPassword) && (env === 'sit' || env === 'uat') && (
         <p className="muted small">{state.account ? t('請在 {file} 補上密碼（passwordSource）。', { file: state.accountFile }) : t('請在 {file} 補上。', { file: state.accountFile })}</p>
       )}
-      <button
-        className="link small close-browsers"
-        title={t('關掉瀏覽器測試開出來的瀏覽器視窗（不會關到你自己的 Chrome）')}
-        onClick={() => api.test.closeBrowsers().then((n) => setError(n ? null : t('目前沒有測試開出來的瀏覽器'))).catch((e) => setError(errorText(e)))}
-      >
-        {t('關掉測試開的瀏覽器')}
-      </button>
       {error && <div className="error small">{error}</div>}
     </div>
   );

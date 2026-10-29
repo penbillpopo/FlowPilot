@@ -457,7 +457,6 @@ header .actions button { white-space: nowrap; }
 .manual-list label.done { color: var(--muted); text-decoration: line-through; }
 .pm-draft { display: flex; flex-direction: column; gap: 6px; border: 1px solid var(--line); border-radius: 6px; padding: 8px 10px; }
 .pm-draft textarea { width: 100%; box-sizing: border-box; font: inherit; color: var(--fg); background: var(--bg); border: 1px solid var(--line); border-radius: 6px; padding: 6px 8px; }
-.trial-row { align-items: center; gap: 8px; flex-wrap: wrap; }
 .ok-text { color: var(--ok-fg); }
 tr.locked { opacity: 0.5; cursor: not-allowed; }
 /* 計畫中的單：點一下打開計畫表 */

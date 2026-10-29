@@ -28,7 +28,8 @@ export function appendPaths(prev: string, paths: string[]): string {
   return prev.trim() ? `${prev.replace(/\s+$/, '')} ${quoted}` : quoted;
 }
 
-export function useImageAttach(options: { onPaths?: (paths: string[]) => void } = {}): ImageAttach {
+/** noPicker：不放「附圖」按鈕（只留截圖；圖片照樣可以拖曳進來或貼上） */
+export function useImageAttach(options: { onPaths?: (paths: string[]) => void; noPicker?: boolean } = {}): ImageAttach {
   const [images, setImages] = useState<{ path: string; preview: string }[]>([]);
   const [dragging, setDragging] = useState(false);
   /** 截好、正在編輯的圖 */
@@ -101,9 +102,11 @@ export function useImageAttach(options: { onPaths?: (paths: string[]) => void } 
         <button type="button" className="attach-button" disabled={shooting} title={t('跟 ⌘⇧4 一樣拖一塊範圍；要截被擋住的視窗，按空白鍵再點那個視窗；Esc 取消。截完可以畫線、加框、箭頭、打字')} onClick={capture}>
           {shooting ? t('截圖中…') : t('截圖')}
         </button>
-        <button type="button" className="attach-button" title={t('附上圖片（也可以拖曳進輸入框或直接貼上）')} onClick={() => picker.current?.click()}>
-          {t('附圖')}
-        </button>
+        {!options.noPicker && (
+          <button type="button" className="attach-button" title={t('附上圖片（也可以拖曳進輸入框或直接貼上）')} onClick={() => picker.current?.click()}>
+            {t('附圖')}
+          </button>
+        )}
         {shot && (
           <ScreenshotEditor
             src={shot}

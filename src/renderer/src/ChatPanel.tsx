@@ -315,7 +315,8 @@ export function ChatPanel({ item }: { item: WorkItem }) {
   const [entries, setEntries] = useState<ChatEntry[]>([]);
   const [loading, setLoading] = useState(false);
   const [text, setText] = useState('');
-  const attach = useImageAttach({ onPaths: (paths) => setText((prev) => appendPaths(prev, paths)) });
+  // 對話不放「附圖」按鈕（你不用）：截圖、拖曳、貼上照樣可以附圖
+  const attach = useImageAttach({ onPaths: (paths) => setText((prev) => appendPaths(prev, paths)), noPicker: true });
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [removing, setRemoving] = useState(false);
@@ -889,8 +890,8 @@ export function ChatPanel({ item }: { item: WorkItem }) {
             value={text}
             placeholder={
               running ? t('補充指示（會插進正在進行的這一輪，Enter 送出，Shift＋Enter 換行）。可以附圖。')
-              : awaitingYou ? t('AI 在等你回答…（Enter 送出，Shift＋Enter 換行；可以附圖：按「附圖」、拖曳進來或直接貼上）')
-              : t('跟 AI 說…（Enter 送出，Shift＋Enter 換行；可以附圖：按「附圖」、拖曳進來或直接貼上）')
+              : awaitingYou ? t('AI 在等你回答…（Enter 送出，Shift＋Enter 換行；可以附圖：按「截圖」、拖曳進來或直接貼上）')
+              : t('跟 AI 說…（Enter 送出，Shift＋Enter 換行；可以附圖：按「截圖」、拖曳進來或直接貼上）')
             }
             onChange={(e) => setText(e.target.value)}
             onKeyDown={(e) => {

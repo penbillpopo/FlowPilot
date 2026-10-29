@@ -284,8 +284,6 @@ export function AcceptancePanel({ item }: { item: WorkItem }) {
  */
 export function TestPanel({ item }: { item: WorkItem }) {
   const [state, setState] = useState<TestState | null>(null);
-  const [trying, setTrying] = useState(false);
-  const [trial, setTrial] = useState<{ ok: boolean; reason: string } | null>(null);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
@@ -346,28 +344,6 @@ export function TestPanel({ item }: { item: WorkItem }) {
       {state && (!state.account || !state.account.hasPassword) && (env === 'sit' || env === 'uat') && (
         <p className="muted small">{state.account ? t('請在 {file} 補上密碼（passwordSource）。', { file: state.accountFile }) : t('請在 {file} 補上。', { file: state.accountFile })}</p>
       )}
-      <div className="row trial-row">
-        <button
-          className="link small"
-          disabled={trying || !(state?.account?.hasPassword)}
-          title={t('用無頭瀏覽器照帳號檔登入看看（獨立的臨時對話，約一兩分鐘；本機網站沒在跑會先啟動）')}
-          onClick={async () => {
-            setTrying(true);
-            setTrial(null);
-            setError(null);
-            try {
-              setTrial(await api.test.trialLogin(item.id));
-            } catch (e) {
-              setError(errorText(e));
-            } finally {
-              setTrying(false);
-            }
-          }}
-        >
-          {trying ? t('試登中…（約一兩分鐘）') : t('試登一次')}
-        </button>
-        {trial && <span className={`small ${trial.ok ? 'ok-text' : 'warn'}`}>{trial.ok ? t('登入成功：{reason}', { reason: trial.reason }) : t('登入失敗：{reason}', { reason: trial.reason })}</span>}
-      </div>
       <button
         className="link small close-browsers"
         title={t('關掉瀏覽器測試開出來的瀏覽器視窗（不會關到你自己的 Chrome）')}

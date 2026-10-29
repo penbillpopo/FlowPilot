@@ -77,8 +77,8 @@ const en: Record<string, string> = {
   '本機網站在跑：': 'Local site running: ',
   '本機網站沒有在跑': 'Local site is not running',
   '打開網頁': 'Open page',
-  '在對話框掛上「看你開的畫面」，打你要 AI 看什麼再送出。Chrome 要先裝 Playwright 擴充功能':
-    'Attaches "look at your screen" to the message box; type what you want the AI to look at, then send. Chrome needs the Playwright extension first',
+  '在對話框掛上「看你開的畫面」，打你要 AI 看什麼再送出。可以看你在 Chrome 開的任何網頁，不只本機網站。Chrome 要先裝 Playwright 擴充功能':
+    'Attaches "look at your screen" to the message box; type what you want the AI to look at, then send. Works with any page you open in Chrome, not just the local site. Chrome needs the Playwright extension first',
   '看我的': 'Look at mine',
   '停止': 'Stop',
   '啟動中…': 'Starting…',
@@ -89,8 +89,8 @@ const en: Record<string, string> = {
   '「打開網頁」用你平常的 Chrome 開。要讓 AI 看得到你開的頁面，Chrome 要先裝 Playwright 官方的擴充功能':
     '"Open page" uses your usual Chrome. For the AI to see the page you opened, Chrome first needs the official Playwright extension ',
   '（安裝）': '(install)',
-  '；之後按「看我的」、在對話框打你要它看什麼，送出後 Chrome 會跳出頁面讓你選要給 AI 的分頁。':
-    '. Then click "Look at mine", type what you want it to look at in the message box, and after you send, Chrome will ask which tab to share with the AI.',
+  '；之後按「看我的」、在對話框打你要它看什麼，送出後 Chrome 會跳出頁面讓你選要給 AI 的分頁（任何網頁都可以，不只本機網站）。':
+    '. Then click "Look at mine", type what you want it to look at in the message box, and after you send, Chrome will ask which tab to share with the AI (any page works, not just the local site).',
   '終端機已結束，切換到別張單再切回來會重新打開。': 'The terminal has exited. Switch to another ticket and back to reopen it.',
 
   // 改動（GitPanel）

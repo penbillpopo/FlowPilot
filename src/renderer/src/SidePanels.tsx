@@ -444,13 +444,6 @@ export function FolderTerminalPanel({ item, onSiteUrl }: { item: WorkItem; onSit
         {url ? (
           <>
             <button className="primary" onClick={() => api.openUrl(url).catch((e) => setError(errorText(e)))}>{t('打開網頁')}</button>
-            <button
-              title={t('在對話框掛上「看你開的畫面」，打你要 AI 看什麼再送出。Chrome 要先裝 Playwright 擴充功能')}
-              // 不直接叫 AI 做事：先讓你在對話框說要它看什麼，送出時才一起交給 AI
-              onClick={() => window.dispatchEvent(new CustomEvent('flowpilot:look', { detail: item.id }))}
-            >
-              {t('看我的')}
-            </button>
             <button onClick={() => folder && api.folderTerminal.interrupt(folder)}>{t('停止')}</button>
           </>
         ) : (
@@ -470,6 +463,14 @@ export function FolderTerminalPanel({ item, onSiteUrl }: { item: WorkItem; onSit
             {starting !== null ? t('啟動中…') : t('啟動')}
           </button>
         )}
+        {/* 看我的：看你在 Chrome 選的任何分頁（不只本機網站，例如 SIT、UAT、正式站），本機網站沒開也能用 */}
+        <button
+          title={t('在對話框掛上「看你開的畫面」，打你要 AI 看什麼再送出。可以看你在 Chrome 開的任何網頁，不只本機網站。Chrome 要先裝 Playwright 擴充功能')}
+          // 不直接叫 AI 做事：先讓你在對話框說要它看什麼，送出時才一起交給 AI
+          onClick={() => window.dispatchEvent(new CustomEvent('flowpilot:look', { detail: item.id }))}
+        >
+          {t('看我的')}
+        </button>
         {/* 終端機是開發者的工具，平常收起來；真的需要時再打開 */}
         <button className="link small push-right" onClick={() => setShowTerminal(!showTerminal)}>{showTerminal ? t('收起終端機') : t('顯示終端機')}</button>
       </div>
@@ -484,7 +485,7 @@ export function FolderTerminalPanel({ item, onSiteUrl }: { item: WorkItem; onSit
       <p className="muted small">
         {t('「打開網頁」用你平常的 Chrome 開。要讓 AI 看得到你開的頁面，Chrome 要先裝 Playwright 官方的擴充功能')}
         <button className="link small" onClick={() => api.openExternal('https://chromewebstore.google.com/detail/playwright-extension/mmlmfjhmonkocbjadbfplnigmagldckm')}>{t('（安裝）')}</button>
-        {t('；之後按「看我的」、在對話框打你要它看什麼，送出後 Chrome 會跳出頁面讓你選要給 AI 的分頁。')}
+        {t('；之後按「看我的」、在對話框打你要它看什麼，送出後 Chrome 會跳出頁面讓你選要給 AI 的分頁（任何網頁都可以，不只本機網站）。')}
       </p>
       <div ref={host} className="folder-term" style={showTerminal ? undefined : { display: 'none' }} />
       {exited && <div className="muted small">{t('終端機已結束，切換到別張單再切回來會重新打開。')}</div>}

@@ -173,9 +173,6 @@ export function AcceptancePanel({ item }: { item: WorkItem }) {
                   {t('打開這頁')}
                 </button>
               )}
-              <button className="link small" title={t('這一條有問題？在輸入框帶入，跟 AI 說要怎麼改')} onClick={() => askAI(t('驗收第 {no} 條（{text}）：', { no: a.no, text: a.text }))}>
-                {t('不對，跟 AI 說')}
-              </button>
             </div>
             {devInfo && (
               <details className="ac-dev">
@@ -608,20 +605,13 @@ export function GitPanel({ item, onCount }: { item: WorkItem; onCount?(changes: 
   );
 }
 
-/** 改動的一個檔案：點檔名看改了什麼；覺得不對就「要 AI 改」 */
+/** 改動的一個檔案：點檔名看改了什麼。一般的修改不標（你不需要），新增、刪除、改名才標出來 */
 function FileRow({ file, diff, onClick }: { file: GitFile; diff: string | null; onClick(): void }) {
   const name = file.path.split('/').pop();
   return (
     <li className={diff !== null ? 'open' : ''}>
       <button className="file-name" onClick={onClick} title={t('{path}（點一下看改了什麼）', { path: file.path })}>
-        <span className={`code c-${file.code}`}>{CHANGE_LABEL[file.code] ? t(CHANGE_LABEL[file.code]) : t('修改')}</span> {name} <span className="muted small">{file.path.slice(0, file.path.length - (name?.length ?? 0))}</span>
-      </button>
-      <button
-        className="link small file-actions"
-        title={t('這個檔案改得不對？按一下會把檔名帶進中間的輸入框，接著打要怎麼改，送出給 AI')}
-        onClick={() => window.dispatchEvent(new CustomEvent('flowpilot:ask-ai', { detail: t('{path}：', { path: file.path }) }))}
-      >
-        {t('要 AI 改')}
+        {CHANGE_LABEL[file.code] && <span className={`code c-${file.code}`}>{t(CHANGE_LABEL[file.code])}</span>} {name} <span className="muted small">{file.path.slice(0, file.path.length - (name?.length ?? 0))}</span>
       </button>
       {diff !== null && <div className="diff-row"><DiffView diff={diff} /></div>}
     </li>
@@ -727,7 +717,7 @@ export function BranchCommitsPanel({ item, refreshKey }: { item: WorkItem; refre
 
 /** Git 的代號換成操作者看得懂的字 */
 // i18n-keys：顯示時才翻
-const CHANGE_LABEL: Record<string, string> = { M: '修改', A: '新增', U: '新增', D: '刪除', R: '改名', C: '複製' };
+const CHANGE_LABEL: Record<string, string> = { A: '新增', U: '新增', D: '刪除', R: '改名', C: '複製' };
 
 
 /** 驗收截圖：AI 測試時截的「應該長這樣」，點一下放大 */

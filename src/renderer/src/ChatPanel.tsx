@@ -593,18 +593,6 @@ export function ChatPanel({ item }: { item: WorkItem }) {
         </div>
         <div className="row head-actions">
           {running && <button disabled={busy} onClick={() => act(() => api.interrupt(item.id))}>{t('中斷這一輪')}</button>}
-          {canRetest && !delivery?.delivering && (
-            <button
-              disabled={busy}
-              title={t('AI 先列測試計畫給你確認，再開瀏覽器測給你看（用測試帳號自動登入）')}
-              onClick={() => act(async () => {
-                stick.current = true;
-                await api.retest(item.id);
-              })}
-            >
-              {t('開瀏覽器測給我看')}
-            </button>
-          )}
           {next && (
             <button className="primary" disabled={busy} onClick={next.run} title={next.title}>
               {next.label}
@@ -661,7 +649,8 @@ export function ChatPanel({ item }: { item: WorkItem }) {
                     {t('開瀏覽器測給我看（假資料）')}
                   </button>
                 )}
-                {canRetest && delivery?.delivering && (
+                {/* 開瀏覽器測給我看：不放標題列（你很少用），收在這裡 */}
+                {canRetest && (
                   <button
                     disabled={busy}
                     title={t('AI 先列測試計畫給你確認，再開瀏覽器測給你看（用測試帳號自動登入）')}

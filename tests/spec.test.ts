@@ -1,7 +1,7 @@
 // 規格流程：寫規格 → 沒看過的 AI 審查 → 處理意見；做完後比對的處理結果。用假的 Codex，不會啟動真正的 AI。
 import { describe, expect, it } from 'vitest';
 import type { CodexRpc, RpcMessage } from '../src/main/codex/rpc';
-import { applySpecReplies, specNextStep, buildReviewerPrompt, buildSpecPrompt, generateSpec, resolveSchema, reviewerSchema, SPEC_REVIEWERS, specBrief, specSchema, withSpecQuestions } from '../src/main/planner/spec';
+import { applySpecReplies, buildSpecCheckPrompt, specNextStep, buildReviewerPrompt, buildSpecPrompt, generateSpec, resolveSchema, reviewerSchema, SPEC_REVIEWERS, specBrief, specSchema, withSpecQuestions } from '../src/main/planner/spec';
 import { DEFAULT_SETTINGS_YAML, parseSettings } from '../src/main/settings';
 import type { Review, SpecCheck } from '../src/shared/types';
 import { specItemsForYou, wantsSpec } from '../src/shared/types';
@@ -183,6 +183,14 @@ describe('做完後比對規格', () => {
     expect(replied.items.map((i) => [i.status, i.reply])).toEqual([['fixed', '加上狀態 S 的判斷'], ['kept', '日期本來就鎖了'], ['open', undefined]]);
     expect(specItemsForYou(replied).map((i) => i.no)).toEqual([2, 3]);
     expect(specItemsForYou({ ...replied, items: replied.items.map((i) => ({ ...i, seen: true })) })).toEqual([]);
+  });
+
+  it('多商戶的單只比對這次做的來源商戶，之後才移植的商戶不要報', () => {
+    const r = review({ spec: { status: 'done', step: '', markdown: '# 規格', findings: [], failedReviewers: 0, reviewedAt: '', at: '' } });
+    const prompt = buildSpecCheckPrompt(r, 'master-1', 'environment.ts', { merchant: 1, later: [2, 5, 10] });
+    expect(prompt).toContain('這次只做商戶 m1');
+    expect(prompt).toContain('m2、m5、m10 之後才各自移植');
+    expect(buildSpecCheckPrompt(r, 'version/0.0.1', 'environment.ts')).not.toContain('範圍：');
   });
 
   it('沒附處理結果、或格式壞了：維持原狀', () => {

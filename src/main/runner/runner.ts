@@ -1078,7 +1078,7 @@ export class Runner {
     this.update(id, { stage: 'speccheck', status: 'running', activity: t('沒看過開發過程的 AI 比對規格和改動中'), pending: null, specCheck: { status: 'running', items: [], verdict: '', at: new Date().toISOString() } });
     try {
       if (!item.folder || !review?.spec?.markdown) throw new Error(t('這張單沒有規格'));
-      const check = await checkAgainstSpec(this.deps.codex, this.folderPath(item.folder), review, item.baseBranch, ENVIRONMENT_FILE).finally(() => this.specChecking.delete(id));
+      const check = await checkAgainstSpec(this.deps.codex, this.folderPath(item.folder), review, item.baseBranch, ENVIRONMENT_FILE, { merchant: item.merchant, later: item.targetMerchants }).finally(() => this.specChecking.delete(id));
       if (['removed', 'stopped'].includes(this.deps.store.getWorkItem(id)!.status)) return;
       this.update(id, { specCheck: check });
       const wrong = check.items.filter((i) => i.kind === 'wrong');

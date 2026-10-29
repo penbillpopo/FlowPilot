@@ -66,7 +66,7 @@ export function buildSpecPrompt(review: Review, settings: Settings): string {
     '- 這是前端的工作，後端由別的團隊做。規格裡的 API、欄位、狀態值只能寫「單上寫的」或「程式碼裡確認存在的」，並標出處（單號，或檔案路徑）。兩邊都找不到的，不准自己設計（不要發明 API、欄位、錯誤碼、版本號、冪等鍵這類東西），寫進「待確認問題」。',
     '- 提到的既有檔案、函式、元件都要實際確認存在，寫出路徑；要新增的標明「新增」。',
     '- 產品上有不只一種合理做法、單上沒寫、程式碼也推不出來的，寫進「待確認問題」並附建議答案，不要自己挑。純技術上只有一種合理做法的自己決定，寫下理由。',
-    '- 多商戶的專案：每個要做的商戶都要確認程式結構一不一樣，不一樣就分開寫。',
+    '- 多商戶的專案：每個要做的商戶都要確認程式結構一不一樣，不一樣就分開寫。FlowPilot 會先在來源商戶開發、測完，其他商戶之後才各自移植（另外的工作），所以「要改的檔案」和「驗收項目」要標清楚屬於哪個商戶。',
     '- 不要寫程式碼。不要寫自動化測試計畫、測試覆蓋率、監控、效能數字、上線計畫（團隊流程不需要）。驗收以畫面上可以操作驗證的為主。',
     '- 給人看的文字用繁體中文（台灣）寫，白話、具體；檔名、函式名、程式碼保留原文。',
     '',
@@ -378,10 +378,27 @@ function answers(review: Review): string {
   return done.length ? done.map((i) => `- ${i.title} → ${i.status === 'answered' ? i.answer : `${zhOnly('照建議：')}${i.suggestion}`}`).join('\n') : '（沒有）';
 }
 
-export function buildSpecCheckPrompt(review: Review, baseBranch: string, environmentFile: string): string {
+/** 這次比對的範圍：多商戶的單這次只做來源商戶，其他商戶之後才移植 */
+export interface SpecCheckScope {
+  merchant: number | null;
+  /** 之後才移植的商戶 */
+  later: number[];
+}
+
+/** 多商戶的單只比對這次做的商戶（實際發生過：拿全部商戶的規格比對 M1 這一次，報「其他商戶都還沒有入口」） */
+function scopeLines(scope: SpecCheckScope): string[] {
+  if (!scope.merchant) return [];
+  return [
+    `- 範圍：這次只做商戶 m${scope.merchant}（來源商戶，先開發、測完）。` +
+      (scope.later.length ? `商戶 ${scope.later.map((m) => `m${m}`).join('、')} 之後才各自移植（另外的工作），規格裡只屬於那些商戶的部分、或「每個商戶都要有」這類要求在其他商戶還沒做到的，都不要報。` : '規格裡屬於其他商戶的部分不要報。'),
+  ];
+}
+
+export function buildSpecCheckPrompt(review: Review, baseBranch: string, environmentFile: string, scope: SpecCheckScope = { merchant: null, later: [] }): string {
   return [
     '你是沒有任何背景的檢查者。下面是開工前寫好、審查過的規格，開發的 AI 已經照它做完了。逐條比對規格和實際的程式改動。',
     '',
+    ...scopeLines(scope),
     '- 看改動：git diff origin/' + baseBranch + '...HEAD（已提交的）、git diff HEAD（還沒提交的）、git ls-files --others --exclude-standard（新檔案，再讀內容）。只讀不改。',
     `- ${environmentFile} 的改動不用管（測試切環境用的）。`,
     '- 目前資料夾就是這張單的分支，需要時可以讀檔案理解上下文。',
@@ -401,11 +418,11 @@ export function buildSpecCheckPrompt(review: Review, baseBranch: string, environ
   ].join('\n');
 }
 
-export async function checkAgainstSpec(rpc: CodexRpc, cwd: string, review: Review, baseBranch: string, environmentFile: string): Promise<SpecCheck> {
+export async function checkAgainstSpec(rpc: CodexRpc, cwd: string, review: Review, baseBranch: string, environmentFile: string, scope?: SpecCheckScope): Promise<SpecCheck> {
   const { result } = await runStructured<{ items: { kind: string; severity: string; text: string; evidence: string }[]; verdict: string }>(rpc, {
     cwd,
     effort: 'medium',
-    prompt: buildSpecCheckPrompt(review, baseBranch, environmentFile),
+    prompt: buildSpecCheckPrompt(review, baseBranch, environmentFile, scope),
     schema: specCheckSchema,
     timeoutMs: 12 * 60_000,
   });

@@ -2,8 +2,15 @@
 import { describe, expect, it } from 'vitest';
 import { defaultPrTitle, parseAzureRemote, pickReviewers, prDescription } from '../src/main/azure';
 import { DEFAULT_SETTINGS_YAML, parseSettings } from '../src/main/settings';
+import { latestPrs } from '../src/shared/types';
 
 describe('Azure 發 PR', () => {
+  it('畫面只列每個目標分支最新的 PR：解衝突重發換掉的舊 PR 不列', () => {
+    const pr = (id: number, target: string, status: 'active' | 'abandoned' | 'completed' = 'active') => ({ id, url: `u${id}`, target, title: '', status });
+    const list = [pr(1, 'version/0.0.1'), pr(2, 'dev', 'abandoned'), pr(3, 'master', 'abandoned'), pr(5, 'dev', 'completed'), pr(4, 'master')];
+    expect(latestPrs(list).map((p) => p.id)).toEqual([1, 5, 4]);
+  });
+
   it('設定檔指定審核人：只留這些人（不分大小寫、照設定的順序）；沒指定就全部', () => {
     const all = [
       { id: '1', name: 'AD', email: 'ad@intellianalyze.com' },

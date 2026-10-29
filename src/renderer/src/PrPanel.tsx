@@ -1,6 +1,7 @@
 // 已完成的單：用 Azure 發 PR。名稱預設 feat(單號) 單子名稱，可以選目標分支、審核人，說明自動帶 Jira 連結和驗收表。
 import { useEffect, useState } from 'react';
 import type { PrOptions, WorkItem } from '../../shared/types';
+import { latestPrs } from '../../shared/types';
 import { errorText } from './ChatPanel';
 import { t } from '../../shared/i18n';
 
@@ -132,11 +133,13 @@ export function PrPanel({ item }: { item: WorkItem }) {
   }
 
   // 發過的 PR：一張單可以發好幾個（例如同一條分支發到 sit、uat、master）
-  const sent = item.prs.length > 0 && (
+  // 同一個目標分支只列最新的 PR（解衝突重發換掉的舊 PR 不列）
+  const shown = latestPrs(item.prs);
+  const sent = shown.length > 0 && (
     <div className="panel pr-panel">
-      <strong>{t('已發的 PR（{count}）', { count: item.prs.length })}</strong>
+      <strong>{t('已發的 PR（{count}）', { count: shown.length })}</strong>
       <ul className="pr-list">
-        {item.prs.map((p) => (
+        {shown.map((p) => (
           <li key={p.url}>
             <div className="pr-line">
               <span>{t('發到 ')}<code>{p.target || t('（讀取中）')}</code></span>
@@ -146,7 +149,6 @@ export function PrPanel({ item }: { item: WorkItem }) {
             </div>
             {p.title && <div className="pr-title" title={p.title}>{p.title}</div>}
             <div className="muted small">{t('審核人：{reviewers}', { reviewers: p.reviewers ? (p.reviewers.length ? p.reviewers.join(t('、')) : t('沒有')) : t('（讀取中）') })}</div>
-            {p.replacedBy && <div className="muted small">{t('有衝突，已解完重發成 !{id}', { id: p.replacedBy })}</div>}
             {p.conflicts && (
               <div className="pr-conflict-row">
                 {resolving[p.id] ? (

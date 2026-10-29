@@ -621,6 +621,20 @@ export interface PrRecord {
   replacedBy?: number;
 }
 
+/**
+ * 畫面上列的 PR：同一個目標分支只留最新的（編號最大的；Azure 的 PR 編號一直往上加），照目標分支第一次出現的順序。
+ * 解衝突重發換掉的、放棄後又重發的舊 PR 不列（紀錄還留著）。
+ */
+export function latestPrs(prs: PrRecord[]): PrRecord[] {
+  const byTarget = new Map<string, PrRecord>();
+  for (const pr of prs) {
+    const key = pr.target || pr.url;
+    const seen = byTarget.get(key);
+    if (!seen || pr.id > seen.id) byTarget.set(key, pr);
+  }
+  return [...byTarget.values()];
+}
+
 /** PR 的審核人（從最近的 PR 抓出來的） */
 export interface PrReviewer {
   id: string;

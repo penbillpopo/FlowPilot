@@ -1,6 +1,7 @@
 // 工作台：左邊是你手上的單，中間跟 AI 對話，右邊是測試環境與帳號、本機網站與 Git 改動。
 import { createContext, useContext, useEffect, useRef, useState } from 'react';
 import type { BoardState, WorkItem, WorkStatus } from '../../shared/types';
+import { latestPrs } from '../../shared/types';
 import { ChatPanel, errorText, STATUS_LABEL } from './ChatPanel';
 import { PortPanel } from './PortPanel';
 import { PrPanel } from './PrPanel';
@@ -35,7 +36,7 @@ function Row({ item, selected, onSelect, extra }: { item: WorkItem; selected: bo
         {item.status !== 'queued' && <span className={`status ${item.status}`}>{STATUS_LABEL[item.status]}</span>}
         {item.portOf && <span className="mark" title={t('從 {branch} 移植過來的', { branch: item.portOf.branch })}>{t('移植自 m{merchant}', { merchant: item.portOf.merchant })}</span>}
         {item.members.length > 0 && <span className="mark group" title={item.members.map((m) => `${m.key} ${m.summary}`).join('\n')}>{t('合成 {n} 張', { n: item.members.length })}</span>}
-        {item.prs.length > 0 && <span className="mark done" title={item.prs.map((p) => `→ ${p.target || t('？')}`).join('\n')}>{t('已發 PR')}{item.prs.length > 1 ? ` ×${item.prs.length}` : ''}</span>}
+        {item.prs.length > 0 && <span className="mark done" title={latestPrs(item.prs).map((p) => `→ ${p.target || t('？')}`).join('\n')}>{t('已發 PR')}{latestPrs(item.prs).length > 1 ? ` ×${latestPrs(item.prs).length}` : ''}</span>}
         {extra}
       </div>
       <div className="ticket-tag"><ProjectTag item={item} /></div>

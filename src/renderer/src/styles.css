@@ -653,3 +653,7 @@ td.time { white-space: nowrap; }
 .spec-tag.unsure { color: var(--waiting); }
 .spec-sev { font-size: 11px; color: var(--muted); white-space: nowrap; flex-shrink: 0; }
 .spec-sev.high { color: var(--blocked); font-weight: 700; }
+
+/* PR 有衝突：標記和「解衝突重發」 */
+.mark.pr-conflict { color: var(--blocked); border-color: var(--blocked); }
+.pr-conflict-row { margin-top: 6px; }

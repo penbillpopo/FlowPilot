@@ -60,8 +60,24 @@ interface AzurePr {
   pullRequestId: number;
   title: string;
   targetRefName: string;
+  sourceRefName?: string;
   status: string;
-  reviewers?: { displayName: string; uniqueName: string; isContainer?: boolean }[];
+  description?: string;
+  /** Azure 試合併的結果：conflicts 是有衝突 */
+  mergeStatus?: string;
+  reviewers?: { id?: string; displayName: string; uniqueName: string; isContainer?: boolean }[];
+}
+
+/** 解衝突重發要用的：原本 PR 的名稱、說明、審核人、來源和目標分支 */
+export interface PrDetail {
+  id: number;
+  title: string;
+  description: string;
+  source: string;
+  target: string;
+  reviewerIds: string[];
+  status: PrRecord['status'];
+  conflicts: boolean;
 }
 
 /** 從 PR 網址讀出編號（舊資料只存了網址） */
@@ -160,14 +176,37 @@ export class AzureRepo {
   }
 
   private record(pr: AzurePr): PrRecord {
+    const status = pr.status === 'completed' || pr.status === 'abandoned' ? pr.status : 'active';
     return {
       id: pr.pullRequestId,
       url: this.prUrl(pr.pullRequestId),
       title: pr.title,
       target: pr.targetRefName.replace(/^refs\/heads\//, ''),
       reviewers: (pr.reviewers ?? []).filter((r) => !r.isContainer).map((r) => r.uniqueName || r.displayName),
-      status: pr.status === 'completed' || pr.status === 'abandoned' ? pr.status : 'active',
+      status,
+      ...(status === 'active' && pr.mergeStatus === 'conflicts' ? { conflicts: true } : {}),
     };
+  }
+
+  /** 解衝突重發要用的 PR 內容 */
+  async prDetail(id: number): Promise<PrDetail> {
+    const pr = await this.api<AzurePr>(`/pullrequests/${id}`);
+    const record = this.record(pr);
+    return {
+      id,
+      title: pr.title,
+      description: pr.description ?? '',
+      source: (pr.sourceRefName ?? '').replace(/^refs\/heads\//, ''),
+      target: record.target,
+      reviewerIds: (pr.reviewers ?? []).filter((r) => !r.isContainer && r.id).map((r) => r.id!),
+      status: record.status,
+      conflicts: !!record.conflicts,
+    };
+  }
+
+  /** 放棄一個 PR（Azure 的 PR 不能刪除，放棄就是收掉） */
+  async abandonPr(id: number): Promise<void> {
+    await this.api(`/pullrequests/${id}`, { method: 'PATCH', body: { status: 'abandoned' } });
   }
 
   async createPr(input: { source: string; target: string; title: string; description: string; reviewerIds: string[] }): Promise<{ id: number; url: string }> {

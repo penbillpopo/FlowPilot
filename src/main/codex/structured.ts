@@ -21,10 +21,12 @@ export interface StructuredRequest {
   keepLanguage?: boolean;
   /** 額外的對話設定（例如試登一次要帶上瀏覽器工具） */
   config?: Record<string, unknown>;
+  /** 可以改 cwd 裡的檔案（例如解衝突）；預設唯讀 */
+  writable?: boolean;
 }
 
 /**
- * 請 Codex 依固定格式（JSON Schema）回答。對話是唯讀的：可以讀檔、查程式碼，不能改東西。
+ * 請 Codex 依固定格式（JSON Schema）回答。對話預設是唯讀的：可以讀檔、查程式碼，不能改東西（writable 時可以改 cwd 裡的檔案）。
  * 回傳答案與對話編號（保留的對話之後可以接著問）。
  */
 export async function runStructured<T>(rpc: CodexRpc, request: StructuredRequest): Promise<{ result: T; threadId: string }> {
@@ -41,7 +43,7 @@ export async function runStructured<T>(rpc: CodexRpc, request: StructuredRequest
       // 不用 never：never 會把 MCP 工具（看 Figma、試登的瀏覽器）直接拒絕。
       // on-request 下唯讀環境裡的指令照樣直接跑；要提升權限的指令由下面一律拒絕，工具確認由下面自動同意
       approvalPolicy: 'on-request',
-      sandbox: 'read-only',
+      sandbox: request.writable ? 'workspace-write' : 'read-only',
       // 介面是英文：審閱、討論、試登這類給人看的結果請 AI 用英文寫
       developerInstructions:
         [request.developerInstructions, getLang() === 'en' && !request.keepLanguage ? '所有給人看的文字（說明、問題、建議、結論）都用英文（English）寫；格式說明、AGENTS.md 或技能裡如果寫「用繁體中文」，以這一句為準。' : null].filter(Boolean).join('\n\n') || null,

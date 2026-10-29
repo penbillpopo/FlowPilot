@@ -252,5 +252,12 @@ const en: Record<string, string> = {
   'AI 停下來、等你測試的時候才能整理': 'Available when AI has stopped and the ticket is waiting for your testing',
   '審核人（設定檔指定的）': 'Reviewers (set in the settings file)',
   '設定檔指定的審核人，在這個專案最近的 PR 裡找不到（要有他審過的 PR 才查得到）。': 'The reviewers in the settings file were not found in this project’s recent PRs (they need to have reviewed a PR here).',
+  // PR 有衝突：解衝突重發
+  '有衝突': 'Conflicts',
+  '有衝突，已解完重發成 !{id}': 'Had conflicts; resolved and re-created as !{id}',
+  '從最新的目標分支開新分支、合併、AI 解衝突，再用新分支重發 PR': 'Branch off the latest target, merge, let AI resolve the conflicts, then re-create the PR from the new branch',
+  '解衝突重發': 'Resolve and re-create',
+  '解衝突重發（發到 {target} 的 PR）？\n\n1. 從最新的 {target} 開新分支 {branch}\n2. 把 {source} 合併進去，有衝突交給 AI 解（AI 沒把握會停下來，不硬合）\n3. 推送 {branch}，用它發新的 PR 到 {target}（名稱、說明、審核人沿用）\n4. 新 PR 發成功後，放棄原本的 PR\n\n原本的開發分支不會動，遠端分支也不會刪。':
+    'Resolve conflicts and re-create the PR to {target}?\n\n1. Create a new branch {branch} from the latest {target}\n2. Merge {source} into it; AI resolves any conflicts (it stops instead of forcing when unsure)\n3. Push {branch} and create a new PR to {target} (same title, description and reviewers)\n4. After the new PR is created, abandon the original PR\n\nYour development branch is not touched, and no remote branch is deleted.',
 };
 export default en;

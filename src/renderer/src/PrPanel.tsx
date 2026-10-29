@@ -41,10 +41,42 @@ export function PrPanel({ item }: { item: WorkItem }) {
   /** 上一次發的結果（一起發好幾個商戶時，逐一列出成功或失敗） */
   const [results, setResults] = useState<{ merchant: number | null; target: string; url?: string; error?: string }[] | null>(null);
 
-  // 打開時向 Azure 讀回發過的 PR 現在的狀態、目標分支、審核人
+  /** 解衝突重發的進度：PR 編號 → 做到哪一步 */
+  const [resolving, setResolving] = useState<Record<number, string>>({});
+  const [resolveError, setResolveError] = useState<{ prId: number; text: string } | null>(null);
+
+  // 打開時向 Azure 讀回發過的 PR 現在的狀態、目標分支、審核人（也看有沒有衝突）
   useEffect(() => {
     if (item.prs.length) api.pr.refresh(item.id).catch(() => {});
   }, [item.id]);
+
+  useEffect(
+    () =>
+      api.pr.onProgress((id, prId, text) => {
+        if (id !== item.id) return;
+        setResolving((prev) => {
+          const { [prId]: _, ...rest } = prev;
+          return text ? { ...rest, [prId]: text } : rest;
+        });
+      }),
+    [item.id],
+  );
+
+  /** 解衝突重發：先列出會做的事讓你確認，之後全部自動 */
+  async function resolveConflict(prId: number, target: string) {
+    const branch = `${item.branch}-${target.replace(/\//g, '-')}`;
+    const ok = window.confirm(
+      t('解衝突重發（發到 {target} 的 PR）？\n\n1. 從最新的 {target} 開新分支 {branch}\n2. 把 {source} 合併進去，有衝突交給 AI 解（AI 沒把握會停下來，不硬合）\n3. 推送 {branch}，用它發新的 PR 到 {target}（名稱、說明、審核人沿用）\n4. 新 PR 發成功後，放棄原本的 PR\n\n原本的開發分支不會動，遠端分支也不會刪。', { target, branch, source: item.branch }),
+    );
+    if (!ok) return;
+    setResolveError(null);
+    setResolving((prev) => ({ ...prev, [prId]: t('準備中') }));
+    try {
+      await api.pr.resolveConflict(item.id, prId);
+    } catch (e) {
+      setResolveError({ prId, text: errorText(e) });
+    }
+  }
 
   async function open() {
     setLoading(true);
@@ -106,10 +138,24 @@ export function PrPanel({ item }: { item: WorkItem }) {
             <div className="pr-line">
               <span>{t('發到 ')}<code>{p.target || t('（讀取中）')}</code></span>
               {p.status && <span className={`mark pr-${p.status}`}>{t(PR_STATUS[p.status])}</span>}
+              {p.conflicts && <span className="mark pr-conflict">{t('有衝突')}</span>}
               <button className="link small" onClick={() => api.openExternal(p.url)}>{t('打開')}</button>
             </div>
             {p.title && <div className="pr-title" title={p.title}>{p.title}</div>}
             <div className="muted small">{t('審核人：{reviewers}', { reviewers: p.reviewers ? (p.reviewers.length ? p.reviewers.join(t('、')) : t('沒有')) : t('（讀取中）') })}</div>
+            {p.replacedBy && <div className="muted small">{t('有衝突，已解完重發成 !{id}', { id: p.replacedBy })}</div>}
+            {p.conflicts && (
+              <div className="pr-conflict-row">
+                {resolving[p.id] ? (
+                  <span className="small">⏳ {resolving[p.id]}…</span>
+                ) : (
+                  <button disabled={Object.keys(resolving).length > 0} onClick={() => resolveConflict(p.id, p.target)} title={t('從最新的目標分支開新分支、合併、AI 解衝突，再用新分支重發 PR')}>
+                    {t('解衝突重發')}
+                  </button>
+                )}
+              </div>
+            )}
+            {resolveError?.prId === p.id && <div className="error small">{resolveError.text}</div>}
           </li>
         ))}
       </ul>

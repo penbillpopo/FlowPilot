@@ -20,6 +20,7 @@ import { deriveBranches, planProblem } from './planner/rules';
 import { loadHistory } from './chat';
 import { generateReport } from './report';
 import { generateSpec, specNextStep } from './planner/spec';
+import { type AiMergeResult, mergeSchema, resolvePrConflict } from './pr-conflict';
 import { reviewBrief } from './planner/review';
 import { getLang, type Lang, setLang, t, zhOnly } from '../shared/i18n';
 import { FolderTerminals } from './folderterminals';
@@ -430,11 +431,59 @@ async function refreshPrs(itemId: number): Promise<void> {
   const item = store.getWorkItem(itemId);
   if (!item?.prs.length) return;
   const repo = await AzureRepo.open(projectFolder(item));
-  const fresh = await Promise.all(item.prs.map((p) => repo.getPr(p.id || prIdFromUrl(p.url)).catch(() => p)));
+  // 解衝突重發換掉的紀錄（replacedBy）是 FlowPilot 自己記的，Azure 上沒有，要留著
+  const fresh = await Promise.all(item.prs.map((p) => repo.getPr(p.id || prIdFromUrl(p.url)).then((x) => (p.replacedBy ? { ...x, replacedBy: p.replacedBy } : x)).catch(() => p)));
   const changed = JSON.stringify(fresh) !== JSON.stringify(item.prs);
   if (changed) {
     store.updateWorkItem(itemId, { prs: fresh });
     runner.notifyChanged();
+  }
+  // 新出現衝突的 PR：跳通知（同一個 PR 只通知一次，解掉之後又衝突會再通知）
+  for (const pr of fresh) {
+    const was = item.prs.find((p) => p.url === pr.url)?.conflicts;
+    if (pr.conflicts && !was) notify(t('{ticket} 的 PR 有衝突', { ticket: item.ticketKey }), t('發到 {target} 的 PR 跟目標分支有衝突，可以在 PR 那裡按「解衝突重發」', { target: pr.target }), itemId);
+  }
+}
+
+/** 每 10 分鐘看一次還在審核中的 PR 有沒有衝突（沒開 VPN 之類的連不上就算了，下次再看） */
+async function checkPrConflicts() {
+  const items = store.listWorkItems().filter((i) => i.prs.some((p) => p.status !== 'completed' && p.status !== 'abandoned'));
+  for (const item of items) await refreshPrs(item.id).catch(() => {});
+}
+
+/** 正在解衝突重發的 PR（同一個 PR 不重複做） */
+const resolvingPrs = new Set<number>();
+
+/** 解衝突重發：從最新的目標分支開新分支、合併開發分支、AI 解衝突、推送、發新 PR，最後放棄舊的 */
+async function resolveConflict(itemId: number, prId: number): Promise<PrRecord> {
+  const item = store.getWorkItem(itemId);
+  if (!item) throw new Error(t('找不到這張單'));
+  if (resolvingPrs.has(prId)) throw new Error(t('這個 PR 正在處理'));
+  resolvingPrs.add(prId);
+  const progress = (text: string) => window?.webContents.send('pr:progress', itemId, prId, text);
+  try {
+    const repoDir = projectFolder(item);
+    const azure = await AzureRepo.open(repoDir);
+    const created = await resolvePrConflict(
+      {
+        repoDir,
+        workDir: join(dataDir, '解衝突'),
+        azure,
+        resolveWithAi: async (cwd, prompt) => (await runStructured<AiMergeResult>(codex, { cwd, writable: true, effort: 'medium', prompt, schema: mergeSchema, timeoutMs: 20 * 60_000 })).result,
+        progress,
+        log,
+      },
+      prId,
+      { key: item.ticketKey, summary: item.ticketSummary },
+    );
+    const latest = store.getWorkItem(itemId)!;
+    store.updateWorkItem(itemId, { prs: [...latest.prs.map((p) => (p.id === prId ? { ...p, status: 'abandoned' as const, conflicts: false, replacedBy: created.id } : p)), created] });
+    runner.notifyChanged();
+    log(`${item.ticketKey}：PR !${prId} 有衝突，解完重發成 !${created.id}`);
+    return created;
+  } finally {
+    resolvingPrs.delete(prId);
+    progress('');
   }
 }
 
@@ -620,6 +669,7 @@ function registerIpc() {
   });
   ipcMain.handle('pr:options', (_event, id: number) => prOptions(id));
   ipcMain.handle('pr:refresh', (_event, id: number) => refreshPrs(id));
+  ipcMain.handle('pr:resolveConflict', (_event, id: number, prId: number) => resolveConflict(id, prId));
   ipcMain.handle('pr:create', (_event, id: number, input: { title: string; description: string; target: string; reviewerIds: string[] }) => createPr(id, input));
   ipcMain.handle('plan:drafts', () => store.listDrafts());
   ipcMain.handle('plan:add', (_event, tickets: JiraTicket[]) => {
@@ -935,6 +985,11 @@ app.whenReady().then(() => {
     log,
   });
   registerIpc();
+  // 審核中的 PR 有沒有衝突：每 10 分鐘看一次（用測試資料位置時不看）
+  if (!paused) {
+    setTimeout(() => void checkPrConflicts(), 60_000);
+    setInterval(() => void checkPrConflicts(), 10 * 60_000);
+  }
   runner.resubscribe().catch((e) => log(`啟動時接回工作失敗：${e.message}`));
   createTray();
   showWindow();

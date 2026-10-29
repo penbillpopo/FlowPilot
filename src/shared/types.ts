@@ -615,6 +615,10 @@ export interface PrRecord {
   reviewers?: string[];
   /** 在 Azure 上的狀態：審核中、已合併、已放棄 */
   status?: 'active' | 'completed' | 'abandoned';
+  /** 審核中的 PR 跟目標分支有衝突（Azure 合併不了） */
+  conflicts?: boolean;
+  /** 解衝突重發時，換掉這個 PR 的新 PR 編號 */
+  replacedBy?: number;
 }
 
 /** PR 的審核人（從最近的 PR 抓出來的） */
@@ -804,6 +808,10 @@ export interface FlowPilotApi {
     options(itemId: number): Promise<PrOptions>;
     /** 從 Azure 讀回這張單發過的 PR 現在的狀態、目標分支、審核人 */
     refresh(itemId: number): Promise<void>;
+    /** 解衝突重發：從最新的目標分支開新分支、合併開發分支、AI 解衝突、推送、發新 PR，最後放棄舊的；回傳新的 PR */
+    resolveConflict(itemId: number, prId: number): Promise<PrRecord>;
+    /** 解衝突重發的進度（空字串是結束了） */
+    onProgress(listener: (itemId: number, prId: number, text: string) => void): () => void;
     /** 在 Azure 建立 PR，回傳網址 */
     create(itemId: number, input: { title: string; description: string; target: string; reviewerIds: string[]; alsoItemIds?: number[] }): Promise<{ results: { merchant: number | null; target: string; url?: string; error?: string }[] }>;
   };

@@ -117,6 +117,12 @@ const api: FlowPilotApi = {
     options: (id) => ipcRenderer.invoke('pr:options', id),
     refresh: (id) => ipcRenderer.invoke('pr:refresh', id),
     create: (id, input) => ipcRenderer.invoke('pr:create', id, input),
+    resolveConflict: (id, prId) => ipcRenderer.invoke('pr:resolveConflict', id, prId),
+    onProgress: (listener) => {
+      const handler = (_event: unknown, id: number, prId: number, text: string) => listener(id, prId, text);
+      ipcRenderer.on('pr:progress', handler);
+      return () => ipcRenderer.removeListener('pr:progress', handler);
+    },
   },
   test: {
     state: (id) => ipcRenderer.invoke('test:state', id),

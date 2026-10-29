@@ -451,16 +451,22 @@ async function checkPrConflicts() {
   for (const item of items) await refreshPrs(item.id).catch(() => {});
 }
 
-/** 正在解衝突重發的 PR（同一個 PR 不重複做） */
-const resolvingPrs = new Set<number>();
+/**
+ * 解衝突重發的狀態：PR 編號 → 做到哪一步，或失敗的原因。記在主程序：畫面切走再切回來（重新載入）還看得到，
+ * 不會又出現可以再按一次的按鈕（實際發生過）。做完就拿掉。
+ */
+const prJobs = new Map<number, { itemId: number; text: string; error?: string }>();
 
 /** 解衝突重發：從最新的目標分支開新分支、合併開發分支、AI 解衝突、推送、發新 PR，最後放棄舊的 */
 async function resolveConflict(itemId: number, prId: number): Promise<PrRecord> {
   const item = store.getWorkItem(itemId);
   if (!item) throw new Error(t('找不到這張單'));
-  if (resolvingPrs.has(prId)) throw new Error(t('這個 PR 正在處理'));
-  resolvingPrs.add(prId);
-  const progress = (text: string) => window?.webContents.send('pr:progress', itemId, prId, text);
+  if (prJobs.get(prId)?.text) throw new Error(t('這個 PR 正在處理'));
+  const progress = (text: string) => {
+    prJobs.set(prId, { itemId, text });
+    window?.webContents.send('pr:progress', itemId, prId, text);
+  };
+  progress(t('準備中'));
   try {
     const repoDir = projectFolder(item);
     const azure = await AzureRepo.open(repoDir);
@@ -480,10 +486,13 @@ async function resolveConflict(itemId: number, prId: number): Promise<PrRecord> 
     store.updateWorkItem(itemId, { prs: [...latest.prs.map((p) => (p.id === prId ? { ...p, status: 'abandoned' as const, conflicts: false, replacedBy: created.id } : p)), created] });
     runner.notifyChanged();
     log(`${item.ticketKey}：PR !${prId} 有衝突，解完重發成 !${created.id}`);
+    prJobs.delete(prId);
+    window?.webContents.send('pr:progress', itemId, prId, '');
     return created;
-  } finally {
-    resolvingPrs.delete(prId);
-    progress('');
+  } catch (error) {
+    prJobs.set(prId, { itemId, text: '', error: (error as Error).message });
+    window?.webContents.send('pr:progress', itemId, prId, '');
+    throw error;
   }
 }
 
@@ -670,6 +679,7 @@ function registerIpc() {
   ipcMain.handle('pr:options', (_event, id: number) => prOptions(id));
   ipcMain.handle('pr:refresh', (_event, id: number) => refreshPrs(id));
   ipcMain.handle('pr:resolveConflict', (_event, id: number, prId: number) => resolveConflict(id, prId));
+  ipcMain.handle('pr:jobs', (_event, id: number) => Object.fromEntries([...prJobs].filter(([, job]) => job.itemId === id).map(([prId, { text, error }]) => [prId, { text, error }])));
   ipcMain.handle('pr:create', (_event, id: number, input: { title: string; description: string; target: string; reviewerIds: string[] }) => createPr(id, input));
   ipcMain.handle('plan:drafts', () => store.listDrafts());
   ipcMain.handle('plan:add', (_event, tickets: JiraTicket[]) => {

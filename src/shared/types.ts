@@ -810,6 +810,8 @@ export interface FlowPilotApi {
     refresh(itemId: number): Promise<void>;
     /** 解衝突重發：從最新的目標分支開新分支、合併開發分支、AI 解衝突、推送、發新 PR，最後放棄舊的；回傳新的 PR */
     resolveConflict(itemId: number, prId: number): Promise<PrRecord>;
+    /** 這張單正在解衝突重發的 PR（做到哪一步），或上次失敗的原因：畫面重新載入時用 */
+    jobs(itemId: number): Promise<Record<number, { text: string; error?: string }>>;
     /** 解衝突重發的進度（空字串是結束了） */
     onProgress(listener: (itemId: number, prId: number, text: string) => void): () => void;
     /** 在 Azure 建立 PR，回傳網址 */

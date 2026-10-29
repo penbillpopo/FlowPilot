@@ -118,6 +118,7 @@ const api: FlowPilotApi = {
     refresh: (id) => ipcRenderer.invoke('pr:refresh', id),
     create: (id, input) => ipcRenderer.invoke('pr:create', id, input),
     resolveConflict: (id, prId) => ipcRenderer.invoke('pr:resolveConflict', id, prId),
+    jobs: (id) => ipcRenderer.invoke('pr:jobs', id),
     onProgress: (listener) => {
       const handler = (_event: unknown, id: number, prId: number, text: string) => listener(id, prId, text);
       ipcRenderer.on('pr:progress', handler);

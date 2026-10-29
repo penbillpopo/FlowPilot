@@ -50,17 +50,22 @@ export function PrPanel({ item }: { item: WorkItem }) {
     if (item.prs.length) api.pr.refresh(item.id).catch(() => {});
   }, [item.id]);
 
-  useEffect(
-    () =>
-      api.pr.onProgress((id, prId, text) => {
-        if (id !== item.id) return;
-        setResolving((prev) => {
-          const { [prId]: _, ...rest } = prev;
-          return text ? { ...rest, [prId]: text } : rest;
-        });
-      }),
-    [item.id],
-  );
+  // 解衝突重發的狀態記在主程序：畫面切走再切回來時讀回來（還在做就顯示進度、不能再按；失敗的顯示原因）
+  const loadJobs = () =>
+    api.pr
+      .jobs(item.id)
+      .then((jobs) => {
+        setResolving(Object.fromEntries(Object.entries(jobs).filter(([, j]) => j.text).map(([prId, j]) => [prId, j.text])));
+        const failed = Object.entries(jobs).find(([, j]) => j.error);
+        setResolveError(failed ? { prId: Number(failed[0]), text: failed[1].error! } : null);
+      })
+      .catch(() => {});
+  useEffect(() => {
+    void loadJobs();
+    return api.pr.onProgress((id) => {
+      if (id === item.id) void loadJobs();
+    });
+  }, [item.id]);
 
   /** 解衝突重發：先列出會做的事讓你確認，之後全部自動 */
   async function resolveConflict(prId: number, target: string) {
@@ -71,11 +76,9 @@ export function PrPanel({ item }: { item: WorkItem }) {
     if (!ok) return;
     setResolveError(null);
     setResolving((prev) => ({ ...prev, [prId]: t('準備中') }));
-    try {
-      await api.pr.resolveConflict(item.id, prId);
-    } catch (e) {
-      setResolveError({ prId, text: errorText(e) });
-    }
+    // 進度、失敗原因都從主程序讀（見 loadJobs）
+    await api.pr.resolveConflict(item.id, prId).catch(() => {});
+    void loadJobs();
   }
 
   async function open() {

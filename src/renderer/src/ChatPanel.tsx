@@ -14,11 +14,6 @@ const api = window.flowpilot;
 /** 狀態文字（開了指揮官用語會換成作戰用語） */
 export const STATUS_LABEL = new Proxy({} as Record<WorkStatus, string>, { get: (_t, key) => statusLabel(key as WorkStatus) });
 
-/** 跟狀態標籤意思一樣的說明，不重複顯示 */
-// i18n-keys：顯示時才翻（狀態文字可能是中文或英文，兩種都比對）
-const REDUNDANT_ACTIVITIES = ['AI 在問你問題', '執行中', '執行技能', '開發中', 'AI 做完了，等你審查', '已完成'];
-const isRedundantActivity = (activity: string) => REDUNDANT_ACTIVITIES.some((a) => a === activity || t(a) === activity);
-
 /** 流程：審閱 ✓ → 開發 → 自動測試 → 等你測試（修改、重測都算在等你測試這一步）→ 交付（提交過之後：推送、完成） */
 // i18n-keys：顯示時才翻
 const STEPS = ['審閱', '開發', '自動測試', '等你測試', '交付'];
@@ -776,12 +771,8 @@ export function ChatPanel({ item }: { item: WorkItem }) {
         </div>
         </div>
         <div className="chat-head-sub">
-          <div className="muted small head-meta">
-            {item.project}{item.merchant ? ` m${item.merchant}` : ''}
-            {/* 資料夾跟專案同名就不重複寫 */}
-            {item.folder !== item.project && <> · {item.folder ?? t('等資料夾')}</>} · <code>{item.branch}</code>
-            {item.activity && !isRedundantActivity(item.activity) && <> · {item.activity}</>}
-          </div>
+          {/* 專案、資料夾、分支、目前在做什麼那一行拿掉了（你不需要）；只有卡住、失敗時把原因寫出來，不然不知道要怎麼處理 */}
+          {['blocked', 'failed'].includes(item.status) && item.activity && <div className="warn small head-meta">{item.activity}</div>}
           {item.threadId && <Stages item={item} delivering={!!delivery?.delivering} />}
         </div>
       </div>

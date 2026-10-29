@@ -250,5 +250,7 @@ const en: Record<string, string> = {
   '改動跟規格一致': 'The changes match the spec',
   '已處理的（{count}）': 'Handled ({count})',
   'AI 停下來、等你測試的時候才能整理': 'Available when AI has stopped and the ticket is waiting for your testing',
+  '審核人（設定檔指定的）': 'Reviewers (set in the settings file)',
+  '設定檔指定的審核人，在這個專案最近的 PR 裡找不到（要有他審過的 PR 才查得到）。': 'The reviewers in the settings file were not found in this project’s recent PRs (they need to have reviewed a PR here).',
 };
 export default en;

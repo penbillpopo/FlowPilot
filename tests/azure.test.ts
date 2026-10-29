@@ -1,8 +1,22 @@
 // 用 Azure 發 PR：讀遠端網址、預設名稱、說明
 import { describe, expect, it } from 'vitest';
-import { defaultPrTitle, parseAzureRemote, prDescription } from '../src/main/azure';
+import { defaultPrTitle, parseAzureRemote, pickReviewers, prDescription } from '../src/main/azure';
+import { DEFAULT_SETTINGS_YAML, parseSettings } from '../src/main/settings';
 
 describe('Azure 發 PR', () => {
+  it('設定檔指定審核人：只留這些人（不分大小寫、照設定的順序）；沒指定就全部', () => {
+    const all = [
+      { id: '1', name: 'AD', email: 'ad@intellianalyze.com' },
+      { id: '2', name: 'MCL', email: 'MCL@intellianalyze.com' },
+      { id: '3', name: 'KD', email: 'kd@intellianalyze.com' },
+    ];
+    expect(pickReviewers(all, ['mcl@intellianalyze.com']).map((r) => r.id)).toEqual(['2']);
+    expect(pickReviewers(all, ['kd@intellianalyze.com', 'ad@intellianalyze.com', 'nobody@x.com']).map((r) => r.id)).toEqual(['3', '1']);
+    expect(pickReviewers(all, undefined)).toBe(all);
+    expect(pickReviewers(all, [])).toBe(all);
+    expect(parseSettings(DEFAULT_SETTINGS_YAML).prReviewers).toEqual(['mcl@intellianalyze.com']);
+  });
+
   it('讀出組織、專案、repo（兩種網址寫法）；不是 Azure 就是 null', () => {
     expect(parseAzureRemote('https://intellianalyzeorg.visualstudio.com/Platform%20Frontend/_git/PlatformWeb')).toMatchObject({
       orgUrl: 'https://intellianalyzeorg.visualstudio.com', project: 'Platform Frontend', repo: 'PlatformWeb', host: 'intellianalyzeorg.visualstudio.com',

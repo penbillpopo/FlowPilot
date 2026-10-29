@@ -60,6 +60,8 @@ export interface Settings {
   testConfigDir: string;
   /** 提交時可以選的身分 */
   gitIdentities: { name: string; email: string }[];
+  /** 發 PR 的審核人（信箱）：有寫就只列這些人、預設勾好；沒寫就列最近 PR 的審核人 */
+  prReviewers?: string[];
 }
 
 export const DEFAULT_SETTINGS_YAML = `# FlowPilot 設定。改完存檔，重新整理就生效。
@@ -122,6 +124,9 @@ projects:
 
 # 固定的專案資料夾：一個資料夾同時只做一張單；port 是在本機啟動網站用的連接埠。
 # retired: true 是退役：不再分給新的卡片，已經在裡面的卡片照常做完
+# 發 PR 的審核人（信箱）：有寫就只列這些人、預設勾好；拿掉這段就列這個專案最近 PR 的審核人
+prReviewers: [mcl@intellianalyze.com]
+
 folders:
   - name: PlatformWeb
     path: ~/Desktop/Project/PlatformWeb

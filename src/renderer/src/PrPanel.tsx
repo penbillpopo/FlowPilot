@@ -56,7 +56,8 @@ export function PrPanel({ item }: { item: WorkItem }) {
       // 預設目標：基底分支；基底已經發過就先空著讓你選
       setTarget(o.existing.some((p) => p.target === o.target) ? '' : o.target);
       setDescription(o.description);
-      setReviewers(lastReviewers().filter((id) => o.reviewers.some((r) => r.id === id)));
+      // 設定檔指定了審核人：全部勾好；沒指定就沿用上次勾的
+      setReviewers(o.fixedReviewers ? o.reviewers.map((r) => r.id) : lastReviewers().filter((id) => o.reviewers.some((r) => r.id === id)));
     } catch (e) {
       setError(errorText(e));
     } finally {
@@ -164,8 +165,8 @@ export function PrPanel({ item }: { item: WorkItem }) {
         </select>
       </label>
       <div className="pr-field">
-        <span className="muted small">{t('審核人（從這個專案最近的 PR 找出來的）')}</span>
-        {options.reviewers.length === 0 && <p className="muted small">{t('最近的 PR 沒有審核人。')}</p>}
+        <span className="muted small">{options.fixedReviewers ? t('審核人（設定檔指定的）') : t('審核人（從這個專案最近的 PR 找出來的）')}</span>
+        {options.reviewers.length === 0 && <p className="muted small">{options.fixedReviewers ? t('設定檔指定的審核人，在這個專案最近的 PR 裡找不到（要有他審過的 PR 才查得到）。') : t('最近的 PR 沒有審核人。')}</p>}
         {options.reviewers.map((r) => (
           <label key={r.id} className="pr-reviewer">
             <input

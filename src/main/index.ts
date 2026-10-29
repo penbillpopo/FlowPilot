@@ -8,7 +8,7 @@ import { groupTicket } from '../shared/group';
 import { acceptanceCsv } from './acceptance-csv';
 import { openInChrome } from './shared-browser';
 import { confluencePageId, loadConfluence } from './confluence';
-import { AzureRepo, defaultPrTitle, prDescription, prIdFromUrl } from './azure';
+import { AzureRepo, defaultPrTitle, pickReviewers, prDescription, prIdFromUrl } from './azure';
 import type { Env, JiraTicket, PrOptions, PrRecord, SupplementItem, WorkItem, Judgement, PlanOptions, Review, ReviewChecks, ReviewIssue, TicketMark, TicketPlan, TicketSnapshot } from '../shared/types';
 import { wantsSpec } from '../shared/types';
 import { CodexRpc } from './codex/rpc';
@@ -442,7 +442,10 @@ async function prOptions(itemId: number): Promise<PrOptions> {
   const item = store.getWorkItem(itemId);
   if (!item) throw new Error(t('找不到這張單'));
   const repo = await AzureRepo.open(projectFolder(item));
-  const [branches, reviewers, existing, pushed] = await Promise.all([repo.targetBranches(loadSettings(settingsFile).projects[item.project]?.prTargets), repo.recentReviewers(), repo.activePrs(item.branch), repo.branchExists(item.branch)]);
+  const settings = loadSettings(settingsFile);
+  const [branches, recent, existing, pushed] = await Promise.all([repo.targetBranches(settings.projects[item.project]?.prTargets), repo.recentReviewers(), repo.activePrs(item.branch), repo.branchExists(item.branch)]);
+  // 設定檔寫了審核人：只列這些人、預設勾好
+  const reviewers = pickReviewers(recent, settings.prReviewers);
   rememberPrs(itemId, existing);
   // 同一張單在其他商戶的工作（多商戶的單：來源商戶和移植出去的），可以一起發 PR
   const others = store.listWorkItems().filter((i) => i.id !== itemId && i.ticketKey === item.ticketKey && i.project === item.project && i.merchant !== null);
@@ -457,6 +460,7 @@ async function prOptions(itemId: number): Promise<PrOptions> {
     target: branches.includes(item.baseBranch) ? item.baseBranch : branches[0] ?? item.baseBranch,
     branches,
     reviewers,
+    fixedReviewers: !!settings.prReviewers?.length,
     existing,
     notPushed: !pushed,
   };

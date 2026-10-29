@@ -633,6 +633,8 @@ export interface PrOptions {
   target: string;
   branches: string[];
   reviewers: PrReviewer[];
+  /** 審核人是設定檔指定的（只列這些人，預設全部勾好） */
+  fixedReviewers?: boolean;
   /** 這條分支在 Azure 上還開著的 PR（同一個目標分支不能再發） */
   existing: PrRecord[];
   /** 遠端沒有這條分支（要先推送） */

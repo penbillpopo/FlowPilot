@@ -69,6 +69,13 @@ export function prIdFromUrl(url: string): number {
   return Number(url.match(/pullrequest\/(\d+)/)?.[1] ?? 0);
 }
 
+/** 設定檔有寫審核人（信箱）就只留這些人（照設定的順序）；沒寫就全部 */
+export function pickReviewers(all: PrReviewer[], wanted: string[] | undefined): PrReviewer[] {
+  if (!wanted?.length) return all;
+  const byEmail = new Map(all.map((r) => [r.email.toLowerCase(), r]));
+  return wanted.map((email) => byEmail.get(String(email).trim().toLowerCase())).filter((r): r is PrReviewer => !!r);
+}
+
 export class AzureRepo {
   private constructor(
     readonly info: RepoInfo,

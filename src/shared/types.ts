@@ -696,7 +696,7 @@ export interface FlowPilotApi {
   /** 在 Finder 顯示這張單產生的多語系檔 */
   revealI18n(id: number): Promise<void>;
   /** 換一個全新的共用瀏覽器（按「看我的」時用，Chrome 才會再跳出選分頁的頁面） */
-  resetSharedBrowser(): Promise<void>;
+  resetSharedBrowser(itemId?: number): Promise<void>;
   /** 介面語言（後端的狀態、錯誤、通知也跟著換） */
   setLang(lang: 'zh' | 'en'): Promise<void>;
   /** 拖曳進來的檔案在電腦上的完整路徑（拿不到是空字串） */

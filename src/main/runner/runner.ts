@@ -173,7 +173,8 @@ function withReplyLanguage(input: object[]): object[] {
 /** 給開發、修改時的 AI：怎麼用你和它共用的瀏覽器 */
 const SHARED_BROWSER_LINE =
   `- 我們共用一個瀏覽器（${SHARED_BROWSER} 這個工具，在 exec 裡用 ${toolCall(SHARED_BROWSER, 'browser_tabs')}、${toolCall(SHARED_BROWSER, 'browser_snapshot')} 這類名稱呼叫；接到我平常用的 Chrome，第一次用時 Chrome 會跳出頁面讓我選要給你的分頁）：我說「看一下我開的畫面」之類的時候，用它看我選的分頁（截圖、頁面結構、主控台、請求），不要另外開測試瀏覽器去看。` +
-  '可以幫我點、幫我填，但不要按會存檔、送出、刪除的按鈕：這個瀏覽器沒有寫入防護，資料會真的寫進 SIT／UAT，真的需要就先問我。瀏覽器測試不要用它，照測試的安排用測試瀏覽器。';
+  '可以幫我點、幫我填，但不要按會存檔、送出、刪除的按鈕：這個瀏覽器沒有寫入防護，資料會真的寫進 SIT／UAT，真的需要就先問我。瀏覽器測試不要用它，照測試的安排用測試瀏覽器。' +
+  '呼叫時說「is not a function」是工具還在載入（FlowPilot 剛重新啟動它）：等 5 秒再呼叫，最多試 3 次，不要第一次失敗就說接不上。';
 
 /** 給開發、修改時的 AI：我說「改多語系」時怎麼做（翻譯和 Excel 由 FlowPilot 做，AI 只管改程式碼、記下 key 和英文） */
 function i18nLine(workFile: string, local = false): string {
@@ -800,11 +801,44 @@ export class Runner {
    * 新的一直等不到連線，「看我的」就沒反應（實際發生過：對話太長換新對話後，看我的再也接不上）。
    * 共用瀏覽器是用到才連線，重開後下一次使用時 Chrome 會再跳出選分頁的頁面。
    */
-  async resetSharedBrowser(): Promise<void> {
+  /** id：這張單的對話要用（重開後等這段對話看得到共用瀏覽器的工具才回來） */
+  async resetSharedBrowser(id?: number): Promise<void> {
     // 共用瀏覽器才有 --extension（測試瀏覽器是 --isolated），這組參數只有 FlowPilot 這樣開
     await new Promise<void>((resolve) => execFile('pkill', ['-f', '@playwright/mcp@latest --extension --caps devtools|playwright-mcp --extension --caps devtools'], () => resolve()));
     await new Promise((r) => setTimeout(r, 500));
     await this.deps.codex.request('config/mcpServer/reload', undefined).catch((error) => this.deps.log(`重新載入共用瀏覽器失敗：${(error as Error).message}`));
+    const threadId = id === undefined ? null : this.deps.store.getWorkItem(id)?.threadId;
+    if (threadId) await this.waitSharedBrowser(threadId);
+  }
+
+  /**
+   * 等這段對話看得到共用瀏覽器的工具（重新載入後要幾秒才啟動好）。
+   * 為什麼：以前重開完馬上叫 AI 接，工具還沒載入好，AI 拿到「browser_tabs is not a function」就回接不上；
+   * 你再說一次又接得上（實際常常發生）。最多等 timeoutMs，等不到也照常往下（AI 那邊會再重試）。
+   */
+  async waitSharedBrowser(threadId: string, timeoutMs = 45_000, intervalMs = 1500): Promise<boolean> {
+    const until = Date.now() + timeoutMs;
+    let errors = 0;
+    while (Date.now() < until) {
+      try {
+        const { data } = await this.deps.codex.request<{ data: { name: string; runtimeStatus?: string | null; tools?: Record<string, unknown> }[] }>(
+          'mcpServerStatus/list',
+          { threadId, serverName: SHARED_BROWSER, detail: 'toolsAndAuthOnly' },
+          30_000,
+        );
+        const status = data.find((s) => s.name === SHARED_BROWSER);
+        if (status && Object.keys(status.tools ?? {}).some((name) => name.includes('browser_tabs'))) return true;
+        if (status?.runtimeStatus === 'failed') break;
+      } catch (error) {
+        // 查不到（例如舊版 Codex 沒有這個功能、對話不在）：連續失敗幾次就不等了
+        if (++errors >= 3) {
+          this.deps.log(`查共用瀏覽器狀態失敗：${(error as Error).message}`);
+          break;
+        }
+      }
+      await new Promise((r) => setTimeout(r, intervalMs));
+    }
+    return false;
   }
 
   /** 開一段開發用的新對話（開工、對話太長換新對話都用這個） */

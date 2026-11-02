@@ -651,7 +651,7 @@ try {
 } catch {}
 
 function registerIpc() {
-  ipcMain.handle('sharedBrowser:reset', () => runner.resetSharedBrowser());
+  ipcMain.handle('sharedBrowser:reset', (_event, id?: number) => runner.resetSharedBrowser(id));
   ipcMain.handle('lang:set', (_event, lang: Lang) => {
     setLang(lang);
     mkdirSync(dataDir, { recursive: true });

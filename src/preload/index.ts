@@ -17,7 +17,7 @@ const api: FlowPilotApi = {
   setLang: (lang) => ipcRenderer.invoke('lang:set', lang),
   // 拖曳進來的檔案在電腦上的路徑（新版 Electron 不能直接從檔案拿到路徑）
   pathForFile: (file) => webUtils.getPathForFile(file),
-  resetSharedBrowser: () => ipcRenderer.invoke('sharedBrowser:reset'),
+  resetSharedBrowser: (id) => ipcRenderer.invoke('sharedBrowser:reset', id),
   openSettingsFile: () => ipcRenderer.invoke('settings:open'),
   planOptions: () => ipcRenderer.invoke('plan:options'),
   listSkills: () => ipcRenderer.invoke('skills:list'),

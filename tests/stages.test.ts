@@ -454,6 +454,25 @@ describe('流程階段', () => {
     expect(readMocks(join(t.root, 'data'), t.id).ready).toEqual(['/api/v1/ready']);
   });
 
+  it('看我的：重開共用瀏覽器後，等這段對話看得到它的工具才回來（以前馬上叫 AI 接，工具還沒好就回接不上）', async () => {
+    const t = setup();
+    let asked = 0;
+    const codex = (t.runner as unknown as { deps: { codex: { request: (m: string, p: any) => Promise<any> } } }).deps.codex;
+    const original = codex.request;
+    codex.request = async (method: string, params: any) => {
+      if (method !== 'mcpServerStatus/list') return original(method, params);
+      asked++;
+      expect(params).toMatchObject({ threadId: 'th', serverName: 'flowpilot_shared_browser' });
+      // 前兩次還在啟動、沒有工具；第三次才載入好
+      return { data: [{ name: 'flowpilot_shared_browser', runtimeStatus: asked < 3 ? 'starting' : 'connected', tools: asked < 3 ? {} : { browser_tabs: {}, browser_snapshot: {} } }] };
+    };
+    expect(await t.runner.waitSharedBrowser('th', 5000, 10)).toBe(true);
+    expect(asked).toBe(3);
+    // 一直等不到：時間到就照常往下，不卡住
+    codex.request = async (method: string, params: any) => (method === 'mcpServerStatus/list' ? { data: [] } : original(method, params));
+    expect(await t.runner.waitSharedBrowser('th', 50, 10)).toBe(false);
+  });
+
   it('檢查計畫要自我審查：開發完先審查，審查完才自動測試', async () => {
     const t = setup();
     t.store.saveReview({ ticketKey: 'ALL-1', entries: [], prTitle: '', reason: '', summary: [], resources: [], level: '一般', codeChecked: true, issues: [], discussion: [], reviewedAt: '',

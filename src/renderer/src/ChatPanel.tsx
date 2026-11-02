@@ -406,15 +406,17 @@ export function ChatPanel({ item }: { item: WorkItem }) {
       setLookMode(true);
       input.current?.focus();
       // Chrome 選分頁的頁面只有在共用瀏覽器第一次用時才會跳出來：先換一個全新的共用瀏覽器（舊的可能還佔著 Chrome），再請 AI 只接上、不做別的
+      // 傳單號：重開後等這段對話看得到共用瀏覽器的工具才叫 AI 接（以前馬上叫，工具還沒載入好就回「接不上」）
       api
-        .resetSharedBrowser()
+        .resetSharedBrowser(item.id)
         .then(() => api.send(
           item.id,
           [
             zhOnly('## 接上你的 Chrome'),
             zhOnly("在 exec 裡呼叫一次 tools.mcp__flowpilot_shared_browser__browser_tabs({ action: 'list' })（共用瀏覽器的列出分頁），讓 Chrome 跳出頁面讓我選分頁。"),
             zhOnly('接上後只回一句「接上了」，不要截圖、不要看頁面、不要做任何別的事，等我接著說要看什麼。'),
-            zhOnly('只能用 flowpilot_shared_browser，不要用其他瀏覽器或控制電腦的工具代替。工具清單上看不到它是正常的，它在 exec 的 tools 裡；呼叫失敗就照實回「接不上」和錯誤訊息。'),
+            zhOnly('只能用 flowpilot_shared_browser，不要用其他瀏覽器或控制電腦的工具代替。工具清單上看不到它是正常的，它在 exec 的 tools 裡。'),
+            zhOnly('剛重新啟動，工具可能還在載入：呼叫時說「is not a function」或找不到工具，就等 5 秒再呼叫一次（每次重新呼叫 exec），最多試 3 次；3 次都失敗才照實回「接不上」和錯誤訊息。'),
           ].join('\n'),
           [],
         ))
@@ -430,7 +432,7 @@ export function ChatPanel({ item }: { item: WorkItem }) {
     const message = lookMode
       ? [
           zhOnly('## 看我的畫面'),
-          zhOnly('我開著「看我的」模式：我說的話是在講我在 Chrome 開的畫面。先用共用瀏覽器（flowpilot_shared_browser）看我選給你的分頁現在的樣子（不要用之前看過的），再照我這句話做。'),
+          zhOnly('我開著「看我的」模式：我說的話是在講我在 Chrome 開的畫面。先用共用瀏覽器（flowpilot_shared_browser）看我選給你的分頁現在的樣子（不要用之前看過的），再照我這句話做。呼叫時說「is not a function」是工具還在載入，等 5 秒再試，最多 3 次。'),
           zhOnly(`我想問：${text.trim()}`),
           zhOnly('照我這句話決定做多少：只是問問題，就看完回答；要你測，就在這個分頁親自點擊、填寫、捲動、切換頁面去測，測完說結果。'),
           zhOnly('共用瀏覽器沒有寫入防護，資料會真的寫進去：會存檔、送出、刪除、下注、儲值、改設定這類寫入的動作，先問我再做。要大量或完整測試時，也可以改用測試瀏覽器（有寫入防護），用之前跟我說一聲。'),

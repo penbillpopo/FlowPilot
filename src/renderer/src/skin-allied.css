@@ -376,6 +376,10 @@ nav .skin-panel button.on { border-color: var(--accent); background: var(--selec
   overflow: hidden;
 }
 [data-skin] li.ticket:hover { background: var(--card-hover); }
+/* 搜尋單號：底色跟卡片一樣是藍色（一般輸入框是深色凹槽，這裡不要）；外圍跟清單同色，捲動時蓋住下面的卡片 */
+[data-skin] .ticket-search { background: var(--glass); }
+[data-skin] .ticket-search input { background: var(--card) !important; box-shadow: none; }
+[data-skin] .ticket-search input:focus { box-shadow: 0 0 0 1px var(--fx), 0 0 10px rgba(var(--fx-rgb), 0.3); }
 [data-skin] li.ticket.selected { border-color: var(--fx); box-shadow: inset 0 0 12px rgba(var(--fx-rgb), 0.25), 0 0 8px rgba(var(--fx-rgb), 0.35); }
 [data-skin] li.ticket.status-running::after,
 [data-skin] li.ticket.status-preparing::after {

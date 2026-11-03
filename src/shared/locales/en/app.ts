@@ -140,5 +140,10 @@ const en: Record<string, string> = {
   // ---- 合成任務（shared/group.ts）----
   至少要兩張單才能合成一個任務: 'At least two tickets are needed to combine into one task',
   '{summary} 等 {n} 張': '{summary} and others ({n} tickets)',
+  // 作戰室：搜尋單號
+  '搜尋單號': 'Search ticket number',
+  '打單號（只打數字也行），Enter 打開第一張，Esc 清空；⌘F 跳到這裡': 'Type a ticket number (digits alone work). Enter opens the first match, Esc clears; ⌘F jumps here',
+  '清空': 'Clear',
+  '找不到符合的單': 'No matching tickets',
 };
 export default en;

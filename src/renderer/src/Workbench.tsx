@@ -2,6 +2,7 @@
 import { createContext, useContext, useEffect, useRef, useState } from 'react';
 import type { BoardState, WorkItem, WorkStatus } from '../../shared/types';
 import { latestPrs } from '../../shared/types';
+import { matchesKey } from '../../shared/group';
 import { ChatPanel, errorText, STATUS_LABEL } from './ChatPanel';
 import { PortPanel } from './PortPanel';
 import { PrPanel } from './PrPanel';
@@ -90,6 +91,21 @@ export function Workbench({ onGoTickets }: { onGoTickets(): void }) {
   const [selected, setSelected] = useState<number | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [sides, setSides] = useState<Record<string, string>>({});
+  /** 搜尋單號（只篩左邊清單；正在看的那張不會被切走） */
+  const [query, setQuery] = useState('');
+  const search = useRef<HTMLInputElement>(null);
+  // ⌘F 跳到搜尋框（FlowPilot 視窗裡的快捷鍵）
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => {
+      if (e.metaKey && !e.shiftKey && !e.altKey && e.key.toLowerCase() === 'f') {
+        e.preventDefault();
+        search.current?.focus();
+        search.current?.select();
+      }
+    };
+    window.addEventListener('keydown', onKey);
+    return () => window.removeEventListener('keydown', onKey);
+  }, []);
 
   useEffect(() => {
     api.board().then(setBoard).catch((e) => setError(errorText(e)));
@@ -120,6 +136,13 @@ export function Workbench({ onGoTickets }: { onGoTickets(): void }) {
   }, [board]);
 
   const current = items.find((i) => i.id === selected) ?? null;
+  const searching = query.trim() !== '';
+  const shownActive = active.filter((i) => matchesKey(i, query));
+  const shownWaiting = waitingTurn.filter((i) => matchesKey(i, query));
+  const shownFinished = finished.filter((i) => matchesKey(i, query));
+  const firstMatch = shownActive[0] ?? shownWaiting[0] ?? shownFinished[0];
+  /** 區塊標題的數量：搜尋時寫「符合幾張／全部幾張」 */
+  const count = (shown: WorkItem[], all: WorkItem[]) => (searching ? `${shown.length}/${all.length}` : all.length);
 
   return (
     <SideContext.Provider value={sides}>
@@ -133,19 +156,39 @@ export function Workbench({ onGoTickets }: { onGoTickets(): void }) {
         )}
         {error && <div className="error small">{error}</div>}
 
-        <div className="side-section">{t('{label}（{n}）', { label: term(zhOnly('進行中')), n: active.length })}</div>
+        <div className="ticket-search">
+          <input
+            ref={search}
+            value={query}
+            placeholder={t('搜尋單號')}
+            title={t('打單號（只打數字也行），Enter 打開第一張，Esc 清空；⌘F 跳到這裡')}
+            onChange={(e) => setQuery(e.target.value)}
+            onKeyDown={(e) => {
+              if (e.key === 'Escape') setQuery('');
+              if (e.key === 'Enter' && firstMatch) setSelected(firstMatch.id);
+            }}
+          />
+          {searching && (
+            <button className="link small" title={t('清空')} onClick={() => setQuery('')}>
+              ×
+            </button>
+          )}
+        </div>
+        {searching && !firstMatch && <div className="muted small empty-row">{t('找不到符合的單')}</div>}
+
+        {(!searching || shownActive.length > 0) && <div className="side-section">{t('{label}（{n}）', { label: term(zhOnly('進行中')), n: count(shownActive, active) })}</div>}
         <ul className="tickets">
-          {active.length === 0 && <li className="muted small empty-row">{t('沒有')}</li>}
-          {active.map((i) => (
+          {!searching && active.length === 0 && <li className="muted small empty-row">{t('沒有')}</li>}
+          {shownActive.map((i) => (
             <Row key={i.id} item={i} selected={selected === i.id} onSelect={() => setSelected(i.id)} />
           ))}
         </ul>
 
-        {waitingTurn.length > 0 && (
+        {shownWaiting.length > 0 && (
           <>
-            <div className="side-section">{t('{label}（{n}）', { label: term(zhOnly('排隊')), n: waitingTurn.length })}</div>
+            <div className="side-section">{t('{label}（{n}）', { label: term(zhOnly('排隊')), n: count(shownWaiting, waitingTurn) })}</div>
             <ul className="tickets">
-              {waitingTurn.map((i) => (
+              {shownWaiting.map((i) => (
                 <Row
                   key={i.id}
                   item={i}
@@ -168,11 +211,11 @@ export function Workbench({ onGoTickets }: { onGoTickets(): void }) {
           </>
         )}
 
-        {finished.length > 0 && (
+        {shownFinished.length > 0 && (
           <>
-            <div className="side-section">{t('{label}（{n}）', { label: term(zhOnly('已完成')), n: finished.length })}</div>
+            <div className="side-section">{t('{label}（{n}）', { label: term(zhOnly('已完成')), n: count(shownFinished, finished) })}</div>
             <ul className="tickets">
-              {finished.map((i) => (
+              {shownFinished.map((i) => (
                 <Row key={i.id} item={i} selected={selected === i.id} onSelect={() => setSelected(i.id)} />
               ))}
             </ul>

@@ -3,7 +3,7 @@ import { describe, expect, it } from 'vitest';
 import { defaultPrTitle, prDescription } from '../src/main/azure';
 import { planProblem } from '../src/main/planner/rules';
 import { DEFAULT_SETTINGS_YAML, parseSettings } from '../src/main/settings';
-import { groupTicket, ticketKeys } from '../src/shared/group';
+import { groupTicket, matchesKey, ticketKeys } from '../src/shared/group';
 import type { JiraTicket } from '../src/shared/types';
 
 const parent = { key: 'ALL-14795', summary: '[M10] 內部測試問題修正', url: 'https://x/browse/ALL-14795' };
@@ -29,5 +29,18 @@ describe('合成一個任務', () => {
     const text = prDescription({ ticketKey: g.key, ticketSummary: g.summary, mainKey: 'ALL-14795', mainUrl: parent.url, branch: 'ban/m10/ALL-14798', baseBranch: 'master-10', testReport: null, members });
     expect(text).toContain('- [ALL-14798](https://x/browse/ALL-14798)');
     expect(text).toContain('- [ALL-14800](https://x/browse/ALL-14800)');
+  });
+});
+
+describe('作戰室搜尋單號', () => {
+  it('不分大小寫、只打數字也行、空白不算；合成任務的成員單號也找得到；空的全部符合', () => {
+    const one = { ticketKey: 'ALL-14597', members: [] };
+    const group = { ticketKey: 'ALL-14796', members: [{ key: 'ALL-14796' }, { key: 'ALL-14805' }] };
+    expect(matchesKey(one, '14597')).toBe(true);
+    expect(matchesKey(one, 'all-14597')).toBe(true);
+    expect(matchesKey(one, ' ALL 145 ')).toBe(true);
+    expect(matchesKey(one, '14805')).toBe(false);
+    expect(matchesKey(group, '14805')).toBe(true);
+    expect(matchesKey(one, '  ')).toBe(true);
   });
 });

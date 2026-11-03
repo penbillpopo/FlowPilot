@@ -24,3 +24,11 @@ export function groupTicket(tickets: JiraTicket[]): JiraTicket {
 export function ticketKeys(ticket: Pick<JiraTicket, 'key' | 'members'>): string {
   return ticket.members?.length ? ticket.members.map((m) => m.key).join(', ') : ticket.key;
 }
+
+/** 搜尋單號：不分大小寫、空白和橫線不算，只打數字也行（14597、all 14597 都找得到 ALL-14597）；合成任務裡任一張的單號也算 */
+export function matchesKey(item: { ticketKey: string; members: { key: string }[] }, query: string): boolean {
+  const plain = (text: string) => text.replace(/[\s-]+/g, '').toUpperCase();
+  const q = plain(query);
+  if (!q) return true;
+  return [item.ticketKey, ...item.members.map((m) => m.key)].some((key) => plain(key).includes(q));
+}

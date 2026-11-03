@@ -657,3 +657,7 @@ td.time { white-space: nowrap; }
 /* PR 有衝突：標記和「解衝突重發」 */
 .mark.pr-conflict { color: var(--blocked); border-color: var(--blocked); }
 .pr-conflict-row { margin-top: 6px; }
+
+/* 作戰室左邊清單上方的搜尋單號（清單捲動時固定在上面） */
+.ticket-search { position: sticky; top: -12px; z-index: 2; display: flex; align-items: center; gap: 4px; margin: -12px -12px 0; padding: 12px 12px 6px; background: var(--bg); }
+.ticket-search input { flex: 1; min-width: 0; font: inherit; font-size: 13px; color: var(--fg); background: var(--bg); border: 1px solid var(--line); border-radius: 6px; padding: 5px 8px; }

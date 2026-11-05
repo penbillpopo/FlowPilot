@@ -46,10 +46,13 @@ export function PrPanel({ item }: { item: WorkItem }) {
   const [resolving, setResolving] = useState<Record<number, string>>({});
   const [resolveError, setResolveError] = useState<{ prId: number; text: string } | null>(null);
 
-  // 打開時向 Azure 讀回發過的 PR 現在的狀態、目標分支、審核人（也看有沒有衝突）
+  // 打開時向 Azure 讀回發過的 PR 現在的狀態、目標分支、審核人（也看有沒有衝突）；開著的時候每分鐘再看一次
   useEffect(() => {
-    if (item.prs.length) api.pr.refresh(item.id).catch(() => {});
-  }, [item.id]);
+    if (!item.prs.length) return;
+    api.pr.refresh(item.id).catch(() => {});
+    const timer = setInterval(() => api.pr.refresh(item.id).catch(() => {}), 60_000);
+    return () => clearInterval(timer);
+  }, [item.id, item.prs.length > 0]);
 
   // 解衝突重發的狀態記在主程序：畫面切走再切回來時讀回來（還在做就顯示進度、不能再按；失敗的顯示原因）
   const loadJobs = () =>

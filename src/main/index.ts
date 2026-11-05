@@ -445,6 +445,14 @@ async function refreshPrs(itemId: number): Promise<void> {
   }
 }
 
+/**
+ * 剛發的 PR：Azure 要一點時間才算出能不能合併（剛發時是「排隊中」），發完後 20 秒、1 分鐘、3 分鐘各看一次。
+ * 為什麼：以前只靠每 10 分鐘的檢查，剛好在 PR 發出 12 秒後檢查到「排隊中」，有衝突要再等 10 分鐘才標出來（實際發生過）。
+ */
+function followUpPrs(itemId: number) {
+  for (const delay of [20_000, 60_000, 180_000]) setTimeout(() => void refreshPrs(itemId).catch(() => {}), delay);
+}
+
 /** 每 10 分鐘看一次還在審核中的 PR 有沒有衝突（沒開 VPN 之類的連不上就算了，下次再看） */
 async function checkPrConflicts() {
   const items = store.listWorkItems().filter((i) => i.prs.some((p) => p.status !== 'completed' && p.status !== 'abandoned'));
@@ -486,6 +494,7 @@ async function resolveConflict(itemId: number, prId: number): Promise<PrRecord> 
     store.updateWorkItem(itemId, { prs: [...latest.prs.map((p) => (p.id === prId ? { ...p, status: 'abandoned' as const, conflicts: false, replacedBy: created.id } : p)), created] });
     runner.notifyChanged();
     log(`${item.ticketKey}：PR !${prId} 有衝突，解完重發成 !${created.id}`);
+    followUpPrs(itemId);
     prJobs.delete(prId);
     window?.webContents.send('pr:progress', itemId, prId, '');
     return created;
@@ -562,6 +571,7 @@ async function createPr(
       const record = await repo.getPr(pr.id).catch(() => ({ id: pr.id, url: pr.url, target, title: input.title.trim() }));
       store.updateWorkItem(work.id, { prs: [...store.getWorkItem(work.id)!.prs, record] });
       log(`${work.ticketKey}：發了 PR #${pr.id}（${work.branch} → ${target}）`);
+      followUpPrs(work.id);
       results.push({ merchant: work.merchant, target, url: pr.url });
     } catch (error) {
       results.push({ merchant: work.merchant, target, error: (error as Error).message });

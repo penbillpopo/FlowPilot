@@ -254,5 +254,7 @@ const en: Record<string, string> = {
   '這張單沒有規格': 'This ticket has no spec',
   '規格比對找到 {count} 個做錯的地方，交給 AI 確認、修正': 'The spec check found {count} mistakes; asked AI to confirm and fix them',
   '比對規格': 'check against the spec',
+  // 單子固定在當初開發的資料夾
+  '{ticket} 是在 {folder} 開發的，只能回 {folder} 繼續；{folder} 現在在做 {other}，等它完成或先交付再繼續修': '{ticket} was developed in {folder} and can only continue in {folder}. {folder} is working on {other} now; wait until it finishes or is delivered, then continue',
 };
 export default en;

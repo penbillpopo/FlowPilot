@@ -105,6 +105,8 @@ const MIGRATIONS: string[] = [
   `ALTER TABLE work_items ADD COLUMN old_threads TEXT;`,
   // 做完後拿規格比對改動的結果（走規格流程的單）
   `ALTER TABLE work_items ADD COLUMN spec_check TEXT;`,
+  // 單子固定在當初開發的資料夾：之前的單沒記過，正在用資料夾的就記成目前這個（退役的資料夾之後會被略過）
+  `UPDATE work_items SET preferred_folder = folder WHERE folder IS NOT NULL AND preferred_folder IS NULL AND status != 'removed';`,
 ];
 
 /** 還佔著資料夾的狀態 */

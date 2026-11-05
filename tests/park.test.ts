@@ -77,7 +77,7 @@ describe('先交付、待補測', () => {
     git(t.folder, 'switch', '-q', 'version/0.0.1');
     const other = t.make('ALL-2', 'ban/ALL-2');
     t.store.updateWorkItem(other.id, { status: 'review', folder: 'PlatformAdmin' });
-    await expect(t.runner.resume(t.id)).rejects.toThrow('資料夾都在用（PlatformAdmin 在做 ALL-2）');
+    await expect(t.runner.resume(t.id)).rejects.toThrow('只能回 PlatformAdmin 繼續；PlatformAdmin 現在在做 ALL-2');
     expect(t.store.getWorkItem(t.id)!.status).toBe('parked');
     t.store.updateWorkItem(other.id, { status: 'committed' });
     await t.runner.resume(t.id);
@@ -181,6 +181,45 @@ describe('資料夾不在這張單的分支', () => {
     writeFileSync(join(t.folder, 'b.ts'), 'new\n');
     expect(await branchHasWork(t.folder, 'ban/ALL-2', 'version/0.0.1')).toBe(true); // 切在上面、有沒提交的新檔案
     expect(await branchHasWork(t.folder, 'ban/ALL-2', 'no-such-base')).toBe(true); // 算不出來：擋下來
+  });
+
+  it('進入開發過的單固定在當初的資料夾：被別張單佔用時不會換到另一個空的資料夾（PlatformWeb-1 不會切到 -2）', async () => {
+    const t = setup();
+    const second = join(t.root, 'PlatformAdmin-2');
+    git(t.root, 'clone', '-q', t.remote, second);
+    t.settings.folders = [
+      { name: 'PlatformAdmin', path: t.folder, project: 'PlatformAdmin' },
+      { name: 'PlatformAdmin-2', path: second, project: 'PlatformAdmin' },
+    ];
+    t.store.updateWorkItem(t.id, { preferredFolder: 'PlatformAdmin' });
+    await t.runner.park(t.id);
+    git(t.folder, 'switch', '-q', 'version/0.0.1');
+    const other = t.make('ALL-2', 'ban/ALL-2');
+    t.store.updateWorkItem(other.id, { status: 'review', folder: 'PlatformAdmin' });
+    await expect(t.runner.resume(t.id)).rejects.toThrow('ALL-1 是在 PlatformAdmin 開發的，只能回 PlatformAdmin 繼續；PlatformAdmin 現在在做 ALL-2');
+    expect(t.store.getWorkItem(t.id)).toMatchObject({ status: 'parked', folder: null });
+    expect(git(second, 'branch', '--show-current')).toBe('version/0.0.1'); // 空著的 -2 沒被拿去用
+
+    // 原本的資料夾空出來就回到那裡
+    t.store.updateWorkItem(other.id, { status: 'committed', folder: null });
+    await t.runner.resume(t.id);
+    expect(t.store.getWorkItem(t.id)).toMatchObject({ folder: 'PlatformAdmin', preferredFolder: 'PlatformAdmin' });
+    expect(git(t.folder, 'branch', '--show-current')).toBe('ban/ALL-1');
+  });
+
+  it('舊的單沒記過資料夾：本機有這條分支的資料夾就是它的資料夾，一樣不換', async () => {
+    const t = setup();
+    const second = join(t.root, 'PlatformAdmin-2');
+    git(t.root, 'clone', '-q', t.remote, second);
+    t.settings.folders = [
+      { name: 'PlatformAdmin-2', path: second, project: 'PlatformAdmin' },
+      { name: 'PlatformAdmin', path: t.folder, project: 'PlatformAdmin' },
+    ];
+    await t.runner.park(t.id);
+    git(t.folder, 'switch', '-q', 'version/0.0.1');
+    const other = t.make('ALL-2', 'ban/ALL-2');
+    t.store.updateWorkItem(other.id, { status: 'review', folder: 'PlatformAdmin' });
+    await expect(t.runner.resume(t.id)).rejects.toThrow('只能回 PlatformAdmin 繼續');
   });
 
   it('繼續修不會拿退役的資料夾', async () => {

@@ -577,11 +577,15 @@ export class Runner {
         }
       }
 
+      // 進入開發過的單固定在當初的資料夾（例如 PlatformWeb-1 做的就不會換到 PlatformWeb-2），被佔用就等
+      const home = projectFolders.find((f) => f.name === next.preferredFolder)?.name ?? null;
       // 分支已經存在於某個資料夾：之前的提交只在那裡，一定要用那個資料夾
       const holding: string[] = [];
-      for (const f of projectFolders) if (await localBranchExists(f.path, next.branch).catch(() => false)) holding.push(f.name);
-      let onlyFolder: string | null = null;
-      if (holding.length === 1) onlyFolder = holding[0];
+      if (!home) for (const f of projectFolders) if (await localBranchExists(f.path, next.branch).catch(() => false)) holding.push(f.name);
+      let onlyFolder: string | null = home;
+      if (home) {
+        // 已經決定了
+      } else if (holding.length === 1) onlyFolder = holding[0];
       else if (holding.length > 1) {
         if (!next.preferredFolder || !holding.includes(next.preferredFolder)) {
           this.update(next.id, { status: 'blocked', activity: t('分支在 {folders} 都有，請在計畫表選擇要用哪一個資料夾', { folders: holding.join(t('、')) }) });
@@ -618,7 +622,8 @@ export class Runner {
         continue;
       }
       occupiedBy.set(folder.name, next);
-      this.update(next.id, { folder: folder.name, lane: 'development', status: 'preparing', activity: t('準備資料夾') });
+      // 記下這張單的資料夾：之後繼續修、重試都只回這裡
+      this.update(next.id, { folder: folder.name, preferredFolder: folder.name, lane: 'development', status: 'preparing', activity: t('準備資料夾') });
       void this.prepare(next.id);
     }
   }
@@ -2000,13 +2005,24 @@ export class Runner {
   }
 
   /**
-   * 拿一個空的資料夾給這張單、切到它的分支（繼續修、退回作戰中、搬離退役資料夾共用）。退役的資料夾不拿。
-   * 原本有這條分支的資料夾優先；資料夾都在用就不動，告訴你哪張單在用——不會去搶別張單的資料夾。
+   * 拿資料夾給這張單、切到它的分支（繼續修、退回作戰中、搬離退役資料夾共用）。退役的資料夾不拿。
+   * 進入開發過的單固定在當初的資料夾（記過的，或本機有這條分支的那個）：被別張單佔用就不動，告訴你哪張在用，
+   * 不會改用別的資料夾（實際發生過：PlatformWeb-1 被佔用時，繼續修就換到 PlatformWeb-2）。
+   * 沒有固定的資料夾（例如從退役資料夾搬出來）才拿任一個空的；資料夾都在用就不動——不會去搶別張單的資料夾。
    */
   private async claimFolder(item: StoredWorkItem): Promise<FolderSetting> {
     const folders = this.deps.settings().folders.filter((f) => f.project === item.project && !f.retired);
     const items = this.deps.store.listWorkItems();
     const owner = (name: string) => items.find((i) => i.id !== item.id && i.folder === name && OCCUPYING.includes(i.status));
+    let home = folders.find((f) => f.name === item.preferredFolder);
+    if (!home) for (const f of folders) if (await localBranchExists(f.path, item.branch).catch(() => false)) { home = f; break; }
+    if (home) {
+      const other = owner(home.name);
+      if (other) throw new Error(t('{ticket} 是在 {folder} 開發的，只能回 {folder} 繼續；{folder} 現在在做 {other}，等它完成或先交付再繼續修', { ticket: item.ticketKey, folder: home.name, other: other.ticketKey }));
+      await this.checkoutTaskBranch(item, home);
+      this.update(item.id, { preferredFolder: home.name });
+      return home;
+    }
     const free = folders.filter((f) => !owner(f.name));
     if (!free.length) {
       throw new Error(
@@ -2016,9 +2032,9 @@ export class Runner {
         }),
       );
     }
-    let folder = free[0];
-    for (const f of free) if (await localBranchExists(f.path, item.branch).catch(() => false)) { folder = f; break; }
+    const folder = free[0];
     await this.checkoutTaskBranch(item, folder);
+    this.update(item.id, { preferredFolder: folder.name });
     return folder;
   }
 

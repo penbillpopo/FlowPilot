@@ -182,7 +182,7 @@ const en: Record<string, string> = {
   '讀取 PR': 'Reading the PR',
   '這個 PR 已經不是審核中，不用處理': 'This PR is no longer in review; nothing to do',
   '讀不到這個 PR 的來源或目標分支': 'Could not read the source or target branch of this PR',
-  '分支 {branch} 已經存在（之前處理過？），請先看一下那條分支': 'Branch {branch} already exists (handled before?). Please check that branch first',
+  '遠端找不到 {branch}': 'Branch {branch} isn\'t on the remote',
   '抓最新的 {target}': 'Fetching the latest {target}',
   '開暫時資料夾失敗：{error}': 'Could not create the temporary folder: {error}',
   '把 {source} 合併進 {branch}': 'Merging {source} into {branch}',

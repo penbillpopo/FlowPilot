@@ -75,7 +75,7 @@ export function PrPanel({ item }: { item: WorkItem }) {
   async function resolveConflict(prId: number, target: string) {
     const branch = `${item.branch}-${target.replace(/\//g, '-')}`;
     const ok = window.confirm(
-      t('解衝突重發（發到 {target} 的 PR）？\n\n1. 從最新的 {target} 開新分支 {branch}\n2. 把 {source} 合併進去，有衝突交給 AI 解（AI 沒把握會停下來，不硬合）\n3. 推送 {branch}，用它發新的 PR 到 {target}（名稱、說明、審核人沿用）\n4. 新 PR 發成功後，放棄原本的 PR\n\n原本的開發分支不會動，遠端分支也不會刪。', { target, branch, source: item.branch }),
+      t('解衝突重發（發到 {target} 的 PR）？\n\n1. 用分支 {branch}：還沒有就從最新的 {target} 開；之前開過就接著用，先把最新的 {target} 合進去\n2. 把 {source} 合併進去，有衝突交給 AI 解（AI 沒把握會停下來，不硬合）\n3. 推送 {branch}（一般推送，不強制）；這條分支已經有發到 {target} 的 PR 就讓它更新，沒有才發新的（名稱、說明、審核人沿用）\n4. 完成後放棄原本有衝突的 PR\n\n原本的開發分支不會動，遠端分支也不會刪。', { target, branch, source: item.branch }),
     );
     if (!ok) return;
     setResolveError(null);
@@ -157,7 +157,7 @@ export function PrPanel({ item }: { item: WorkItem }) {
                 {resolving[p.id] ? (
                   <span className="small">⏳ {resolving[p.id]}…</span>
                 ) : (
-                  <button disabled={Object.keys(resolving).length > 0} onClick={() => resolveConflict(p.id, p.target)} title={t('從最新的目標分支開新分支、合併、AI 解衝突，再用新分支重發 PR')}>
+                  <button disabled={Object.keys(resolving).length > 0} onClick={() => resolveConflict(p.id, p.target)} title={t('合併最新的目標分支、AI 解衝突，推送後更新或重發 PR')}>
                     {t('解衝突重發')}
                   </button>
                 )}

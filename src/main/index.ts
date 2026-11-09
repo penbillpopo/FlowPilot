@@ -526,7 +526,7 @@ async function resolveConflict(itemId: number, prId: number): Promise<PrRecord> 
   try {
     const repoDir = projectFolder(item);
     const azure = await AzureRepo.open(repoDir);
-    const created = await resolvePrConflict(
+    const { pr, mode } = await resolvePrConflict(
       {
         repoDir,
         workDir: join(dataDir, '解衝突'),
@@ -539,13 +539,24 @@ async function resolveConflict(itemId: number, prId: number): Promise<PrRecord> 
       { key: item.ticketKey, summary: item.ticketSummary },
     );
     const latest = store.getWorkItem(itemId)!;
-    store.updateWorkItem(itemId, { prs: [...latest.prs.map((p) => (p.id === prId ? { ...p, status: 'abandoned' as const, conflicts: false, replacedBy: created.id } : p)), created] });
+    // 同一個 PR 只留一筆：就地更新的換成最新的樣子，被取代的標成放棄
+    const kept = latest.prs.filter((p) => p.id !== pr.id || mode === 'self').map((p) => {
+      if (p.id !== prId) return p;
+      return mode === 'self' ? { ...pr, conflicts: false } : { ...p, status: 'abandoned' as const, conflicts: false, replacedBy: pr.id };
+    });
+    store.updateWorkItem(itemId, { prs: mode === 'self' ? kept : [...kept, pr] });
     runner.notifyChanged();
-    log(`${item.ticketKey}：PR !${prId} 有衝突，解完重發成 !${created.id}`);
+    log(
+      mode === 'self'
+        ? `${item.ticketKey}：PR !${prId} 有衝突，把最新的目標分支合進去解完，PR 就地更新`
+        : mode === 'updated'
+          ? `${item.ticketKey}：PR !${prId} 有衝突，新內容合進原本的解衝突分支，由 !${pr.id} 帶上，!${prId} 放棄`
+          : `${item.ticketKey}：PR !${prId} 有衝突，解完重發成 !${pr.id}`,
+    );
     followUpPrs(itemId);
     prJobs.delete(prId);
     window?.webContents.send('pr:progress', itemId, prId, '');
-    return created;
+    return pr;
   } catch (error) {
     prJobs.set(prId, { itemId, text: '', error: (error as Error).message });
     window?.webContents.send('pr:progress', itemId, prId, '');

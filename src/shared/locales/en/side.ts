@@ -255,9 +255,9 @@ const en: Record<string, string> = {
   // PR 有衝突：解衝突重發
   '有衝突': 'Conflicts',
   '有衝突，已解完重發成 !{id}': 'Had conflicts; resolved and re-created as !{id}',
-  '從最新的目標分支開新分支、合併、AI 解衝突，再用新分支重發 PR': 'Branch off the latest target, merge, let AI resolve the conflicts, then re-create the PR from the new branch',
+  '合併最新的目標分支、AI 解衝突，推送後更新或重發 PR': 'Merge the latest target, let AI resolve the conflicts, then update or re-send the PR',
   '解衝突重發': 'Resolve and re-create',
-  '解衝突重發（發到 {target} 的 PR）？\n\n1. 從最新的 {target} 開新分支 {branch}\n2. 把 {source} 合併進去，有衝突交給 AI 解（AI 沒把握會停下來，不硬合）\n3. 推送 {branch}，用它發新的 PR 到 {target}（名稱、說明、審核人沿用）\n4. 新 PR 發成功後，放棄原本的 PR\n\n原本的開發分支不會動，遠端分支也不會刪。':
-    'Resolve conflicts and re-create the PR to {target}?\n\n1. Create a new branch {branch} from the latest {target}\n2. Merge {source} into it; AI resolves any conflicts (it stops instead of forcing when unsure)\n3. Push {branch} and create a new PR to {target} (same title, description and reviewers)\n4. After the new PR is created, abandon the original PR\n\nYour development branch is not touched, and no remote branch is deleted.',
+  '解衝突重發（發到 {target} 的 PR）？\n\n1. 用分支 {branch}：還沒有就從最新的 {target} 開；之前開過就接著用，先把最新的 {target} 合進去\n2. 把 {source} 合併進去，有衝突交給 AI 解（AI 沒把握會停下來，不硬合）\n3. 推送 {branch}（一般推送，不強制）；這條分支已經有發到 {target} 的 PR 就讓它更新，沒有才發新的（名稱、說明、審核人沿用）\n4. 完成後放棄原本有衝突的 PR\n\n原本的開發分支不會動，遠端分支也不會刪。':
+    'Resolve conflicts and re-send the PR to {target}?\n\n1. Use branch {branch}: create it from the latest {target} if it doesn\'t exist; if it does, keep using it and merge the latest {target} first\n2. Merge {source} into it; AI resolves any conflicts (it stops instead of forcing when unsure)\n3. Push {branch} (normal push, never forced); if it already has a PR to {target}, that PR is updated, otherwise a new PR is created (same title, description and reviewers)\n4. Then abandon the original conflicted PR\n\nYour development branch is not touched, and no remote branch is deleted.',
 };
 export default en;

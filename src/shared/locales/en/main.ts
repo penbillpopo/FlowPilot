@@ -85,6 +85,8 @@ const en: Record<string, string> = {
   '帳號或權杖無效': 'Invalid account or token',
   'Jira 查詢失敗：{reason}': 'Jira search failed: {reason}',
   '{name}（節點 {node}）': '{name} (node {node})',
+  '讀取 {key} 的估時失敗：HTTP {status}': 'Couldn\'t read the estimate of {key}: HTTP {status}',
+  '填 {key} 的估時失敗：HTTP {status}{detail}': 'Couldn\'t fill the estimate of {key}: HTTP {status}{detail}',
   '讀取 {key} 失敗：HTTP {status}': 'Couldn\'t read {key}: HTTP {status}',
   '下載附件失敗：HTTP {status}': 'Couldn\'t download the attachment: HTTP {status}',
   '讀取 Jira 狀態清單失敗：HTTP {status}': 'Couldn\'t read the Jira status list: HTTP {status}',

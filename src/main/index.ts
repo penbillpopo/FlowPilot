@@ -19,6 +19,7 @@ import { applyDiscussion, buildCodeCheckPrompt, buildDiscussionPrompt, buildFigm
 import { deriveBranches, planProblem } from './planner/rules';
 import { loadHistory } from './chat';
 import { generateReport } from './report';
+import { estimateTicket, fillOriginalEstimate } from './estimate';
 import { generateSpec, specNextStep } from './planner/spec';
 import { type AiMergeResult, mergeSchema, resolvePrConflict } from './pr-conflict';
 import { reviewBrief } from './planner/review';
@@ -453,6 +454,53 @@ function followUpPrs(itemId: number) {
   for (const delay of [20_000, 60_000, 180_000]) setTimeout(() => void refreshPrs(itemId).catch(() => {}), delay);
 }
 
+/**
+ * 自動填 Jira 估時（你在 2026-11-09 同意的例外：Jira 除了在單列表切換狀態，只有這一項會自動寫入）。
+ * 作戰室裡還沒結束的單，Jira 上沒有估時就照審閱結果填「原始預估值」；已經有值的一律不動。
+ * 處理過的單記在 estimated.json，之後不再去問 Jira。審閱還沒好的先跳過，下次再填。
+ */
+const estimatedFile = join(dataDir, 'estimated.json');
+let estimating = false;
+async function autoEstimate() {
+  if (paused || estimating) return;
+  estimating = true;
+  try {
+    let done: string[] = [];
+    try {
+      done = JSON.parse(readFileSync(estimatedFile, 'utf8'));
+    } catch {}
+    const items = store.listWorkItems().filter((i) => i.lane !== 'done' && i.status !== 'removed' && !i.portOf);
+    const tickets = [...new Set(items.map((i) => i.ticketKey))];
+    let credentials: ReturnType<typeof loadCredentials> | null = null;
+    for (const ticketKey of tickets) {
+      const own = items.filter((i) => i.ticketKey === ticketKey);
+      const keys = own[0].members.length ? own[0].members.map((m) => m.key) : [ticketKey];
+      const todo = keys.filter((k) => !done.includes(k));
+      if (!todo.length) continue;
+      const review = store.getReview(ticketKey)?.review;
+      if (!review) continue;
+      const extraTargets = own.length - 1 + own.reduce((sum, i) => sum + i.targetMerchants.length, 0);
+      const estimate = estimateTicket({ review, extraTargets, members: keys.length });
+      credentials ??= loadCredentials(loadSettings(settingsFile).jira.envFile);
+      for (const key of todo) {
+        try {
+          const outcome = await fillOriginalEstimate(credentials, key, estimate.value);
+          if (outcome.result === 'written') log(`${key}：Jira 估時填了 ${estimate.value}（${estimate.reason}）`);
+          else log(`${key}：Jira 上已經有估時 ${outcome.existing}，不動`);
+          done.push(key);
+          writeFileSync(estimatedFile, JSON.stringify(done));
+        } catch (error) {
+          log(`${key}：自動填估時失敗，下次再試：${(error as Error).message}`);
+        }
+      }
+    }
+  } catch (error) {
+    log(`自動填估時失敗：${(error as Error).message}`);
+  } finally {
+    estimating = false;
+  }
+}
+
 /** 每 10 分鐘看一次還在審核中的 PR 有沒有衝突（沒開 VPN 之類的連不上就算了，下次再看） */
 async function checkPrConflicts() {
   const items = store.listWorkItems().filter((i) => i.prs.some((p) => p.status !== 'completed' && p.status !== 'abandoned'));
@@ -802,6 +850,7 @@ function registerIpc() {
     // 再次開發：舊的已完成卡片收起來（分支不刪）
     runner.shelveDone(plans.flatMap((p) => [p.ticket.key, ...(p.ticket.members ?? []).map((m) => m.key)]));
     runner.startRun(created.id); // 確認計畫後直接開始：建立分支、分配資料夾、啟動 AI
+    void autoEstimate(); // 進作戰室：Jira 上沒有估時的單自動填上
     return run;
   });
   ipcMain.handle('board:get', () => runner.board());
@@ -1009,6 +1058,8 @@ app.whenReady().then(() => {
   if (!paused) {
     setTimeout(() => void checkPrConflicts(), 60_000);
     setInterval(() => void checkPrConflicts(), 10 * 60_000);
+    // 作戰室裡還沒估時的單補填（第一次會把現在作戰室裡的單都估上）
+    setTimeout(() => void autoEstimate(), 15_000);
   }
   runner.resubscribe().catch((e) => log(`啟動時接回工作失敗：${e.message}`));
   createTray();

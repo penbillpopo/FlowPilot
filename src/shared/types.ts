@@ -643,6 +643,17 @@ export interface PrReviewer {
 }
 
 /** 發 PR 視窗要的東西 */
+/** 這個 PR 能不能在 FlowPilot 完成合併 */
+export interface PrMergeCheck {
+  canMerge: boolean;
+  /** 只差審核規則：要先用你的帳號核准 */
+  needApprove: boolean;
+  /** 不能合併的原因 */
+  reason: string;
+  /** 你已經核准了，Azure 的審核規則還在更新 */
+  approvedPending?: boolean;
+}
+
 export interface PrOptions {
   title: string;
   description: string;
@@ -655,6 +666,8 @@ export interface PrOptions {
   fixedReviewers?: boolean;
   /** 這條分支在 Azure 上還開著的 PR（同一個目標分支不能再發） */
   existing: PrRecord[];
+  /** 正式環境的分支：發到這些分支時才預設勾設定檔指定的審核人 */
+  prodBranches: string[];
   /** 遠端沒有這條分支（要先推送） */
   notPushed: boolean;
   /** 同一張單在其他商戶的工作（多商戶的單），可以一起發 PR */
@@ -828,6 +841,10 @@ export interface FlowPilotApi {
     jobs(itemId: number): Promise<Record<number, { text: string; error?: string }>>;
     /** 解衝突重發的進度（空字串是結束了） */
     onProgress(listener: (itemId: number, prId: number, text: string) => void): () => void;
+    /** 每個審核中的 PR 能不能在 FlowPilot 完成合併（PR 編號 → 結果） */
+    mergeChecks(itemId: number): Promise<Record<number, PrMergeCheck>>;
+    /** 完成合併（只差審核就先用你的帳號核准）；進度從 onProgress 來 */
+    complete(itemId: number, prId: number): Promise<PrRecord>;
     /** 在 Azure 建立 PR，回傳網址 */
     create(itemId: number, input: { title: string; description: string; target: string; reviewerIds: string[]; alsoItemIds?: number[] }): Promise<{ results: { merchant: number | null; target: string; url?: string; error?: string }[] }>;
   };

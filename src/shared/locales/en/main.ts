@@ -196,5 +196,18 @@ const en: Record<string, string> = {
   '推送 {branch}': 'Pushing {branch}',
   '發新的 PR': 'Creating the new PR',
   '放棄舊的 PR': 'Abandoning the old PR',
+  '完成合併': 'Complete merge',
+  '這個 PR 已經不是審核中': 'This PR is no longer active',
+  '設定檔沒寫這個專案的正式環境分支（prodBranches），不能在 FlowPilot 合併': 'The settings file has no production branches (prodBranches) for this project, so it can\'t be merged in FlowPilot',
+  '{target} 是正式環境分支，不能在 FlowPilot 合併': '{target} is a production branch and can\'t be merged in FlowPilot',
+  '有選審核人 {names}，要等他們審核合併': 'Reviewers {names} are assigned; wait for them to review and merge',
+  '有衝突，先解衝突': 'Has conflicts; resolve them first',
+  'Azure 還在檢查能不能合併，等一下再看': 'Azure is still checking whether it can merge; check again shortly',
+  '你在 Azure 上投了拒絕或等待作者，要先改掉': 'You voted reject or wait for author on Azure; change that first',
+  '還有規則沒通過：{names}': 'Policies not passed yet: {names}',
+  '你已經核准了，但審核規則還沒通過：{names}': 'You approved, but the review policies haven\'t passed yet: {names}',
+  '用你的帳號核准': 'Approving with your account',
+  '等 Azure 的審核規則通過': 'Waiting for the Azure review policies to pass',
+  '核准了，但 Azure 的審核規則 30 秒內沒有通過，請到 Azure 看一下': 'Approved, but the Azure review policies didn\'t pass within 30 seconds. Please check on Azure',
 };
 export default en;

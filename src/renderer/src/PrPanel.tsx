@@ -1,6 +1,6 @@
 // 已完成的單：用 Azure 發 PR。名稱預設 feat(單號) 單子名稱，可以選目標分支、審核人，說明自動帶 Jira 連結和驗收表。
 import { useEffect, useState } from 'react';
-import type { PrOptions, WorkItem } from '../../shared/types';
+import type { PrMergeCheck, PrOptions, WorkItem } from '../../shared/types';
 import { latestPrs } from '../../shared/types';
 import { errorText } from './ChatPanel';
 import { t } from '../../shared/i18n';
@@ -46,6 +46,10 @@ export function PrPanel({ item }: { item: WorkItem }) {
   const [resolving, setResolving] = useState<Record<number, string>>({});
   const [resolveError, setResolveError] = useState<{ prId: number; text: string } | null>(null);
 
+  /** 每個審核中的 PR 能不能在這裡完成合併 */
+  const [mergeChecks, setMergeChecks] = useState<Record<number, PrMergeCheck>>({});
+  const loadChecks = () => api.pr.mergeChecks(item.id).then(setMergeChecks).catch(() => {});
+
   // 打開時向 Azure 讀回發過的 PR 現在的狀態、目標分支、審核人（也看有沒有衝突）；開著的時候每分鐘再看一次
   useEffect(() => {
     if (!item.prs.length) return;
@@ -53,6 +57,14 @@ export function PrPanel({ item }: { item: WorkItem }) {
     const timer = setInterval(() => api.pr.refresh(item.id).catch(() => {}), 60_000);
     return () => clearInterval(timer);
   }, [item.id, item.prs.length > 0]);
+  // PR 的狀態變了（新發的、合併了、有衝突）就重新看能不能合併
+  const prState = item.prs.map((p) => `${p.id}:${p.status}:${p.conflicts ? 1 : 0}:${(p.reviewers ?? []).join(',')}`).join('|');
+  useEffect(() => {
+    setMergeChecks({});
+    void loadChecks();
+    const timer = setInterval(() => void loadChecks(), 60_000);
+    return () => clearInterval(timer);
+  }, [item.id, prState]);
 
   // 解衝突重發的狀態記在主程序：畫面切走再切回來時讀回來（還在做就顯示進度、不能再按；失敗的顯示原因）
   const loadJobs = () =>
@@ -85,6 +97,23 @@ export function PrPanel({ item }: { item: WorkItem }) {
     void loadJobs();
   }
 
+  /** 完成合併：確認一次後在 Azure 合併（只差審核就先用你的帳號核准） */
+  async function complete(prId: number, target: string, needApprove: boolean) {
+    const ok = window.confirm(
+      t('在 Azure 完成合併？\n\n{source} → {target}\n\n{approve}合併方式：Merge (no fast forward)\n不刪除 {source}，不動相關工作項目', {
+        source: item.branch,
+        target,
+        approve: needApprove ? t('先用你的帳號核准這個 PR\n') : '',
+      }),
+    );
+    if (!ok) return;
+    setResolveError(null);
+    setResolving((prev) => ({ ...prev, [prId]: t('準備中') }));
+    await api.pr.complete(item.id, prId).catch(() => {});
+    void loadJobs();
+    void loadChecks();
+  }
+
   async function open() {
     setLoading(true);
     setError(null);
@@ -96,7 +125,9 @@ export function PrPanel({ item }: { item: WorkItem }) {
       setTarget(o.existing.some((p) => p.target === o.target) ? '' : o.target);
       setDescription(o.description);
       // 設定檔指定了審核人：全部勾好；沒指定就沿用上次勾的
-      setReviewers(o.fixedReviewers ? o.reviewers.map((r) => r.id) : lastReviewers().filter((id) => o.reviewers.some((r) => r.id === id)));
+      // 設定檔指定了審核人：發到正式環境分支才勾好（測試分支不勾，才能在這裡自己合併）；沒指定就沿用上次勾的
+      const first = o.existing.some((p) => p.target === o.target) ? '' : o.target;
+      setReviewers(o.fixedReviewers ? (o.prodBranches.includes(first) ? o.reviewers.map((r) => r.id) : []) : lastReviewers().filter((id) => o.reviewers.some((r) => r.id === id)));
     } catch (e) {
       setError(errorText(e));
     } finally {
@@ -152,17 +183,27 @@ export function PrPanel({ item }: { item: WorkItem }) {
             </div>
             {p.title && <div className="pr-title" title={p.title}>{p.title}</div>}
             <div className="muted small">{t('審核人：{reviewers}', { reviewers: p.reviewers ? (p.reviewers.length ? p.reviewers.join(t('、')) : t('沒有')) : t('（讀取中）') })}</div>
-            {p.conflicts && (
+            {resolving[p.id] ? (
               <div className="pr-conflict-row">
-                {resolving[p.id] ? (
-                  <span className="small">⏳ {resolving[p.id]}…</span>
-                ) : (
-                  <button disabled={Object.keys(resolving).length > 0} onClick={() => resolveConflict(p.id, p.target)} title={t('合併最新的目標分支、AI 解衝突，推送後更新或重發 PR')}>
-                    {t('解衝突重發')}
-                  </button>
-                )}
+                <span className="small">⏳ {resolving[p.id]}…</span>
               </div>
-            )}
+            ) : p.conflicts ? (
+              <div className="pr-conflict-row">
+                <button disabled={Object.keys(resolving).length > 0} onClick={() => resolveConflict(p.id, p.target)} title={t('合併最新的目標分支、AI 解衝突，推送後更新或重發 PR')}>
+                  {t('解衝突重發')}
+                </button>
+              </div>
+            ) : p.status === 'active' && mergeChecks[p.id] ? (
+              mergeChecks[p.id].canMerge ? (
+                <div className="pr-conflict-row">
+                  <button disabled={Object.keys(resolving).length > 0} onClick={() => complete(p.id, p.target, mergeChecks[p.id].needApprove)}>
+                    {mergeChecks[p.id].needApprove ? t('核准並完成合併') : t('完成合併')}
+                  </button>
+                </div>
+              ) : (
+                <div className="muted small pr-merge-note">{t('不能在這裡合併：{reason}', { reason: mergeChecks[p.id].reason })}</div>
+              )
+            ) : null}
             {resolveError?.prId === p.id && <div className="error small">{resolveError.text}</div>}
           </li>
         ))}
@@ -210,7 +251,14 @@ export function PrPanel({ item }: { item: WorkItem }) {
       </label>
       <label className="pr-field">
         <span className="muted small">{t('目標分支（{source} 要合併進去的）', { source: options.source })}</span>
-        <select value={target} onChange={(e) => setTarget(e.target.value)}>
+        <select
+          value={target}
+          onChange={(e) => {
+            setTarget(e.target.value);
+            // 設定檔指定的審核人：正式環境分支勾好，其他不勾（勾完你還是可以改）
+            if (options.fixedReviewers) setReviewers(options.prodBranches.includes(e.target.value) ? options.reviewers.map((r) => r.id) : []);
+          }}
+        >
           {!target && <option value="">{t('請選擇')}</option>}
           {target && !options.branches.includes(target) && <option value={target}>{target}</option>}
           {options.branches.map((b) => (

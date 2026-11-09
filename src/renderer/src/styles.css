@@ -657,6 +657,8 @@ td.time { white-space: nowrap; }
 /* PR 有衝突：標記和「解衝突重發」 */
 .mark.pr-conflict { color: var(--blocked); border-color: var(--blocked); }
 .pr-conflict-row { margin-top: 6px; }
+/* 不能在這裡合併的原因：長的信箱、分支名稱也要換行，不撐寬面板 */
+.pr-merge-note { margin-top: 4px; overflow-wrap: anywhere; }
 
 /* 作戰室左邊清單上方的搜尋單號（清單捲動時固定在上面） */
 .ticket-search { position: sticky; top: -12px; z-index: 2; display: flex; align-items: center; gap: 4px; margin: -12px -12px 0; padding: 12px 12px 6px; background: var(--bg); }

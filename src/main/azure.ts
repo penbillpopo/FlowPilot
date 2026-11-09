@@ -2,7 +2,7 @@
 // 審核人從這個專案最近的 PR 抓出曾經審核過的人；目標分支從遠端的分支列出。
 import { inChinese, t } from '../shared/i18n';
 import { spawn } from 'node:child_process';
-import type { AcceptanceItem, PrOptions, PrRecord, PrReviewer, WorkItem } from '../shared/types';
+import type { AcceptanceItem, PrMergeCheck, PrOptions, PrRecord, PrReviewer, WorkItem } from '../shared/types';
 import { runGit } from './git';
 
 export interface RepoInfo {
@@ -65,7 +65,46 @@ interface AzurePr {
   description?: string;
   /** Azure 試合併的結果：conflicts 是有衝突 */
   mergeStatus?: string;
-  reviewers?: { id?: string; displayName: string; uniqueName: string; isContainer?: boolean }[];
+  reviewers?: { id?: string; displayName: string; uniqueName: string; isContainer?: boolean; isRequired?: boolean; vote?: number }[];
+  lastMergeSourceCommit?: { commitId: string };
+  repository?: { project?: { id: string } };
+}
+
+/** PR 的規則檢查結果（Azure 的 policy evaluation） */
+export interface PolicyState {
+  name: string;
+  status: string;
+  blocking: boolean;
+}
+
+/** 審核人相關的規則：你自己核准就能通過（規則允許發 PR 的人自己投票） */
+const REVIEW_POLICIES = ['Minimum number of reviewers', 'Required reviewers'];
+
+/**
+ * 這個 PR 能不能在 FlowPilot 完成合併（你的規定，2026-11-09）：
+ * - 正式環境分支（設定檔的 prodBranches）不能；設定檔沒寫正式環境分支的專案一律不能
+ * - 有選其他審核人（Azure 自動加的必要審核群組、你自己不算）不能：要等他們
+ * - 有衝突、還在試合併、你投了拒絕、其他規則（例如建置）沒過：不能
+ * - 只差審核人規則：可以，要先用你的帳號核准（needApprove）
+ */
+export function mergeDecision(pr: AzurePr, policies: PolicyState[], me: string, prodBranches: string[] | undefined): PrMergeCheck {
+  const target = pr.targetRefName.replace(/^refs\/heads\//, '');
+  const no = (reason: string): PrMergeCheck => ({ canMerge: false, needApprove: false, reason });
+  if (pr.status !== 'active') return no(t('這個 PR 已經不是審核中'));
+  if (!prodBranches) return no(t('設定檔沒寫這個專案的正式環境分支（prodBranches），不能在 FlowPilot 合併'));
+  if (prodBranches.includes(target)) return no(t('{target} 是正式環境分支，不能在 FlowPilot 合併', { target }));
+  const reviewers = pr.reviewers ?? [];
+  const others = reviewers.filter((r) => r.id !== me && !(r.isContainer && r.isRequired));
+  if (others.length) return no(t('有選審核人 {names}，要等他們審核合併', { names: others.map((r) => r.uniqueName?.includes('@') ? r.uniqueName : r.displayName).join(t('、')) }));
+  if (pr.mergeStatus === 'conflicts') return no(t('有衝突，先解衝突'));
+  if (pr.mergeStatus !== 'succeeded') return no(t('Azure 還在檢查能不能合併，等一下再看'));
+  const myVote = reviewers.find((r) => r.id === me)?.vote ?? 0;
+  if (myVote < 0) return no(t('你在 Azure 上投了拒絕或等待作者，要先改掉'));
+  const failing = policies.filter((p) => p.blocking && !['approved', 'notApplicable'].includes(p.status));
+  const other = failing.filter((p) => !REVIEW_POLICIES.includes(p.name));
+  if (other.length) return no(t('還有規則沒通過：{names}', { names: other.map((p) => p.name).join(t('、')) }));
+  if (failing.length && myVote >= 10) return { ...no(t('你已經核准了，但審核規則還沒通過：{names}', { names: failing.map((p) => p.name).join(t('、')) })), approvedPending: true };
+  return { canMerge: true, needApprove: failing.length > 0, reason: '' };
 }
 
 /** 解衝突重發要用的：原本 PR 的名稱、說明、審核人、來源和目標分支 */
@@ -202,6 +241,82 @@ export class AzureRepo {
       status: record.status,
       conflicts: !!record.conflicts,
     };
+  }
+
+  /** 組織層級的 API（不在倉庫底下的，例如目前登入的是誰、PR 的規則檢查） */
+  private async orgApi<T>(path: string, init: { method?: string; body?: unknown } = {}): Promise<T> {
+    const response = await fetch(`${this.info.orgUrl}${path}`, {
+      method: init.method ?? 'GET',
+      headers: { Authorization: this.auth, 'Content-Type': 'application/json', Accept: 'application/json' },
+      body: init.body === undefined ? undefined : JSON.stringify(init.body),
+      signal: AbortSignal.timeout(20_000),
+    });
+    const text = await response.text();
+    if (!response.ok) throw new Error(t('Azure 回傳 {status}：{message}', { status: response.status, message: text.slice(0, 300) }));
+    return (text ? JSON.parse(text) : {}) as T;
+  }
+
+  private myId?: string;
+  /** 這組憑證是誰（核准用你的帳號） */
+  async me(): Promise<string> {
+    this.myId ??= (await this.orgApi<{ authenticatedUser: { id: string } }>('/_apis/connectionData')).authenticatedUser.id;
+    return this.myId;
+  }
+
+  private async policies(pr: AzurePr): Promise<PolicyState[]> {
+    const projectId = pr.repository?.project?.id;
+    if (!projectId) return [];
+    const artifact = encodeURIComponent(`vstfs:///CodeReview/CodeReviewId/${projectId}/${pr.pullRequestId}`);
+    const { value } = await this.orgApi<{ value: { status: string; configuration?: { isBlocking?: boolean; isEnabled?: boolean; type?: { displayName?: string } } }[] }>(
+      `/${encodeURIComponent(this.info.project)}/_apis/policy/evaluations?artifactId=${artifact}&api-version=7.1-preview.1`,
+    );
+    return value.filter((e) => e.configuration?.isEnabled !== false).map((e) => ({ name: e.configuration?.type?.displayName ?? '', status: e.status, blocking: !!e.configuration?.isBlocking }));
+  }
+
+  /** 能不能在 FlowPilot 完成合併（只讀） */
+  async mergeCheck(id: number, prodBranches: string[] | undefined): Promise<PrMergeCheck> {
+    const pr = await this.api<AzurePr>(`/pullrequests/${id}`);
+    if (pr.status !== 'active') return mergeDecision(pr, [], '', prodBranches);
+    return mergeDecision(pr, await this.policies(pr), await this.me(), prodBranches);
+  }
+
+  /**
+   * 完成合併：送出前再檢查一次（不能合併就丟錯）；只差審核就先用你的帳號核准，等規則通過再合併。
+   * 跟 Azure 網頁的預設一樣：Merge (no fast forward)、不刪來源分支、不動工作項目、合併訊息不改。
+   */
+  async completePr(id: number, prodBranches: string[] | undefined, progress: (text: string) => void = () => {}, wait = (ms: number) => new Promise((r) => setTimeout(r, ms))): Promise<PrRecord> {
+    const check = await this.mergeCheck(id, prodBranches);
+    if (!check.canMerge) throw new Error(check.reason);
+    const me = await this.me();
+    if (check.needApprove) {
+      progress(t('用你的帳號核准'));
+      await this.api(`/pullrequests/${id}/reviewers/${me}`, { method: 'PUT', body: { vote: 10 } });
+      progress(t('等 Azure 的審核規則通過'));
+      for (let i = 0; ; i++) {
+        await wait(2000);
+        const again = await this.mergeCheck(id, prodBranches);
+        if (again.canMerge && !again.needApprove) break;
+        if (!again.canMerge && !again.approvedPending) throw new Error(again.reason);
+        if (i >= 15) throw new Error(t('核准了，但 Azure 的審核規則 30 秒內沒有通過，請到 Azure 看一下'));
+      }
+    }
+    progress(t('完成合併'));
+    const pr = await this.api<AzurePr>(`/pullrequests/${id}`);
+    await this.api(`/pullrequests/${id}`, {
+      method: 'PATCH',
+      body: {
+        status: 'completed',
+        lastMergeSourceCommit: pr.lastMergeSourceCommit,
+        completionOptions: { mergeStrategy: 'noFastForward', deleteSourceBranch: false, transitionWorkItems: false },
+      },
+    });
+    // Azure 是在背景合併：等它真的變成已合併
+    for (let i = 0; i < 15; i++) {
+      const record = await this.getPr(id);
+      if (record.status === 'completed') return record;
+      await wait(2000);
+    }
+    return this.getPr(id);
   }
 
   /** 放棄一個 PR（Azure 的 PR 不能刪除，放棄就是收掉） */

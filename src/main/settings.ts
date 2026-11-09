@@ -27,6 +27,11 @@ export interface ProjectRule {
   startCommand?: string;
   /** 發 PR 時可以選的目標分支（照這個順序列；可用 {商戶}，會展開成每個商戶）。沒寫就列 master、sit、uat、version、dev 這類 */
   prTargets?: string[];
+  /**
+   * 正式環境的分支（可用 {商戶}）：發到這些分支的 PR 不能在 FlowPilot 合併，發 PR 時才預設勾審核人。
+   * 沒寫的專案一律不能在 FlowPilot 合併（不知道哪個是正式環境就當全部都是）
+   */
+  prodBranches?: string[];
   /** 開發用的技能（沒寫就用 frontend-development） */
   devSkill: string;
   /** 瀏覽器測試用的技能（沒寫就用 frontend-playwright-test） */
@@ -106,6 +111,8 @@ projects:
     startCommand: npm start -- --port {port}
     # 發 PR 時可以選的目標分支（{商戶} 展開成每個商戶）
     prTargets: ['master-{商戶}', 'uat-{商戶}', 'sit-{商戶}']
+    # 正式環境的分支：不能在 FlowPilot 合併，發 PR 時才預設勾審核人
+    prodBranches: ['master-{商戶}']
   PlatformAdmin:
     side: 後台（GoGaming）
     description: GoGaming 後台（GG、GoGaming BO、Go Gaming 後台、BO）
@@ -113,6 +120,7 @@ projects:
     branch: ban/{單號}
     startCommand: npm start -- --port {port}
     prTargets: [version/0.0.1, master, dev]
+    prodBranches: [version/0.0.1]
   GoMoneyAdmin:
     side: 後台（GoMoney）
     description: GoMoney 後台（GM、GoMoney）
@@ -121,10 +129,11 @@ projects:
     # GoMoneyAdmin 的 npm start 已經固定用 5200
     startCommand: npm start
     prTargets: [version/0.0.1, master, dev]
+    prodBranches: [version/0.0.1]
 
 # 固定的專案資料夾：一個資料夾同時只做一張單；port 是在本機啟動網站用的連接埠。
 # retired: true 是退役：不再分給新的卡片，已經在裡面的卡片照常做完
-# 發 PR 的審核人（信箱）：有寫就只列這些人、預設勾好；拿掉這段就列這個專案最近 PR 的審核人
+# 發 PR 的審核人（信箱）：有寫就只列這些人，發到正式環境分支時預設勾好；拿掉這段就列這個專案最近 PR 的審核人
 prReviewers: [mcl@intellianalyze.com]
 
 folders:
@@ -164,9 +173,9 @@ export function parseSettings(text: string): Settings {
   if (!raw.projects || !Array.isArray(raw.folders)) throw new Error(t('設定檔缺少 projects 或 folders'));
   for (const rule of Object.values(raw.projects)) {
     // {商戶} 展開成每個商戶：master-{商戶} → master-1、master-2…（先列完一種再列下一種）
-    if (Array.isArray(rule.prTargets)) {
-      rule.prTargets = rule.prTargets.flatMap((p) => (String(p).includes('{商戶}') ? (rule.merchants ?? []).map((m) => String(p).replaceAll('{商戶}', String(m))) : [String(p)]));
-    }
+    const expand = (list: unknown[]) => list.flatMap((p) => (String(p).includes('{商戶}') ? (rule.merchants ?? []).map((m) => String(p).replaceAll('{商戶}', String(m))) : [String(p)]));
+    if (Array.isArray(rule.prTargets)) rule.prTargets = expand(rule.prTargets);
+    if (Array.isArray(rule.prodBranches)) rule.prodBranches = expand(rule.prodBranches);
     rule.devSkill ||= 'frontend-development';
     rule.testSkill ||= 'frontend-playwright-test';
   }

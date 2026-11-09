@@ -259,5 +259,9 @@ const en: Record<string, string> = {
   '解衝突重發': 'Resolve and re-create',
   '解衝突重發（發到 {target} 的 PR）？\n\n1. 用分支 {branch}：還沒有就從最新的 {target} 開；之前開過就接著用，先把最新的 {target} 合進去\n2. 把 {source} 合併進去，有衝突交給 AI 解（AI 沒把握會停下來，不硬合）\n3. 推送 {branch}（一般推送，不強制）；這條分支已經有發到 {target} 的 PR 就讓它更新，沒有才發新的（名稱、說明、審核人沿用）\n4. 完成後放棄原本有衝突的 PR\n\n原本的開發分支不會動，遠端分支也不會刪。':
     'Resolve conflicts and re-send the PR to {target}?\n\n1. Use branch {branch}: create it from the latest {target} if it doesn\'t exist; if it does, keep using it and merge the latest {target} first\n2. Merge {source} into it; AI resolves any conflicts (it stops instead of forcing when unsure)\n3. Push {branch} (normal push, never forced); if it already has a PR to {target}, that PR is updated, otherwise a new PR is created (same title, description and reviewers)\n4. Then abandon the original conflicted PR\n\nYour development branch is not touched, and no remote branch is deleted.',
+  '在 Azure 完成合併？\n\n{source} → {target}\n\n{approve}合併方式：Merge (no fast forward)\n不刪除 {source}，不動相關工作項目': 'Complete the merge on Azure?\n\n{source} → {target}\n\n{approve}Merge type: Merge (no fast forward)\n{source} is not deleted and work items are not touched',
+  '先用你的帳號核准這個 PR\n': 'Approve this PR with your account first\n',
+  '核准並完成合併': 'Approve and complete merge',
+  '不能在這裡合併：{reason}': 'Can\'t merge here: {reason}',
 };
 export default en;

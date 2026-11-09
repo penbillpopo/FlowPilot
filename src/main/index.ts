@@ -9,8 +9,8 @@ import { acceptanceCsv } from './acceptance-csv';
 import { openInChrome } from './shared-browser';
 import { confluencePageId, loadConfluence } from './confluence';
 import { AzureRepo, defaultPrTitle, pickReviewers, prDescription, prIdFromUrl } from './azure';
-import type { Env, JiraTicket, PrOptions, PrRecord, SupplementItem, WorkItem, Judgement, PlanOptions, Review, ReviewChecks, ReviewIssue, TicketMark, TicketPlan, TicketSnapshot } from '../shared/types';
-import { wantsSpec } from '../shared/types';
+import type { Env, JiraTicket, PrMergeCheck, PrOptions, PrRecord, SupplementItem, WorkItem, Judgement, PlanOptions, Review, ReviewChecks, ReviewIssue, TicketMark, TicketPlan, TicketSnapshot } from '../shared/types';
+import { latestPrs, wantsSpec } from '../shared/types';
 import { CodexRpc } from './codex/rpc';
 import { listSkills, runStructured } from './codex/structured';
 import { checkExisting, localBranchExists, remoteBranchExists, runGit } from './git';
@@ -564,6 +564,50 @@ async function resolveConflict(itemId: number, prId: number): Promise<PrRecord> 
   }
 }
 
+/** 審核中、沒有衝突的 PR 能不能在 FlowPilot 完成合併（讀不到的就不列） */
+async function mergeChecks(itemId: number): Promise<Record<number, PrMergeCheck>> {
+  const item = store.getWorkItem(itemId);
+  if (!item) return {};
+  const prs = latestPrs(item.prs).filter((p) => p.status === 'active' && !p.conflicts);
+  if (!prs.length) return {};
+  const repo = await AzureRepo.open(projectFolder(item));
+  const prod = loadSettings(settingsFile).projects[item.project]?.prodBranches;
+  const result: Record<number, PrMergeCheck> = {};
+  for (const p of prs) {
+    try {
+      result[p.id] = await repo.mergeCheck(p.id, prod);
+    } catch {}
+  }
+  return result;
+}
+
+/** 完成合併（在 Azure 上，跟網頁按 Complete merge 一樣）：送出前主程序再檢查一次，正式環境、有選審核人的一律擋下 */
+async function completePr(itemId: number, prId: number): Promise<PrRecord> {
+  const item = store.getWorkItem(itemId);
+  if (!item) throw new Error(t('找不到這張單'));
+  if (prJobs.get(prId)?.text) throw new Error(t('這個 PR 正在處理'));
+  const progress = (text: string) => {
+    prJobs.set(prId, { itemId, text });
+    window?.webContents.send('pr:progress', itemId, prId, text);
+  };
+  progress(t('準備中'));
+  try {
+    const repo = await AzureRepo.open(projectFolder(item));
+    const record = await repo.completePr(prId, loadSettings(settingsFile).projects[item.project]?.prodBranches, progress);
+    const latest = store.getWorkItem(itemId)!;
+    store.updateWorkItem(itemId, { prs: latest.prs.map((p) => (p.id === prId ? { ...p, ...record } : p)) });
+    runner.notifyChanged();
+    log(`${item.ticketKey}：在 FlowPilot 完成合併 PR !${prId}（→ ${record.target}）${record.status === 'completed' ? '' : '，Azure 還在合併'}`);
+    prJobs.delete(prId);
+    window?.webContents.send('pr:progress', itemId, prId, '');
+    return record;
+  } catch (error) {
+    prJobs.set(prId, { itemId, text: '', error: (error as Error).message });
+    window?.webContents.send('pr:progress', itemId, prId, '');
+    throw error;
+  }
+}
+
 async function prOptions(itemId: number): Promise<PrOptions> {
   const item = store.getWorkItem(itemId);
   if (!item) throw new Error(t('找不到這張單'));
@@ -588,6 +632,7 @@ async function prOptions(itemId: number): Promise<PrOptions> {
     reviewers,
     fixedReviewers: !!settings.prReviewers?.length,
     existing,
+    prodBranches: settings.projects[item.project]?.prodBranches ?? [],
     notPushed: !pushed,
   };
 }
@@ -749,6 +794,8 @@ function registerIpc() {
   ipcMain.handle('pr:refresh', (_event, id: number) => refreshPrs(id));
   ipcMain.handle('pr:resolveConflict', (_event, id: number, prId: number) => resolveConflict(id, prId));
   ipcMain.handle('pr:jobs', (_event, id: number) => Object.fromEntries([...prJobs].filter(([, job]) => job.itemId === id).map(([prId, { text, error }]) => [prId, { text, error }])));
+  ipcMain.handle('pr:mergeChecks', (_event, id: number) => mergeChecks(id));
+  ipcMain.handle('pr:complete', (_event, id: number, prId: number) => completePr(id, prId));
   ipcMain.handle('pr:create', (_event, id: number, input: { title: string; description: string; target: string; reviewerIds: string[] }) => createPr(id, input));
   ipcMain.handle('plan:drafts', () => store.listDrafts());
   ipcMain.handle('plan:add', (_event, tickets: JiraTicket[]) => {

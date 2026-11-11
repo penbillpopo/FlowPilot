@@ -80,6 +80,7 @@ function flowPilotLabel(text: string): string | null {
   if (text.startsWith(zhOnly('## 自我審查'))) return t('自我審查指示');
   if (text.startsWith(zhOnly('## 規格比對'))) return t('規格比對找到做錯的地方，請 AI 確認、修正');
   if (text.startsWith(zhOnly('## 整理驗收表'))) return t('整理驗收表指示');
+  if (text.startsWith(zhOnly('## 修編譯錯誤'))) return t('本機網站編譯失敗，請 AI 修正（點開看錯誤）');
   if (text.startsWith(zhOnly('## 換新對話'))) return t('對話太長，整理重點後換新對話（點開看交接內容）');
   if (text.startsWith(zhOnly('## 多語系 key 重複'))) return t('多語系 key 重複，請 AI 換名字');
   if (text.startsWith(zhOnly('## 同步基底分支'))) return t('同步基底分支有衝突，請 AI 解衝突');

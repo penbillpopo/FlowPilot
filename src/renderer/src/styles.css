@@ -554,6 +554,10 @@ li.ticket.status-parked { border-left-color: var(--warn); }
 .shot-stage canvas { display: block; touch-action: none; }
 .shot-text { position: absolute; min-width: 160px; font-weight: 600; background: rgba(0, 0, 0, 0.55) !important; border: 1px dashed currentColor !important; border-radius: 4px; padding: 2px 4px; resize: both; outline: none; }
 /* 本機網站啟動中 */
+.site-errors { margin: 8px 0; padding: 8px 10px; border: 1px solid var(--blocked); border-radius: 6px; display: flex; flex-direction: column; align-items: flex-start; gap: 6px; font-size: 13px; }
+.site-errors strong { color: var(--blocked); }
+.site-errors ul { margin: 0; padding-left: 18px; max-width: 100%; }
+.site-errors code { white-space: normal; overflow-wrap: anywhere; }
 .site-starting { display: flex; flex-wrap: wrap; align-items: center; gap: 4px 8px; font-size: 13px; color: var(--accent); }
 .site-starting .spinner { width: 12px; height: 12px; border: 2px solid currentColor; border-right-color: transparent; border-radius: 50%; animation: fp-spin 0.8s linear infinite; }
 .site-last-line { flex-basis: 100%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--muted); }

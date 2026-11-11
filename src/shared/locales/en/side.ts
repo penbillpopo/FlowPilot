@@ -263,5 +263,9 @@ const en: Record<string, string> = {
   '先用你的帳號核准這個 PR\n': 'Approve this PR with your account first\n',
   '核准並完成合併': 'Approve and complete merge',
   '不能在這裡合併：{reason}': 'Can\'t merge here: {reason}',
+  '網站編譯失敗（{count} 個錯誤）': "Site failed to compile ({count} errors)",
+  '還有 {count} 個': "{count} more",
+  '已經交給 AI 修，改好後網站會自動重新編譯': "Sent to AI. The site recompiles automatically once it's fixed",
+  '請 AI 修編譯錯誤': "Ask AI to fix compile errors",
 };
 export default en;

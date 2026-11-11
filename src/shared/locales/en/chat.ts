@@ -199,5 +199,6 @@ const en: Record<string, string> = {
   '_（規格比對的處理結果已記下，看右邊「驗收」）_': '_(Spec check results recorded; see "Acceptance" on the right)_',
   '請沒看過開發過程的 AI 再拿開工前的規格比對一次目前的改動；做錯的交給 AI 修': 'Ask an AI that has not seen the development to check the current changes against the spec again; mistakes go back to the AI to fix',
   '再比對一次規格': 'Check against the spec again',
+  '本機網站編譯失敗，請 AI 修正（點開看錯誤）': "Local site failed to compile; asked AI to fix it (expand to see the errors)",
 };
 export default en;

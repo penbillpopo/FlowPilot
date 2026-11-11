@@ -10,6 +10,7 @@ import { DiffView } from './DiffView';
 import { needsYou, unexplainedFiles } from '../../shared/acceptance';
 import { commitPrefs, deliveryOf, isTestOnly, setCommitPrefs, useGitState } from './delivery';
 import { t, zhOnly } from '../../shared/i18n';
+import { type CompileErrors, compileErrors } from '../../shared/compile-errors';
 
 const api = window.flowpilot;
 
@@ -371,12 +372,46 @@ export function FolderTerminalPanel({ item, onSiteUrl }: { item: WorkItem; onSit
   useEffect(() => {
     if (url) setStarting(null);
   }, [url]);
+  // 最近一次編譯的錯誤（從終端機輸出找；重新編譯成功就消失）
+  const [errors, setErrors] = useState<CompileErrors | null>(null);
+  /** 交給 AI 修過的錯誤（同樣的錯誤不重複送；AI 改完重新編譯又錯，內容不一樣就能再送） */
+  const [sentErrors, setSentErrors] = useState<string | null>(null);
+  const output = useRef('');
+  const scan = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const rescan = () => {
+    if (scan.current) clearTimeout(scan.current);
+    scan.current = setTimeout(() => setErrors(compileErrors(output.current)), 400);
+  };
+
+  /** 把編譯錯誤交給這張單的 AI 修 */
+  async function fixErrors() {
+    if (!errors) return;
+    setSentErrors(errors.text);
+    const prompt = [
+      zhOnly('## 修編譯錯誤'),
+      zhOnly('本機網站（npm start）編譯失敗，錯誤如下：'),
+      '```',
+      errors.text,
+      '```',
+      zhOnly('- 請修正這些編譯錯誤，只改造成錯誤的地方，不要順便改其他程式。'),
+      zhOnly('- 錯誤在這張單沒改過的檔案時，先查原因：如果是套件沒裝（找不到模組、型別），用 npm install --no-save 補裝，不要改程式；真的要改程式就做最小修改，並告訴我改了什麼、為什麼。'),
+      zhOnly('- 改完確認編譯通過（例如 npx tsc --noEmit -p tsconfig.app.json；網站開著的話它會自動重新編譯）。不要另外啟動或停止本機網站。'),
+    ].join('\n');
+    try {
+      await api.send(item.id, prompt, []);
+    } catch (e) {
+      setSentErrors(null);
+      setError(errorText(e));
+    }
+  }
 
   useEffect(() => {
     if (!item.folder) return;
     setError(null);
     setExited(false);
     setUrl(null);
+    output.current = '';
+    setErrors(null);
     const dark = window.matchMedia('(prefers-color-scheme: dark)').matches;
     const term = new Terminal({
       fontFamily: 'ui-monospace, Menlo, monospace',
@@ -393,6 +428,8 @@ export function FolderTerminalPanel({ item, onSiteUrl }: { item: WorkItem; onSit
     const offData = api.folderTerminal.onData((f, data) => {
       if (f !== current) return;
       term.write(data);
+      output.current = (output.current + data).slice(-200_000);
+      rescan();
       // 終端機最後一行有字的輸出（拿掉顏色控制碼），啟動中顯示給你看進度
       const line = data.replace(/\x1b\[[0-9;?]*[A-Za-z]/g, '').split(/[\r\n]+/).map((l) => l.trim()).filter(Boolean).pop();
       if (line) setLastLine(line.slice(0, 120));
@@ -409,7 +446,11 @@ export function FolderTerminalPanel({ item, onSiteUrl }: { item: WorkItem; onSit
         current = opened.folder;
         setFolder(opened.folder);
         setUrl(opened.url);
-        if (opened.buffer) term.write(opened.buffer);
+        if (opened.buffer) {
+          term.write(opened.buffer);
+          output.current = opened.buffer.slice(-200_000);
+          rescan();
+        }
       })
       .catch((e) => setError(errorText(e)));
     const input = term.onData((data) => current && api.folderTerminal.write(current, data));
@@ -427,6 +468,7 @@ export function FolderTerminalPanel({ item, onSiteUrl }: { item: WorkItem; onSit
       offUrl();
       offExit();
       term.dispose();
+      if (scan.current) clearTimeout(scan.current);
     };
   }, [item.id, item.folder]);
 
@@ -446,6 +488,20 @@ export function FolderTerminalPanel({ item, onSiteUrl }: { item: WorkItem; onSit
             <button className="primary" onClick={() => api.openUrl(url).catch((e) => setError(errorText(e)))}>{t('打開網頁')}</button>
             <button onClick={() => folder && api.folderTerminal.interrupt(folder)}>{t('停止')}</button>
           </>
+        ) : errors && folder && !exited ? (
+          // 編譯失敗時網站還在等檔案改好再重新編譯：不能再按啟動，可以停止
+          <button
+            onClick={() => {
+              if (!folder) return;
+              api.folderTerminal.interrupt(folder);
+              // 停掉以後這些錯誤就不算了（之後重新啟動再看新的）
+              output.current += '\n> stopped\n';
+              setErrors(null);
+              setStarting(null);
+            }}
+          >
+            {t('停止')}
+          </button>
         ) : (
           <button
             className="primary"
@@ -475,7 +531,21 @@ export function FolderTerminalPanel({ item, onSiteUrl }: { item: WorkItem; onSit
         <button className="link small push-right" onClick={() => setShowTerminal(!showTerminal)}>{showTerminal ? t('收起終端機') : t('顯示終端機')}</button>
       </div>
 
-      {starting !== null && !url && (
+      {errors && !url && (
+        <div className="site-errors">
+          <strong>{t('網站編譯失敗（{count} 個錯誤）', { count: errors.count })}</strong>
+          <ul>
+            {errors.titles.slice(0, 5).map((title, i) => <li key={i}><code>{title}</code></li>)}
+            {errors.count > 5 && <li className="muted">{t('還有 {count} 個', { count: errors.count - 5 })}</li>}
+          </ul>
+          {sentErrors === errors.text ? (
+            <span className="muted small">{t('已經交給 AI 修，改好後網站會自動重新編譯')}</span>
+          ) : (
+            <button className="primary" disabled={!item.threadId} title={item.threadId ? undefined : t('這張單還沒有 AI 對話')} onClick={fixErrors}>{t('請 AI 修編譯錯誤')}</button>
+          )}
+        </div>
+      )}
+      {starting !== null && !url && !errors && (
         <div className="site-starting">
           <span className="spinner" />
           <span>{t('啟動中，第一次編譯大約要 30 秒到 1 分鐘（已經 {seconds} 秒）', { seconds: Math.round((now - starting) / 1000) })}</span>

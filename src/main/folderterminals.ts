@@ -2,6 +2,7 @@
 // 「在本機啟動」會在這裡輸入啟動指令；從輸出抓到本機網址時通知畫面，顯示「打開網頁」。
 import { t } from '../shared/i18n';
 import * as pty from 'node-pty';
+import { PROXY_HEADER } from './site-proxy';
 
 const MAX_BUFFER = 300_000;
 const URL_PATTERN = /https?:\/\/(?:localhost|127\.0\.0\.1|0\.0\.0\.0):\d+\/?[^\s'"\x1b]*/;
@@ -12,8 +13,9 @@ function stripAnsi(text: string): string {
 
 async function reachable(url: string): Promise<boolean> {
   try {
-    await fetch(url, { signal: AbortSignal.timeout(3000) });
-    return true;
+    const response = await fetch(url, { signal: AbortSignal.timeout(3000) });
+    // FlowPilot 轉送那一層回的「網站還沒好」不算連得上
+    return !response.headers.get(PROXY_HEADER);
   } catch {
     return false;
   }
@@ -29,10 +31,14 @@ interface Session {
 
 export class FolderTerminals {
   private sessions = new Map<string, Session>();
+  /** 網站實際跑的連接埠 → 給你打開的連接埠（FlowPilot 在中間轉一手，見 site-proxy） */
+  private aliases = new Map<string, { inner: number; port: number }>();
 
   constructor(
     private readonly send: (channel: string, ...args: unknown[]) => void,
     private readonly log: (message: string) => void,
+    /** 終端機結束了（網站一定也停了） */
+    private readonly onClosed: (folder: string) => void = () => {},
   ) {}
 
   /** 打開（已經開著就沿用），回傳目前為止的輸出與抓到的網址 */
@@ -54,7 +60,9 @@ export class FolderTerminals {
     const onData = session.pty.onData((data) => {
       session.buffer = (session.buffer + data).slice(-MAX_BUFFER);
       this.send('folderTerm:data', folder, data);
-      const found = stripAnsi(data).match(URL_PATTERN)?.[0]?.replace('0.0.0.0', 'localhost');
+      let found = stripAnsi(data).match(URL_PATTERN)?.[0]?.replace('0.0.0.0', 'localhost');
+      const alias = this.aliases.get(folder);
+      if (found && alias) found = found.replace(`:${alias.inner}`, `:${alias.port}`);
       if (found && found !== session.url) {
         session.url = found;
         this.send('folderTerm:url', folder, found);
@@ -63,11 +71,17 @@ export class FolderTerminals {
     const onExit = session.pty.onExit(({ exitCode }) => {
       this.log(`${folder} 的終端機結束（${exitCode}）`);
       this.sessions.delete(folder);
+      this.onClosed(folder);
       this.send('folderTerm:exit', folder);
     });
     session.listeners.push(onData, onExit);
     this.sessions.set(folder, session);
     return { buffer: '', url: null };
+  }
+
+  /** 這個資料夾的網站實際跑在 inner，抓到的網址換成 port（你打開的那個） */
+  alias(folder: string, inner: number, port: number) {
+    this.aliases.set(folder, { inner, port });
   }
 
   write(folder: string, data: string) {

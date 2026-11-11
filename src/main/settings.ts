@@ -67,6 +67,10 @@ export interface Settings {
   gitIdentities: { name: string; email: string }[];
   /** 發 PR 的審核人（信箱）：有寫就只列這些人、預設勾好；沒寫就列最近 PR 的審核人 */
   prReviewers?: string[];
+  /** 啟動本機網站後第一次打開時，清掉瀏覽器存的快取和 localStorage（預設要清；false 是不清） */
+  siteClearData?: boolean;
+  /** 清的時候連 cookie 一起清（cookie 不分連接埠，所有本機網站都會被登出；預設不清） */
+  siteClearCookies?: boolean;
 }
 
 export const DEFAULT_SETTINGS_YAML = `# FlowPilot 設定。改完存檔，重新整理就生效。
@@ -126,8 +130,8 @@ projects:
     description: GoMoney 後台（GM、GoMoney）
     baseBranch: version/0.0.1
     branch: ban/{單號}
-    # GoMoneyAdmin 的 npm start 已經固定用 5200
-    startCommand: npm start
+    # GoMoneyAdmin 的 npm start 寫死 5200：直接用 ng serve 才能換連接埠（啟動時清瀏覽器資料要用）
+    startCommand: npx ng serve --port {port}
     prTargets: [version/0.0.1, master, dev]
     prodBranches: [version/0.0.1]
 
@@ -135,6 +139,11 @@ projects:
 # retired: true 是退役：不再分給新的卡片，已經在裡面的卡片照常做完
 # 發 PR 的審核人（信箱）：有寫就只列這些人，發到正式環境分支時預設勾好；拿掉這段就列這個專案最近 PR 的審核人
 prReviewers: [mcl@intellianalyze.com]
+
+# 啟動本機網站後第一次打開時，清掉瀏覽器存的快取和 localStorage（切 SIT／UAT、換單時舊的登入資料不會留著）
+# siteClearCookies: true 連 cookie 一起清（cookie 不分連接埠，所有本機網站都會被登出）
+siteClearData: true
+siteClearCookies: false
 
 folders:
   - name: PlatformWeb

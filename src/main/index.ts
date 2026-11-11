@@ -21,6 +21,7 @@ import { loadHistory } from './chat';
 import { generateReport } from './report';
 import { estimateTicket, fillOriginalEstimate } from './estimate';
 import { installCommand, missingPackages } from './packages';
+import { innerPort, SiteProxy } from './site-proxy';
 import { generateSpec, specNextStep } from './planner/spec';
 import { type AiMergeResult, mergeSchema, resolvePrConflict } from './pr-conflict';
 import { reviewBrief } from './planner/review';
@@ -100,7 +101,49 @@ function chatChanged(itemId: number, event: unknown) {
   }, 50);
 }
 
-const folderTerminals = new FolderTerminals((channel, ...args) => window?.webContents.send(channel, ...args), (m) => log(m));
+const folderTerminals = new FolderTerminals((channel, ...args) => window?.webContents.send(channel, ...args), (m) => log(m), (folder) => closeSiteProxy(folder));
+
+/** 每個資料夾在原本連接埠轉送的那一層（啟動時清瀏覽器資料用，見 site-proxy） */
+const siteProxies = new Map<string, SiteProxy>();
+function closeSiteProxy(folder: string) {
+  siteProxies.get(folder)?.close();
+  siteProxies.delete(folder);
+}
+
+/**
+ * 啟動本機網站的指令：指令裡有 {port} 的，網站改跑在「連接埠 + 10000」，FlowPilot 在原本的連接埠轉一手，
+ * 每次啟動後第一個打開的頁面清掉瀏覽器存的舊資料（快取、localStorage）。網址跟以前一樣。
+ * 指令沒有 {port}（連接埠寫死在專案裡）的照舊直接跑、不清。
+ */
+async function prepareSite(folder: { name: string; project: string; port?: number }): Promise<string> {
+  const settings = loadSettings(settingsFile);
+  const template = settings.projects[folder.project]?.startCommand ?? 'npm start';
+  const port = folder.port ?? 4200;
+  if (!template.includes('{port}') || settings.siteClearData === false) {
+    closeSiteProxy(folder.name);
+    return startCommand(template, port);
+  }
+  let proxy = siteProxies.get(folder.name);
+  if (!proxy) siteProxies.set(folder.name, (proxy = new SiteProxy(port, log)));
+  try {
+    await proxy.listen();
+  } catch (error) {
+    siteProxies.delete(folder.name);
+    if ((error as NodeJS.ErrnoException).code === 'EADDRINUSE') throw new Error(t('連接埠 {port} 已經有程式在用（可能是之前啟動、還沒停掉的網站），請先停掉再啟動', { port }));
+    throw error;
+  }
+  proxy.armClear(!!settings.siteClearCookies);
+  folderTerminals.alias(folder.name, innerPort(port), port);
+  // 不要讓網站自己開瀏覽器（ng serve --open 會開到實際跑的連接埠，繞過清資料）
+  const noOpen = /ng serve|npm start --/.test(template) ? ' --no-open' : '';
+  return `${startCommand(template, innerPort(port))}${noOpen}`;
+}
+
+/** 停止本機網站：Ctrl+C，並收掉轉送那一層（讓出連接埠） */
+function stopSite(folder: string) {
+  folderTerminals.interrupt(folder);
+  closeSiteProxy(folder);
+}
 
 function startCommand(command: string | undefined, port: number | undefined) {
   return (command ?? 'npm start').replaceAll('{port}', String(port ?? 4200));
@@ -990,13 +1033,14 @@ function registerIpc() {
   });
   ipcMain.on('folderTerm:input', (_event, folder: string, data: string) => folderTerminals.write(folder, data));
   ipcMain.on('folderTerm:resize', (_event, folder: string, cols: number, rows: number) => folderTerminals.resize(folder, cols, rows));
-  ipcMain.on('folderTerm:interrupt', (_event, folder: string) => folderTerminals.interrupt(folder));
-  ipcMain.handle('folderTerm:startSite', (_event, id: number) => {
-    const { folder, rule } = folderOf(id);
+  ipcMain.on('folderTerm:interrupt', (_event, folder: string) => stopSite(folder));
+  ipcMain.handle('folderTerm:startSite', async (_event, id: number) => {
+    const { folder } = folderOf(id);
+    const command = await prepareSite(folder);
     // 套件沒裝齊（例如同事只改了 package.json、鎖定檔沒跟著改）先補裝，不然網站編譯會失敗
     const missing = missingPackages(folder.path);
     if (missing.length) log(`${folder.name}：啟動網站前發現缺套件 ${missing.slice(0, 5).join('、')}，先補裝`);
-    folderTerminals.run(folder.name, `${missing.length ? `${installCommand(false)} && ` : ''}${startCommand(rule?.startCommand, folder.port)}`);
+    folderTerminals.run(folder.name, `${missing.length ? `${installCommand(false)} && ` : ''}${command}`);
   });
   // 本機網站用你平常的 Chrome 打開：AI 透過 Playwright 擴充功能接得上（你說「看我開的畫面」它就看得到）
   ipcMain.handle('shell:openUrl', (_event, url: string) => {
@@ -1102,12 +1146,16 @@ app.whenReady().then(() => {
     paused,
     dataDir,
     writeGuard: writeGuardPath(),
-    stopSite: (name) => folderTerminals.interrupt(name),
-    ensureSite: (name) => {
+    stopSite: (name) => stopSite(name),
+    ensureSite: async (name) => {
       const settings = loadSettings(settingsFile);
       const folder = settings.folders.find((f) => f.name === name);
       if (!folder) throw new Error(t('設定檔裡沒有資料夾「{folder}」', { folder: name }));
-      return folderTerminals.ensureSite(folder.name, folder.path, startCommand(settings.projects[folder.project]?.startCommand, folder.port), folder.port ?? 4200);
+      // 已經在跑（不管是誰啟動的）就直接用；沒在跑才照「啟動」的方式起來
+      const url = `http://localhost:${folder.port ?? 4200}/`;
+      const up = await fetch(url, { signal: AbortSignal.timeout(3000) }).then((r) => !r.headers.get('x-flowpilot-proxy')).catch(() => false);
+      if (up) return url;
+      return folderTerminals.ensureSite(folder.name, folder.path, await prepareSite(folder), folder.port ?? 4200);
     },
     onChange: boardChanged,
     onStream: streamChanged,
@@ -1133,6 +1181,7 @@ app.on('before-quit', () => {
   log('結束 FlowPilot');
   quitting = true;
   folderTerminals.closeAll();
+  for (const folder of [...siteProxies.keys()]) closeSiteProxy(folder);
   codex.stop();
   daemon.stop(); // 只斷開連線；常駐服務繼續跑，進行中的 AI 不受影響
 });

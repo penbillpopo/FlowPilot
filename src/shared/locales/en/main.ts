@@ -209,5 +209,6 @@ const en: Record<string, string> = {
   '用你的帳號核准': 'Approving with your account',
   '等 Azure 的審核規則通過': 'Waiting for the Azure review policies to pass',
   '核准了，但 Azure 的審核規則 30 秒內沒有通過，請到 Azure 看一下': 'Approved, but the Azure review policies didn\'t pass within 30 seconds. Please check on Azure',
+  '連接埠 {port} 已經有程式在用（可能是之前啟動、還沒停掉的網站），請先停掉再啟動': 'Port {port} is already in use (maybe a site started earlier that is still running). Stop it first, then start again',
 };
 export default en;

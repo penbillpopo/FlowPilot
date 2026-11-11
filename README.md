@@ -49,3 +49,4 @@ LIVE=1 npm test -- tests/live   # 實測：會用到真的 Jira、Codex 與 VS C
 - [x] 工作台：左邊單、中間跟 AI 對話（完整紀錄、思考、指令、改動、截圖）、右邊本機網站與 Git 改動（暫存、捨棄、提交、推送）
 - [x] 不再自動打開 VS Code
 - [ ] 第 6 階段：多商戶移植（platform-web-copy）
+# FlowPilot

@@ -1,5 +1,6 @@
 // 執行器：把確認好的計畫變成工作項目，分配資料夾、建立並切換分支、啟動 Codex 執行技能，
 // 並追蹤每段對話的進度、提問與同意請求。
+import { installCommand, missingPackages } from '../packages';
 import { execFile } from 'node:child_process';
 import { existsSync, mkdirSync, readdirSync, readFileSync, renameSync, rmSync, statSync, writeFileSync } from 'node:fs';
 import { basename, dirname, join } from 'node:path';
@@ -697,11 +698,7 @@ export class Runner {
           await createBranch(cwd, item.branch, item.baseBranch);
           await switchBranch(cwd, item.branch);
         }
-        const lockAfter = await fileHash(cwd, 'package-lock.json');
-        if (lockBefore !== lockAfter || !existsSync(join(cwd, 'node_modules'))) {
-          this.update(id, { activity: t('套件不同，安裝套件中（npm install，可能要幾分鐘）') });
-          await shell(cwd, 'npm install', 20 * 60_000);
-        }
+        await this.reinstallIfNeeded(item, cwd, lockBefore);
       }
 
       if (remote && continuing) {
@@ -730,6 +727,9 @@ export class Runner {
         if (result.code !== 0 && !inProgress) throw new Error(t('rebase 失敗：{error}', { error: result.stderr.trim().split('\n').slice(-2).join(' ') }));
         rebase = { behind: behindBase, conflict: result.code !== 0 };
       }
+
+      // 接著做、快轉、rebase 都可能帶進新套件：開發前再看一次有沒有裝齊（rebase 衝突中先不裝，AI 解完再說）
+      if (!rebase?.conflict && existsSync(join(cwd, 'package.json')) && missingPackages(cwd).length) await this.installPackages(item, cwd, false);
 
       this.prepared.set(id, {
         rebase,
@@ -2080,9 +2080,18 @@ export class Runner {
 
   private async reinstallIfNeeded(item: StoredWorkItem, cwd: string, lockBefore: string | null) {
     if (!existsSync(join(cwd, 'package.json'))) return;
-    if (lockBefore === (await fileHash(cwd, 'package-lock.json')) && existsSync(join(cwd, 'node_modules'))) return;
-    this.update(item.id, { activity: t('套件不同，安裝套件中（npm install，可能要幾分鐘）') });
-    await shell(cwd, 'npm install', 20 * 60_000);
+    const lockChanged = lockBefore !== (await fileHash(cwd, 'package-lock.json'));
+    // 鎖定檔沒變也要看套件有沒有裝齊：同事可能只改了 package.json
+    if (!lockChanged && existsSync(join(cwd, 'node_modules')) && !missingPackages(cwd).length) return;
+    await this.installPackages(item, cwd, lockChanged || !existsSync(join(cwd, 'node_modules')));
+  }
+
+  private async installPackages(item: StoredWorkItem, cwd: string, lockChanged: boolean) {
+    const command = installCommand(lockChanged);
+    const missing = missingPackages(cwd);
+    this.update(item.id, { activity: t('套件不同，安裝套件中（{command}，可能要幾分鐘）', { command }) });
+    if (missing.length) this.deps.log(`${item.ticketKey}：${item.folder ?? ''} 缺套件 ${missing.slice(0, 5).join('、')}${missing.length > 5 ? ` 等 ${missing.length} 個` : ''}，${command}`);
+    await shell(cwd, command, 20 * 60_000);
   }
 
   /** 資料夾不在這張單的分支上（例如你在 VS Code 切走了）：叫 AI 做事、完成這張單之前都要擋下來，免得改到別條分支 */

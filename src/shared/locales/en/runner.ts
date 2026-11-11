@@ -61,7 +61,7 @@ const en: Record<string, string> = {
   '切換到已存在的分支 {branch}': 'Switching to existing branch {branch}',
   '從遠端切換到已存在的分支 {branch}': 'Switching to existing remote branch {branch}',
   '從 origin/{base} 建立分支 {branch}': 'Creating branch {branch} from origin/{base}',
-  '套件不同，安裝套件中（npm install，可能要幾分鐘）': 'Packages changed, installing (npm install, may take a few minutes)',
+  '套件不同，安裝套件中（{command}，可能要幾分鐘）': 'Packages changed, installing ({command}, may take a few minutes)',
   '本機落後遠端 {count} 個提交，快轉到最新': 'Local is {count} commits behind the remote, fast-forwarding',
   '{branch} 的本機和遠端各有新的提交（本機多 {ahead} 個、遠端多 {behind} 個）。要用本機的版本繼續開發嗎？（不會動到遠端）':
     '{branch} has new commits both locally and on the remote ({ahead} only local, {behind} only remote). Continue with the local version? (The remote won\'t be touched.)',

@@ -78,7 +78,8 @@ describe('移植到其他商戶', () => {
     expect(m2.activity).not.toContain('未提交的修改');
     expect(m2.folder).toBe('PlatformWeb');
     expect(git(t.folder, 'status', '--porcelain', '--', 'src')).toBe(''); // environment.ts 已還原
-    expect(git(t.folder, 'branch', '--show-current')).toBe('ban/m2/ALL-1');
+    // 資料夾最後停在哪條分支看時間（m7 可能接著切過去），只確認 m2 的分支建好了
+    expect(git(t.folder, 'branch', '--list', 'ban/m2/ALL-1')).toContain('ban/m2/ALL-1');
   });
 
   it('來源還沒推送也可以移植：從本機有這條分支的資料夾抓過去（拿得到沒推送的提交）', async () => {

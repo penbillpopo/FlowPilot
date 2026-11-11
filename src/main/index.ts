@@ -20,6 +20,7 @@ import { deriveBranches, planProblem } from './planner/rules';
 import { loadHistory } from './chat';
 import { generateReport } from './report';
 import { estimateTicket, fillOriginalEstimate } from './estimate';
+import { installCommand, missingPackages } from './packages';
 import { generateSpec, specNextStep } from './planner/spec';
 import { type AiMergeResult, mergeSchema, resolvePrConflict } from './pr-conflict';
 import { reviewBrief } from './planner/review';
@@ -992,7 +993,10 @@ function registerIpc() {
   ipcMain.on('folderTerm:interrupt', (_event, folder: string) => folderTerminals.interrupt(folder));
   ipcMain.handle('folderTerm:startSite', (_event, id: number) => {
     const { folder, rule } = folderOf(id);
-    folderTerminals.run(folder.name, startCommand(rule?.startCommand, folder.port));
+    // 套件沒裝齊（例如同事只改了 package.json、鎖定檔沒跟著改）先補裝，不然網站編譯會失敗
+    const missing = missingPackages(folder.path);
+    if (missing.length) log(`${folder.name}：啟動網站前發現缺套件 ${missing.slice(0, 5).join('、')}，先補裝`);
+    folderTerminals.run(folder.name, `${missing.length ? `${installCommand(false)} && ` : ''}${startCommand(rule?.startCommand, folder.port)}`);
   });
   // 本機網站用你平常的 Chrome 打開：AI 透過 Playwright 擴充功能接得上（你說「看我開的畫面」它就看得到）
   ipcMain.handle('shell:openUrl', (_event, url: string) => {
